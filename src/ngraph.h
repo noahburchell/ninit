@@ -1,0 +1,78 @@
+#pragma once
+
+#include <stdint.h>
+#include <stddef.h>
+
+#define NG_MAGIC	0x4744494eu	// 'NIDG'
+#define NG_VERSION	1u
+
+#define NG_TYPE_ONESHOT	0
+#define NG_TYPE_DAEMON	1
+#define NG_TYPE_TARGET	2
+
+#define NG_DEFAULT_DIR	"/etc/ninit"
+#define NG_DEFAULT_FILE	"/etc/ninit/depgraph"
+
+struct ng_hdr {
+	uint32_t magic;
+	uint32_t version;
+	uint32_t crc32;	
+	uint32_t total_len;
+	uint32_t n_svc;
+	uint32_t n_roots;
+	uint32_t n_edges;
+	uint32_t blob_len;
+	uint32_t n_argv;
+	uint32_t off_svc;
+	uint32_t off_rdep_off;
+	uint32_t off_rdep_idx;
+	uint32_t off_argv;
+	uint32_t off_blob;
+	uint64_t srcs_hash;
+};
+
+struct ng_svc {
+	uint16_t unmet;
+	uint8_t type;
+	uint8_t flags;
+	uint16_t argc;
+	uint16_t pad;
+	uint32_t argv_off;
+	uint32_t name_off;
+};
+
+static inline const struct ng_svc *ng_svcs(const void *m)
+{
+	return (const struct ng_svc *)((const char *)m + ((const struct ng_hdr *)m)->off_svc);
+}
+
+static inline const uint32_t *ng_rdep_off(const void *m)
+{
+	return (const uint32_t *)((const char *)m + ((const struct ng_hdr *)m)->off_rdep_off);
+}
+
+static inline const uint32_t *ng_rdep_idx(const void *m)
+{
+	return (const uint32_t *)((const char *)m + ((const struct ng_hdr *)m)->off_rdep_idx);
+}
+
+static inline const uint32_t *ng_argv_tab(const void *m)
+{
+	return (const uint32_t *)((const char *)m + ((const struct ng_hdr *)m)->off_argv);
+}
+
+static inline const char *ng_blob(const void *m)
+{
+	return (const char *)m + ((const struct ng_hdr *)m)->off_blob;
+}
+
+static inline const char *ng_name(const void *m, uint32_t i)
+{
+	return ng_blob(m) + ng_svcs(m)[i].name_off;
+}
+
+uint32_t ng_crc32c(const void *data, size_t len);
+
+const char *ng_verify(const void *map, size_t len);
+
+const char *ng_typename(uint8_t type);
