@@ -3,3 +3,4 @@ build/
 depgraph
 depgraph.old
 depgraph.tmp
+docs/notes.rst
