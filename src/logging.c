@@ -8,7 +8,8 @@ void print_welcome(void) {
         FILE *file = fopen("/etc/os-release", "r");
         if (file == NULL) {
                 file = fopen("/usr/lib/os-release", "r");
-        } else if (file == NULL) {
+        }
+        if (file == NULL) {
                 goto generic;
         }
 
