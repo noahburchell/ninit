@@ -22,6 +22,8 @@ struct src {
 	uint32_t argc;
 	uint8_t type;
 	int have_type;
+	uint8_t onfail;
+	int have_onfail;
 	struct strv depon;
 	struct strv depof;
 };
@@ -176,6 +178,17 @@ static void parse_src(struct src *s, const char *fname, char *buf)
 			split_into(&s->depon, val, 1);
 		} else if (!strcmp(key, "depof")) {
 			split_into(&s->depof, val, 1);
+		} else if (!strcmp(key, "onfail")) {
+			if (!strcmp(val, "warn"))
+				s->onfail = NG_ONFAIL_WARN;
+			else if (!strcmp(val, "stop"))
+				s->onfail = NG_ONFAIL_STOP;
+			else if (!strcmp(val, "shell"))
+				s->onfail = NG_ONFAIL_SHELL;
+			else
+				die("%s/%s: unknown onfail:%s (want warn, stop or shell)",
+				    g_dir, fname, val);
+			s->have_onfail = 1;
 		} else if (!strcmp(key, "type")) {
 			if (!strcmp(val, "oneshot"))
 				s->type = NG_TYPE_ONESHOT;
@@ -346,6 +359,8 @@ static uint32_t blob_add(struct blob *b, const char *s)
 static void write_atomic(const char *path, const void *buf, size_t len)
 {
 	char tmp[4104], old[4104], *slash;
+	const char *p = buf;
+	size_t left = len;
 	int fd;
 
 	snprintf(tmp, sizeof(tmp), "%s.tmp", path);
@@ -354,18 +369,35 @@ static void write_atomic(const char *path, const void *buf, size_t len)
 	fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
 	if (fd < 0)
 		die("open %s: %s", tmp, strerror(errno));
-	if (write(fd, buf, len) != (ssize_t)len)
-		die("write %s: %s", tmp, strerror(errno));
-	if (fsync(fd) < 0)
+
+	while (left) {
+		ssize_t n = write(fd, p, left);
+
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			unlink(tmp);
+			die("write %s: %s", tmp, strerror(errno));
+		}
+		p += n;
+		left -= (size_t)n;
+	}
+	if (fsync(fd) < 0) {
+		unlink(tmp);
 		die("fsync %s: %s", tmp, strerror(errno));
+	}
 	close(fd);
 
-	// a bad build shouldnt be catastrophic
-	if (rename(path, old) < 0 && errno != ENOENT)
-		die("rename %s -> %s: %s", path, old, strerror(errno));
-	if (rename(tmp, path) < 0)
-		die("rename %s -> %s: %s", tmp, path, strerror(errno));
+	unlink(old);
+	if (link(path, old) < 0 && errno != ENOENT)
+		die("link %s -> %s: %s", path, old, strerror(errno));
 
+	if (rename(tmp, path) < 0) {
+		unlink(tmp);
+		die("rename %s -> %s: %s", tmp, path, strerror(errno));
+	}
+
+	// the replace is only durable once the directory entry itself is synced
 	snprintf(tmp, sizeof(tmp), "%s", path);
 	slash = strrchr(tmp, '/');
 	if (slash) {
@@ -509,7 +541,8 @@ int cmd_init(int argc, char **argv)
 		struct blob blob = { 0 };
 		uint32_t *roff = xmalloc((n + 1) * sizeof(*roff));
 		uint32_t *ridx = xmalloc((m ? m : 1) * sizeof(*ridx));
-		uint32_t *argvt, nargv = 0, ai = 0;
+		uint32_t *argvt, nargv = 0, ai = 0, nw;
+		uint64_t *desc;
 		struct ng_svc *sv = xmalloc(n * sizeof(*sv));
 		struct ng_hdr *h;
 		char *buf;
@@ -522,6 +555,21 @@ int cmd_init(int argc, char **argv)
 		for (i = 0; i < m; i++)
 			ridx[i] = edges[i].b;
 
+		nw = (n + 63) / 64;
+		desc = xmalloc((size_t)n * nw * sizeof(*desc));
+		for (i = n; i-- > 0;) {
+			uint64_t *d = desc + (size_t)i * nw;
+
+			for (j = roff[i]; j < roff[i + 1]; j++) {
+				const uint64_t *sub = desc + (size_t)ridx[j] * nw;
+				uint32_t w;
+
+				d[ridx[j] >> 6] |= 1ull << (ridx[j] & 63);
+				for (w = 0; w < nw; w++)
+					d[w] |= sub[w];
+			}
+		}
+
 		for (i = 0; i < n; i++)
 			nargv += srcs[i].argc;
 		argvt = xmalloc((nargv ? nargv : 1) * sizeof(*argvt));
@@ -529,11 +577,26 @@ int cmd_init(int argc, char **argv)
 		for (i = 0; i < n; i++) {
 			struct src *s = &srcs[order[i]];
 
+			uint32_t nd = 0, w;
+			uint8_t pol;
+
+			for (w = 0; w < nw; w++)
+				nd += (uint32_t)__builtin_popcountll(desc[(size_t)i * nw + w]);
+
+			if (s->have_onfail)
+				pol = s->onfail;
+			else if (!nd)
+				pol = NG_ONFAIL_WARN;
+			else if (nd * 2 >= n)
+				pol = NG_ONFAIL_SHELL;
+			else
+				pol = NG_ONFAIL_STOP;
+
 			sv[i].unmet = (uint16_t)g.indeg[order[i]];
 			sv[i].type = s->type;
-			sv[i].flags = 0;
+			sv[i].flags = pol;
 			sv[i].argc = (uint16_t)s->argc;
-			sv[i].pad = 0;
+			sv[i].n_desc = (uint16_t)nd;
 			sv[i].argv_off = ai;
 			sv[i].name_off = blob_add(&blob, s->name);
 			for (j = 0; j < s->argc; j++)

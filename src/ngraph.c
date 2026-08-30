@@ -32,6 +32,16 @@ const char *ng_typename(uint8_t type)
 	}
 }
 
+const char *ng_onfailname(uint8_t policy)
+{
+	switch (policy & NG_ONFAIL_MASK) {
+	case NG_ONFAIL_WARN:	return "warn";
+	case NG_ONFAIL_STOP:	return "stop";
+	case NG_ONFAIL_SHELL:	return "shell";
+	default:		return "?";
+	}
+}
+
 static int range_ok(uint32_t off, uint64_t bytes, uint32_t total, uint32_t align)
 {
 	if (off & (align - 1))
@@ -101,6 +111,10 @@ const char *ng_verify(const void *map, size_t len)
 
 		if (s->unmet > n)
 			return "unmet exceeds n_svc";
+		if (s->n_desc >= n)
+			return "n_desc exceeds n_svc";
+		if ((s->flags & NG_ONFAIL_MASK) > NG_ONFAIL_SHELL)
+			return "unknown onfail policy";
 		if (s->name_off >= h->blob_len)
 			return "name offset out of range";
 		if (i < h->n_roots && s->unmet != 0)
