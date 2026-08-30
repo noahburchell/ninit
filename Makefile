@@ -1,9 +1,3 @@
-# USE flags, Gentoo style:  make USE="quiet ctl"
-#   quiet   compile out all logging (the macros vanish, no runtime branch)
-#   ctl     install ninitctl on the target
-#
-# ninitctl is always *built* -- `make install` needs it to generate the
-# depgraph, and a system without one will not boot.
 USE ?=
 
 CC      ?= cc
@@ -20,7 +14,7 @@ ifneq (,$(filter quiet,$(USE)))
 CPPFLAGS += -DNINIT_QUIET=1
 endif
 
-NINIT_SRC   := src/init.c src/logging.c src/ngraph.c
+NINIT_SRC   := src/init.c src/logging.c src/ngraph.c src/fail.c
 NINITCTL_SRC := ninitctl/main.c ninitctl/build.c ninitctl/show.c src/ngraph.c
 
 NINIT_OBJ    := $(NINIT_SRC:%.c=$(BUILD)/obj/%.o)
@@ -37,7 +31,6 @@ $(BUILD)/ninit: $(NINIT_OBJ)
 $(BUILD)/ninitctl: $(NINITCTL_OBJ)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
 
-# USE changes touch no source file, so make would not rebuild without this
 $(BUILD)/use.stamp: FORCE
 	@mkdir -p $(@D)
 	@echo '$(USE)' | cmp -s - $@ 2>/dev/null || { echo '$(USE)' > $@; echo "USE=$(USE)"; }
@@ -48,7 +41,6 @@ $(BUILD)/obj/%.o: %.c $(BUILD)/use.stamp
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-# a fresh install must end with a valid depgraph or the machine will not boot
 install: all
 	install -d $(DESTDIR)$(SBINDIR) $(DESTDIR)$(CONFDIR)
 	install -m755 $(BUILD)/ninit $(DESTDIR)$(SBINDIR)/ninit

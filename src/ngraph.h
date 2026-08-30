@@ -3,12 +3,17 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define NG_MAGIC	0x4744494eu	// 'NIDG'
-#define NG_VERSION	1u
+#define NG_MAGIC	0x4744494eu // 'NIDG'
+#define NG_VERSION	2u
 
 #define NG_TYPE_ONESHOT	0
 #define NG_TYPE_DAEMON	1
 #define NG_TYPE_TARGET	2
+
+#define NG_ONFAIL_MASK	0x03
+#define NG_ONFAIL_WARN	0
+#define NG_ONFAIL_STOP	1
+#define NG_ONFAIL_SHELL	2
 
 #define NG_DEFAULT_DIR	"/etc/ninit"
 #define NG_DEFAULT_FILE	"/etc/ninit/depgraph"
@@ -36,7 +41,7 @@ struct ng_svc {
 	uint8_t type;
 	uint8_t flags;
 	uint16_t argc;
-	uint16_t pad;
+	uint16_t n_desc;
 	uint32_t argv_off;
 	uint32_t name_off;
 };
@@ -71,8 +76,14 @@ static inline const char *ng_name(const void *m, uint32_t i)
 	return ng_blob(m) + ng_svcs(m)[i].name_off;
 }
 
+static inline uint8_t ng_onfail(const void *m, uint32_t i)
+{
+	return ng_svcs(m)[i].flags & NG_ONFAIL_MASK;
+}
+
 uint32_t ng_crc32c(const void *data, size_t len);
 
 const char *ng_verify(const void *map, size_t len);
 
 const char *ng_typename(uint8_t type);
+const char *ng_onfailname(uint8_t policy);

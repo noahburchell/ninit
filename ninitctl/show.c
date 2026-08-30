@@ -11,17 +11,17 @@
 #include <sys/stat.h>
 
 struct style {
-	const char *bold, *dim, *cyan, *yellow, *green, *reset;
+	const char *bold, *dim, *cyan, *yellow, *green, *red, *reset;
 	const char *bar, *arrow, *none;
 };
 
 static const struct style style_tty = {
-	"\033[1m", "\033[2m", "\033[36m", "\033[33m", "\033[32m", "\033[0m",
+	"\033[1m", "\033[2m", "\033[36m", "\033[33m", "\033[32m", "\033[1;31m", "\033[0m",
 	"─", "→", "—",
 };
 
 static const struct style style_plain = {
-	"", "", "", "", "", "",
+	"", "", "", "", "", "", "",
 	"-", "->", "-",
 };
 
@@ -117,23 +117,27 @@ int cmd_show(int argc, char **argv)
 	printf("%s%u services, %u edges, %u roots, %u levels, %lu bytes, crc %08x%s\n\n",
 	       st->dim, n, m, h->n_roots, maxlvl, (unsigned long)sb.st_size, h->crc32, st->reset);
 
-	printf("%s  #  %-*s  %-7s  lvl  depends on%s\n",
+	printf("%s  #  %-*s  %-7s  lvl  kills  onfail  depends on%s\n",
 	       st->dim, (int)wname, "service", "type", st->reset);
 	fputs(st->dim, stdout);
 	fputs("  ", stdout);
-	for (i = 0; i < wname + 34; i++)
+	for (i = 0; i < wname + 49; i++)
 		fputs(st->bar, stdout);
 	printf("%s\n", st->reset);
 
 	for (i = 0; i < n; i++) {
 		const char *col = i < h->n_roots ? st->green : "";
 		const char *cend = i < h->n_roots ? st->reset : "";
+		uint8_t pol = ng_onfail(map, i);
+		const char *pcol = pol == NG_ONFAIL_SHELL ? st->red :
+				   pol == NG_ONFAIL_STOP ? st->yellow : st->dim;
 
-		printf("%s%3u%s  %s%-*s%s  %s%-7s%s  %3u  ",
+		printf("%s%3u%s  %s%-*s%s  %s%-7s%s  %3u  %5u  %s%-6s%s  ",
 		       st->dim, i, st->reset,
 		       col, (int)wname, ng_name(map, i), cend,
 		       st->dim, ng_typename(sv[i].type), st->reset,
-		       level[i]);
+		       level[i], sv[i].n_desc,
+		       pcol, ng_onfailname(pol), st->reset);
 
 		if (doff[i] == doff[i + 1]) {
 			printf("%s%s%s", st->dim, st->none, st->reset);
