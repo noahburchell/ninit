@@ -1,5 +1,5 @@
 # ninit
-
+unfinished
 ### why would i use this?
 
 you dont want to use this
