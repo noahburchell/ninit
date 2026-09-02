@@ -1,0 +1,6 @@
+#!/bin/bash
+#% depon: basic network
+#% type: daemon
+#% onfail: warn
+
+exec /usr/sbin/sshd -D -e

@@ -1,0 +1,5 @@
+#!/bin/bash
+#% type: target
+#% depon: fs, udev, sysctl
+
+# synchronisation point

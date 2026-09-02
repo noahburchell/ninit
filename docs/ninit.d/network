@@ -1,0 +1,5 @@
+#!/bin/bash
+#% depon: udev
+
+ip link set lo up
+dhcpcd -w eth0

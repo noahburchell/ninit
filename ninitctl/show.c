@@ -12,17 +12,17 @@
 
 struct style {
 	const char *bold, *dim, *cyan, *yellow, *green, *red, *reset;
-	const char *bar, *arrow, *none;
+	const char *bar, *vbar, *arrow, *none;
 };
 
 static const struct style style_tty = {
 	"\033[1m", "\033[2m", "\033[36m", "\033[33m", "\033[32m", "\033[1;31m", "\033[0m",
-	"─", "→", "—",
+	"─", "│", "→", "—",
 };
 
 static const struct style style_plain = {
 	"", "", "", "", "", "", "",
-	"-", "->", "-",
+	"-", "|", "->", "-",
 };
 
 int cmd_show(int argc, char **argv)
@@ -147,13 +147,19 @@ int cmd_show(int argc, char **argv)
 		}
 		putchar('\n');
 
-		if (verbose && sv[i].argc) {
-			const uint32_t *at = ng_argv_tab(map) + sv[i].argv_off;
+		if (verbose && sv[i].type != NG_TYPE_TARGET) {
+			const char *p = ng_script(map, i);
 
-			printf("%s     %-*s           ", st->dim, (int)wname, "");
-			for (j = 0; j < sv[i].argc; j++)
-				printf("%s%s", j ? " " : "", ng_blob(map) + at[j]);
-			printf("%s\n", st->reset);
+			while (*p) {
+				const char *nl = strchr(p, '\n');
+				int w = nl ? (int)(nl - p) : (int)strlen(p);
+
+				printf("%s     %s %.*s%s\n",
+				       st->dim, st->vbar, w, p, st->reset);
+				if (!nl)
+					break;
+				p = nl + 1;
+			}
 		}
 	}
 
