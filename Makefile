@@ -4,6 +4,7 @@ CC      ?= cc
 PREFIX  ?= /usr
 SBINDIR ?= $(PREFIX)/sbin
 CONFDIR ?= /etc/ninit
+SVCDIR  ?= $(CONFDIR)/ninit.d
 BUILD   ?= build
 
 CFLAGS   ?= -O2 -g
@@ -42,15 +43,15 @@ $(BUILD)/obj/%.o: %.c $(BUILD)/use.stamp
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 install: all
-	install -d $(DESTDIR)$(SBINDIR) $(DESTDIR)$(CONFDIR)
+	install -d $(DESTDIR)$(SBINDIR) $(DESTDIR)$(SVCDIR)
 	install -m755 $(BUILD)/ninit $(DESTDIR)$(SBINDIR)/ninit
 ifneq (,$(filter ctl,$(USE)))
 	install -m755 $(BUILD)/ninitctl $(DESTDIR)$(SBINDIR)/ninitctl
 endif
-	$(BUILD)/ninitctl init -d $(DESTDIR)$(CONFDIR)
+	$(BUILD)/ninitctl init -d $(DESTDIR)$(SVCDIR) -o $(DESTDIR)$(CONFDIR)/depgraph
 
 graph: $(BUILD)/ninitctl
-	$(BUILD)/ninitctl init -d $(CONFDIR)
+	$(BUILD)/ninitctl init -d $(SVCDIR) -o $(CONFDIR)/depgraph
 
 clean:
 	rm -rf $(BUILD)

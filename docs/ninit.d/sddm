@@ -1,0 +1,5 @@
+#!/bin/bash
+#% depon: basic network
+#% type: daemon
+
+exec /usr/bin/sddm

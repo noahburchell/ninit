@@ -1,4 +1,0 @@
-name:elogind
-depon:fs
-depof:sddm
-exe:/bin/elogind

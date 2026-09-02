@@ -1,0 +1,6 @@
+#!/bin/bash
+#% type: daemon
+#% depon: fs
+# for me my kmods are on a subvol so udev cant happen until fs mounted. for you this will probably be different
+
+exec /sbin/udevd

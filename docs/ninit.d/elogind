@@ -1,0 +1,6 @@
+#!/bin/bash
+#% depon: fs dbus
+#% depof: sddm
+#% type: daemon
+
+exec /lib/elogind/elogind --foreground

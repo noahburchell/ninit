@@ -6,6 +6,7 @@
 
 int main(void) {
         if (getpid() != 1) {
-                fprintf(stderr, "Error: This program cannot be run as a child.\n");
+                fprintf(stderr, "Error: must run as PID 1.\n");
+                return EXIT_FAILURE;
         }
 }

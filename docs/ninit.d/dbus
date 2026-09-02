@@ -1,0 +1,6 @@
+#!/bin/bash
+#% depon: fs
+#% type: daemon
+
+mkdir -p /run/dbus
+exec dbus-daemon --system --nofork --nopidfile

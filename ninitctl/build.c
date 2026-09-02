@@ -18,8 +18,7 @@ struct strv {
 
 struct src {
 	char *name;
-	char **argv;
-	uint32_t argc;
+	char *script;
 	uint8_t type;
 	int have_type;
 	uint8_t onfail;
@@ -136,10 +135,31 @@ static void split_into(struct strv *out, char *val, int comma)
 	}
 }
 
-static void parse_src(struct src *s, const char *fname, char *buf)
+static int has_code(const char *buf)
 {
-	struct strv args = { 0 };
-	char *line = buf;
+	const char *p = buf;
+
+	while (*p) {
+		while (*p == ' ' || *p == '\t')
+			p++;
+		if (*p && *p != '#' && *p != '\n' && *p != '\r')
+			return 1;
+		p = strchr(p, '\n');
+		if (!p)
+			break;
+		p++;
+	}
+	return 0;
+}
+
+// bash line numbers must match the file
+static void parse_src(struct src *s, const char *fname, const char *body, size_t len)
+{
+	char *scratch = xmalloc(len + 1);
+	char *line = scratch;
+	int code;
+
+	memcpy(scratch, body, len + 1);
 
 	s->name = strdup(fname);
 	s->type = NG_TYPE_TARGET;
@@ -154,12 +174,15 @@ static void parse_src(struct src *s, const char *fname, char *buf)
 		key = trim(line);
 		line = nl;
 
-		if (!*key || *key == '#')
+		if (key[0] != '#' || key[1] != '%')
+			continue;
+		key = trim(key + 2);
+		if (!*key)
 			continue;
 
 		colon = strchr(key, ':');
 		if (!colon)
-			die("%s/%s: line without a key: %s", g_dir, fname, key);
+			die("%s/%s: directive without a key: #%%%s", g_dir, fname, key);
 		*colon = '\0';
 		val = trim(colon + 1);
 		key = trim(key);
@@ -168,12 +191,6 @@ static void parse_src(struct src *s, const char *fname, char *buf)
 			if (strcmp(val, fname))
 				die("%s/%s: name:%s does not match its filename; service identity is the filename",
 				    g_dir, fname, val);
-		} else if (!strcmp(key, "exe")) {
-			if (args.n)
-				die("%s/%s: duplicate exe:", g_dir, fname);
-			split_into(&args, val, 0);
-			if (!args.n)
-				die("%s/%s: empty exe:", g_dir, fname);
 		} else if (!strcmp(key, "depon")) {
 			split_into(&s->depon, val, 1);
 		} else if (!strcmp(key, "depof")) {
@@ -200,19 +217,30 @@ static void parse_src(struct src *s, const char *fname, char *buf)
 				die("%s/%s: unknown type:%s", g_dir, fname, val);
 			s->have_type = 1;
 		} else {
-			die("%s/%s: unknown key '%s'", g_dir, fname, key);
+			die("%s/%s: unknown directive '%s'", g_dir, fname, key);
 		}
 	}
 
-	s->argv = args.v;
-	s->argc = args.n;
+	// the blob stores scripts nul terminated, so an embedded nul would truncate
+	if (strlen(body) != len)
+		die("%s/%s: contains a NUL byte", g_dir, fname);
 
+	code = has_code(body);
 	if (!s->have_type)
-		s->type = s->argc ? NG_TYPE_DAEMON : NG_TYPE_TARGET;
-	if (s->type == NG_TYPE_TARGET && s->argc)
-		die("%s/%s: type:target cannot have exe:", g_dir, fname);
-	if (s->type != NG_TYPE_TARGET && !s->argc)
-		die("%s/%s: type:%s needs an exe:", g_dir, fname, ng_typename(s->type));
+		s->type = code ? NG_TYPE_ONESHOT : NG_TYPE_TARGET;
+
+	if (s->type == NG_TYPE_TARGET) {
+		if (code)
+			die("%s/%s: type:target must contain no commands", g_dir, fname);
+	} else {
+		if (!code)
+			die("%s/%s: type:%s has no commands to run",
+			    g_dir, fname, ng_typename(s->type));
+		if (len > NG_MAX_SCRIPT)
+			die("%s/%s: script is %zu bytes; execve caps one argument at %u",
+			    g_dir, fname, len, NG_MAX_SCRIPT);
+		s->script = (char *)body;
+	}
 }
 
 static int keep(const struct dirent *d)
@@ -421,20 +449,25 @@ int cmd_init(int argc, char **argv)
 	uint32_t n, m = 0, cap = 0, i, j, nroots = 0;
 	uint32_t *order, *inv;
 	uint64_t hash = 0xcbf29ce484222325ull;
-	int ne, k;
+	int ne, k, custom_dir = 0;
 
 	for (k = 0; k < argc; k++) {
-		if ((!strcmp(argv[k], "-d") || !strcmp(argv[k], "--dir")) && k + 1 < argc)
+		if ((!strcmp(argv[k], "-d") || !strcmp(argv[k], "--dir")) && k + 1 < argc) {
 			dir = argv[++k];
-		else if ((!strcmp(argv[k], "-o") || !strcmp(argv[k], "--out")) && k + 1 < argc)
+			custom_dir = 1;
+		} else if ((!strcmp(argv[k], "-o") || !strcmp(argv[k], "--out")) && k + 1 < argc)
 			out = argv[++k];
 		else
 			die("init: unexpected argument '%s'", argv[k]);
 	}
 	g_dir = dir;
 	if (!out) {
-		snprintf(outbuf, sizeof(outbuf), "%s/depgraph", dir);
-		out = outbuf;
+		if (!custom_dir) {
+			out = NG_DEFAULT_FILE;
+		} else {
+			snprintf(outbuf, sizeof(outbuf), "%s/depgraph", dir);
+			out = outbuf;
+		}
 	}
 
 	ne = scandir(dir, &ents, keep, alphasort);
@@ -463,7 +496,7 @@ int cmd_init(int argc, char **argv)
 		for (size_t q = 0; q < len; q++)
 			hash = (hash ^ (unsigned char)buf[q]) * 0x100000001b3ull;
 
-		parse_src(&srcs[n++], ents[k]->d_name, buf);
+		parse_src(&srcs[n++], ents[k]->d_name, buf, len);
 	}
 	if (!n)
 		die("no services in %s", dir);
@@ -541,7 +574,7 @@ int cmd_init(int argc, char **argv)
 		struct blob blob = { 0 };
 		uint32_t *roff = xmalloc((n + 1) * sizeof(*roff));
 		uint32_t *ridx = xmalloc((m ? m : 1) * sizeof(*ridx));
-		uint32_t *argvt, nargv = 0, ai = 0, nw;
+		uint32_t nw;
 		uint64_t *desc;
 		struct ng_svc *sv = xmalloc(n * sizeof(*sv));
 		struct ng_hdr *h;
@@ -570,10 +603,6 @@ int cmd_init(int argc, char **argv)
 			}
 		}
 
-		for (i = 0; i < n; i++)
-			nargv += srcs[i].argc;
-		argvt = xmalloc((nargv ? nargv : 1) * sizeof(*argvt));
-
 		for (i = 0; i < n; i++) {
 			struct src *s = &srcs[order[i]];
 
@@ -595,12 +624,11 @@ int cmd_init(int argc, char **argv)
 			sv[i].unmet = (uint16_t)g.indeg[order[i]];
 			sv[i].type = s->type;
 			sv[i].flags = pol;
-			sv[i].argc = (uint16_t)s->argc;
 			sv[i].n_desc = (uint16_t)nd;
-			sv[i].argv_off = ai;
+			sv[i].pad = 0;
 			sv[i].name_off = blob_add(&blob, s->name);
-			for (j = 0; j < s->argc; j++)
-				argvt[ai++] = blob_add(&blob, s->argv[j]);
+			sv[i].script_off = s->script ? blob_add(&blob, s->script)
+						     : NG_NO_SCRIPT;
 		}
 
 		off = sizeof(struct ng_hdr);
@@ -608,7 +636,6 @@ int cmd_init(int argc, char **argv)
 		total += (size_t)n * sizeof(struct ng_svc);
 		total += ((size_t)n + 1) * 4;
 		total += (size_t)m * 4;
-		total += (size_t)nargv * 4;
 		total += blob.n;
 
 		buf = xmalloc(total);
@@ -620,7 +647,6 @@ int cmd_init(int argc, char **argv)
 		h->n_roots = nroots;
 		h->n_edges = m;
 		h->blob_len = blob.n;
-		h->n_argv = nargv;
 		h->srcs_hash = hash;
 
 		h->off_svc = (uint32_t)off;
@@ -634,10 +660,6 @@ int cmd_init(int argc, char **argv)
 		h->off_rdep_idx = (uint32_t)off;
 		memcpy(buf + off, ridx, (size_t)m * 4);
 		off += (size_t)m * 4;
-
-		h->off_argv = (uint32_t)off;
-		memcpy(buf + off, argvt, (size_t)nargv * 4);
-		off += (size_t)nargv * 4;
 
 		h->off_blob = (uint32_t)off;
 		memcpy(buf + off, blob.p, blob.n);

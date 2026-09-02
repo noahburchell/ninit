@@ -1,0 +1,5 @@
+#!/bin/bash
+#% onfail: shell
+
+mount -o remount,rw /
+mount -a -t ext4,xfs,btrfs,vfat
