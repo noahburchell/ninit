@@ -1,5 +1,6 @@
 #include "logging.h"
 
+#include <assert.h>
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -12,18 +13,25 @@ static int log_color;
 static struct timespec log_start;
 
 static const char *const tag_color[] = {
-	"\033[32m  OK  \033[0m",
-	"      ",
-	"\033[1;33m WARN \033[0m",
-	"\033[1;31m FAIL \033[0m",
+	"\033[32mDONE\033[0m",
+	"",
+	"\033[1;33mWARN\033[0m",
+	"\033[1;31mFAIL\033[0m",
+	"\033[1;34mWAIT\033[0m",
+	"\033[1;36mNOTE\033[0m",
 };
 
 static const char *const tag_plain[] = {
-	"  OK  ",
-	"      ",
-	" WARN ",
-	" FAIL ",
+	"DONE",
+	"",
+	"WARN",
+	"FAIL",
+	"WAIT",
+	"NOTE",
 };
+
+static_assert(sizeof(tag_color) / sizeof(*tag_color) == LOG_N, "tag_color must cover every level");
+static_assert(sizeof(tag_plain) / sizeof(*tag_plain) == LOG_N, "tag_plain must cover every level");
 
 void log_init(void)
 {
@@ -41,6 +49,12 @@ void log_reopen_console(void)
 		close(log_fd);
 	log_fd = fd;
 	log_color = isatty(log_fd);
+}
+
+void log_adopt_fd(int fd)
+{
+	log_fd = fd;
+	log_color = isatty(fd);
 }
 
 static int stamp(char *buf, size_t cap)
@@ -64,11 +78,15 @@ void ninit_log(int level, const char *fmt, ...)
 	va_list ap;
 	int n;
 
-	if (level < LOG_OK || level > LOG_ERR)
+	if ((unsigned)level >= LOG_N)
 		level = LOG_INFO;
 
-	n = stamp(buf, sizeof(buf));
-	n += snprintf(buf + n, sizeof(buf) - n, "%s ", tags[level]);
+	if (level == LOG_INFO) {
+		n = 0;
+	} else {
+		n = stamp(buf, sizeof(buf));
+		n += snprintf(buf + n, sizeof(buf) - n, "%s > ", tags[level]);
+	}
 
 	va_start(ap, fmt);
 	n += vsnprintf(buf + n, sizeof(buf) - n, fmt, ap);
@@ -82,6 +100,8 @@ void ninit_log(int level, const char *fmt, ...)
 	(void)!write(log_fd, buf, (size_t)n);
 }
 
+#define LOG_CONT	"         "
+
 void log_raw(int level, const char *buf, size_t len)
 {
 	const char *p = buf, *end = buf + len;
@@ -91,7 +111,7 @@ void log_raw(int level, const char *buf, size_t len)
 		size_t n = nl ? (size_t)(nl - p) : (size_t)(end - p);
 
 		if (n)
-			ninit_log(level, "         %.*s", (int)n, p);
+			ninit_log(level, LOG_CONT "%.*s", (int)n, p);
 		if (!nl)
 			break;
 		p = nl + 1;
@@ -113,17 +133,17 @@ void print_welcome(void)
 	while (file && fgets(line, sizeof(line), file)) {
 		char *name;
 		size_t len;
+		char quote;
 
 		if (strncmp(line, "PRETTY_NAME=", 12))
 			continue;
 
 		name = line + 12;
-		if (*name == '"')
-			name++;
+		quote = (*name == '"' || *name == '\'') ? *name++ : 0;
 		len = strlen(name);
 		if (len && name[len - 1] == '\n')
 			name[--len] = '\0';
-		if (len && name[len - 1] == '"')
+		if (quote && len && name[len - 1] == quote)
 			name[--len] = '\0';
 
 		log_info("Welcome to %s!", name);

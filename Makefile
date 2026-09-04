@@ -92,7 +92,7 @@ CFLAGS  += $(SANFLAGS)
 LDFLAGS += $(SANFLAGS)
 endif
 
-NINIT_SRC   := src/init.c src/logging.c src/ngraph.c src/fail.c
+NINIT_SRC   := src/ninit.c src/logging.c src/ngraph.c src/fail.c
 NINITCTL_SRC := ninitctl/main.c ninitctl/build.c ninitctl/show.c src/ngraph.c
 
 NINIT_OBJ    := $(NINIT_SRC:%.c=$(BUILD)/obj/%.o)

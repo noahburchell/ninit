@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/kd.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,16 +13,30 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <termios.h>
 #include <time.h>
 #include <unistd.h>
+
+static const char *plural_s(unsigned n)
+{
+	return n == 1 ? "" : "s";
+}
+
+static const char *verb_s(unsigned n)
+{
+	return n == 1 ? "s" : "";
+}
 
 static void describe(int status, char *buf, size_t cap)
 {
 	if (WIFEXITED(status))
 		snprintf(buf, cap, "exit %d", WEXITSTATUS(status));
 	else if (WIFSIGNALED(status)) {
-		// no abbreviation for realtime signals
+#ifdef __GLIBC__
 		const char *ab = sigabbrev_np(WTERMSIG(status));
+#else
+		const char *ab = NULL;
+#endif
 		const char *core = WCOREDUMP(status) ? " (core dumped)" : "";
 
 		if (ab)
@@ -43,24 +58,25 @@ enum fail_act fail_service(const void *map, uint32_t i, int status, unsigned att
 	describe(status, how, sizeof(how));
 
 	if (attempt < 2) {
-		log_warn("%s failed (%s), retrying once", name, how);
+		log_warn("%s: failed (%s), retrying", name, how);
 		return FAIL_RETRY;
 	}
 
-	log_err("%s failed twice (%s)", name, how);
+	log_err("%s: failed twice (%s)", name, how);
 	if (tail_len)
-		log_raw(LOG_ERR, tail, tail_len);
+		log_raw(LOG_FAIL, tail, tail_len);
 
 	switch (ng_onfail(map, i)) {
 	case NG_ONFAIL_WARN:
-		log_warn("nothing depends on %s. continuing without it", name);
+		log_warn("%s: nothing depends on it, continuing without it", name);
 		return FAIL_WARN;
 	case NG_ONFAIL_SHELL:
-		log_err("%u of %u services depend on %s", s->n_desc,
-			((const struct ng_hdr *)map)->n_svc, name);
+		log_err("%s: %u of %u services depend%s on it, dropping to a shell", name,
+			s->n_desc, ((const struct ng_hdr *)map)->n_svc, verb_s(s->n_desc));
 		return FAIL_SHELL;
 	default:
-		log_err("%u service(s) depend on %s", s->n_desc, name);
+		log_err("%s: %u service%s depend%s on it, stopping", name, s->n_desc,
+			plural_s(s->n_desc), verb_s(s->n_desc));
 		return FAIL_STOP;
 	}
 }
@@ -88,9 +104,12 @@ uint32_t fail_poison(const void *map, uint32_t i, uint8_t *state)
 	return count;
 }
 
-#define EMERG_FAST_MS	1000
-#define EMERG_FAST_MAX	5
-#define EMERG_FAIL_MAX	5
+#define EMERG_FAST_MS	 1000
+#define EMERG_FAST_MAX	 5
+#define EMERG_FAIL_MAX	 5
+#define EMERG_NOEXEC_MAX 2
+#define EMERG_EXEC_MS	 5000
+#define EMERG_NOEXEC	 127
 
 static char emerg_path[] = NG_PATH;
 
@@ -99,6 +118,9 @@ static struct timespec emerg_at;
 static unsigned emerg_fast;
 static unsigned emerg_fail;
 static int emerg_gone;
+static int emerg_execed;
+static int emerg_greeted;
+static unsigned emerg_noexec;
 
 static int emerg_console(void)
 {
@@ -117,23 +139,61 @@ static int emerg_console(void)
 	return fd;
 }
 
-// close_range() shut the log fd, but 0..2 are the console, so report by hand
-static void emerg_execfail(const char *path)
+// whatever died may have left the console unusable
+static int emerg_console_reset(int con)
 {
-	char msg[192];
-	int n = snprintf(msg, sizeof(msg), "ninit: exec %s: %s\n", path, strerror(errno));
+	struct termios t;
+	char kbtype;
+	int mode, vt = ioctl(con, KDGKBTYPE, &kbtype) == 0;
 
-	if (n > 0)
-		(void)!write(STDERR_FILENO, msg, n < (int)sizeof(msg) ? (size_t)n : sizeof(msg));
+	if (vt) {
+		if (ioctl(con, KDGETMODE, &mode) == 0 && mode != KD_TEXT) {
+			log_warn("console: in graphics mode, restoring text");
+			ioctl(con, KDSETMODE, KD_TEXT);
+		}
+		if (ioctl(con, KDGKBMODE, &mode) == 0 && mode != K_XLATE && mode != K_UNICODE) {
+			log_warn("console: keyboard in raw mode, restoring");
+			ioctl(con, KDSKBMODE, K_UNICODE);
+		}
+	}
+
+	if (tcgetattr(con, &t) == 0) {
+		const tcflag_t sane = ISIG | ICANON | ECHO;
+
+		if ((t.c_lflag & sane) != sane || !(t.c_oflag & OPOST))
+			log_warn("console: terminal in raw mode, restoring");
+		t.c_iflag = ICRNL | IXON | IMAXBEL | BRKINT | IUTF8;
+		t.c_oflag = OPOST | ONLCR;
+		t.c_cflag |= CREAD;
+		t.c_lflag = ISIG | ICANON | ECHO | ECHOE | ECHOK | ECHOCTL | ECHOKE | IEXTEN;
+		t.c_cc[VINTR] = 003;
+		t.c_cc[VQUIT] = 034;
+		t.c_cc[VERASE] = 0177;
+		t.c_cc[VWERASE] = 027;
+		t.c_cc[VREPRINT] = 022;
+		t.c_cc[VLNEXT] = 026;
+		t.c_cc[VKILL] = 025;
+		t.c_cc[VEOF] = 004;
+		t.c_cc[VSTART] = 021;
+		t.c_cc[VSTOP] = 023;
+		t.c_cc[VSUSP] = 032;
+		t.c_cc[VMIN] = 1;
+		t.c_cc[VTIME] = 0;
+		tcsetattr(con, TCSANOW, &t);
+		tcflush(con, TCIFLUSH);
+	}
+
+	return vt;
 }
 
-static pid_t emerg_spawn(int con)
+static pid_t emerg_spawn(int con, const char *term, int barrier)
 {
-	const char *term;
-	char kbtype;
 	sigset_t none;
 	pid_t pid;
-	int sig;
+	int sig, sh_err;
+#ifdef NINIT_BUSYBOX
+	int bb_err;
+#endif
 
 	pid = fork();
 	if (pid != 0)
@@ -146,13 +206,12 @@ static pid_t emerg_spawn(int con)
 
 	setsid();
 	ioctl(con, TIOCSCTTY, 1);
-	// KDGKBTYPE answers on a virtual terminal and fails on a serial line
-	term = ioctl(con, KDGKBTYPE, &kbtype) == 0 ? "linux" : "vt220";
 	dup2(con, 0);
 	dup2(con, 1);
 	dup2(con, 2);
 
-	close_range(3, ~0u, 0);
+	close_range(3, ~0u, CLOSE_RANGE_CLOEXEC);
+	log_adopt_fd(STDERR_FILENO);
 
 	// pid 1 may have dropped umask to 0
 	(void)!chdir("/");
@@ -161,36 +220,79 @@ static pid_t emerg_spawn(int con)
 	putenv(emerg_path);
 	setenv("TERM", term, 1);
 
+	// a missing busybox only bad if /bin/sh is missing too
 #ifdef NINIT_BUSYBOX
 	execl(NINIT_BUSYBOX, "-sh", (char *)NULL);
-	emerg_execfail(NINIT_BUSYBOX);
+	bb_err = errno;
 #endif
 	execl("/bin/sh", "-sh", (char *)NULL);
-	emerg_execfail("/bin/sh");
-	_exit(127);
+	sh_err = errno;
+#ifdef NINIT_BUSYBOX
+	log_warn("shell: exec %s: %s", NINIT_BUSYBOX, strerror(bb_err));
+#endif
+	log_err("shell: exec /bin/sh: %s", strerror(sh_err));
+	(void)!write(barrier, &sh_err, sizeof(sh_err));
+	_exit(EMERG_NOEXEC);
 }
 
-static pid_t emerg_start(void)
+static int emerg_confirm(int fd)
 {
+	struct pollfd pfd = { .fd = fd, .events = POLLIN };
+	int err = 0, n;
+
+	do
+		n = poll(&pfd, 1, EMERG_EXEC_MS);
+	while (n < 0 && errno == EINTR);
+	if (n <= 0)
+		return 0;
+
+	do
+		n = (int)read(fd, &err, sizeof(err));
+	while (n < 0 && errno == EINTR);
+
+	return n == (int)sizeof(err) ? err : 0;
+}
+
+static int emerg_start(void)
+{
+	int bar[2], con, err, vt;
 	pid_t pid;
-	int con, err;
+
+	emerg_pid = -1;
 
 	con = emerg_console();
 	if (con < 0) {
-		log_err("no console for emergency shell: %s", strerror(errno));
+		log_err("shell: no console available: %s", strerror(errno));
+		return -1;
+	}
+	if (pipe2(bar, O_CLOEXEC)) {
+		log_err("shell: pipe: %s", strerror(errno));
+		close(con);
 		return -1;
 	}
 
-	pid = emerg_spawn(con);
+	vt = emerg_console_reset(con);
+	pid = emerg_spawn(con, vt ? "linux" : "vt220", bar[1]);
 	err = errno;
 	close(con);
+	close(bar[1]);
 	if (pid < 0) {
-		log_err("fork for emergency shell: %s", strerror(err));
+		close(bar[0]);
+		log_err("shell: fork: %s", strerror(err));
 		return -1;
 	}
 
 	clock_gettime(CLOCK_MONOTONIC, &emerg_at);
-	return pid;
+
+	emerg_pid = pid;
+
+	err = emerg_confirm(bar[0]);
+	close(bar[0]);
+	emerg_execed = !err;
+	if (err)
+		log_err("shell: no working shell on this machine: %s", strerror(err));
+
+	return 0;
 }
 
 static long long emerg_uptime_ms(void)
@@ -204,17 +306,29 @@ static long long emerg_uptime_ms(void)
 
 static void emerg_restart(void)
 {
-	emerg_pid = emerg_start();
-	if (emerg_pid > 0) {
+	if (emerg_start() == 0) {
+		if (!emerg_execed) {
+			if (++emerg_noexec >= EMERG_NOEXEC_MAX) {
+				emerg_gone = 1;
+				log_err("shell: none can be started here, reboot with sysrq or power-cycle");
+			}
+			return;
+		}
 		emerg_fail = 0;
+		emerg_noexec = 0;
+		if (!emerg_greeted) {
+			emerg_greeted = 1;
+			ninit_log(LOG_DONE, "shell: running on the console, use reboot or poweroff to exit");
+			log_note("shell: you're on your own now, good luck");
+		}
 		return;
 	}
 	if (++emerg_fail >= EMERG_FAIL_MAX) {
 		emerg_gone = 1;
-		log_err("no emergency shell after %u attempts. giving up on the console", emerg_fail);
+		log_err("shell: gave up after %u attempts, the console is unattended", emerg_fail);
 		return;
 	}
-	log_err("no emergency shell is running. the console is unattended");
+	log_err("shell: not running, the console is unattended");
 }
 
 void fail_emergency_shell(const char *why)
@@ -224,11 +338,10 @@ void fail_emergency_shell(const char *why)
 	if (emerg_gone)
 		return;
 	if (emerg_pid > 0) {
-		log_err("an emergency shell is already running");
+		log_warn("shell: already running");
 		return;
 	}
 
-	log_err("starting an emergency shell");
 	emerg_restart();
 }
 
@@ -248,14 +361,17 @@ int fail_emergency_reaped(pid_t pid, int status)
 		emerg_fast = 0;
 	} else if (++emerg_fast >= EMERG_FAST_MAX) {
 		emerg_gone = 1;
-		log_err("emergency shell died immediately %u times (%s). not restarting",
+		log_err("shell: died immediately %u times (%s), not restarting",
 			emerg_fast, how);
-		log_err("no usable shell on this machine. reboot with sysrq or power-cycle");
+		log_err("shell: none can be started here, reboot with sysrq or power-cycle");
 		return 1;
 	}
 
-	log_warn("emergency shell exited (%s). the machine is still in a failed state", how);
-	log_warn("you're on your own. run shutdown, reboot or poweroff");
+	if (!(WIFEXITED(status) && WEXITSTATUS(status) == EMERG_NOEXEC))
+		log_warn("shell: exited (%s)", how);
+
+	if (emerg_gone)
+		return 1;
 
 	emerg_restart();
 	return 1;
@@ -273,11 +389,12 @@ void fail_summary(const void *map, const uint8_t *state)
 	if (!failed && !skipped)
 		return;
 
-	log_warn("%u service(s) failed, %u never started", failed, skipped);
+	ninit_log(failed ? LOG_FAIL : LOG_WARN, "boot: %u service%s failed, %u never started",
+		  failed, plural_s(failed), skipped);
 	for (i = 0; i < n; i++)
 		if (state[i] == NG_ST_FAILED)
-			log_err("  failed:  %s", ng_name(map, i));
+			log_err("boot: %-7s %s", "failed", ng_name(map, i));
 	for (i = 0; i < n; i++)
 		if (state[i] == NG_ST_SKIPPED)
-			log_warn("  skipped: %s", ng_name(map, i));
+			log_warn("boot: %-7s %s", "skipped", ng_name(map, i));
 }
