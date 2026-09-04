@@ -3,8 +3,7 @@ USE ?=
 CC      ?= cc
 PREFIX  ?= /usr
 SBINDIR ?= $(PREFIX)/sbin
-CONFDIR ?= /etc/ninit
-SVCDIR  ?= $(CONFDIR)/ninit.d
+SVCDIR  ?= /etc/ninit.d
 BUILD   ?= build
 BUSYBOX ?= /bin/busybox
 
@@ -93,7 +92,8 @@ LDFLAGS += $(SANFLAGS)
 endif
 
 NINIT_SRC   := src/ninit.c src/logging.c src/ngraph.c src/fail.c
-NINITCTL_SRC := ninitctl/main.c ninitctl/build.c ninitctl/show.c src/ngraph.c
+NINITCTL_SRC := ninitctl/main.c ninitctl/build.c ninitctl/show.c \
+		ninitctl/add.c ninitctl/del.c src/ngraph.c
 
 NINIT_OBJ    := $(NINIT_SRC:%.c=$(BUILD)/obj/%.o)
 NINITCTL_OBJ := $(NINITCTL_SRC:%.c=$(BUILD)/obj/%.o)
@@ -122,13 +122,11 @@ $(BUILD)/obj/%.o: %.c $(BUILD)/use.stamp
 install: all
 	install -d $(DESTDIR)$(SBINDIR) $(DESTDIR)$(SVCDIR)
 	install -m755 $(BUILD)/ninit $(DESTDIR)$(SBINDIR)/ninit
-ifneq (,$(filter ctl,$(USE)))
 	install -m755 $(BUILD)/ninitctl $(DESTDIR)$(SBINDIR)/ninitctl
-endif
-	$(BUILD)/ninitctl init -d $(DESTDIR)$(SVCDIR) -o $(DESTDIR)$(CONFDIR)/depgraph
+	$(BUILD)/ninitctl init -d $(DESTDIR)$(SVCDIR) -o $(DESTDIR)$(SVCDIR)/depgraph
 
 graph: $(BUILD)/ninitctl
-	$(BUILD)/ninitctl init -d $(SVCDIR) -o $(CONFDIR)/depgraph
+	$(BUILD)/ninitctl init -d $(SVCDIR) -o $(SVCDIR)/depgraph
 
 sanitise:
 	$(MAKE) USE="$(USE) debug" all

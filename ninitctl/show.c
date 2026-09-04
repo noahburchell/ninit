@@ -117,11 +117,11 @@ int cmd_show(int argc, char **argv)
 	printf("%s%u services, %u edges, %u roots, %u levels, %lu bytes, crc %08x%s\n\n",
 	       st->dim, n, m, h->n_roots, maxlvl, (unsigned long)sb.st_size, h->crc32, st->reset);
 
-	printf("%s  #  %-*s  %-7s  lvl  kills  onfail  depends on%s\n",
+	printf("%s  #  %-*s  %-7s  lvl  kills  onfail  rdy  depends on%s\n",
 	       st->dim, (int)wname, "service", "type", st->reset);
 	fputs(st->dim, stdout);
 	fputs("  ", stdout);
-	for (i = 0; i < wname + 49; i++)
+	for (i = 0; i < wname + 54; i++)
 		fputs(st->bar, stdout);
 	printf("%s\n", st->reset);
 
@@ -132,12 +132,20 @@ int cmd_show(int argc, char **argv)
 		const char *pcol = pol == NG_ONFAIL_SHELL ? st->red :
 				   pol == NG_ONFAIL_STOP ? st->yellow : st->dim;
 
-		printf("%s%3u%s  %s%-*s%s  %s%-7s%s  %3u  %5u  %s%-6s%s  ",
+		char rdy[8];
+
+		if (sv[i].notify_fd)
+			snprintf(rdy, sizeof(rdy), "%u", sv[i].notify_fd);
+		else
+			snprintf(rdy, sizeof(rdy), "%s", st->none);
+
+		printf("%s%3u%s  %s%-*s%s  %s%-7s%s  %3u  %5u  %s%-6s%s  %s%3s%s  ",
 		       st->dim, i, st->reset,
 		       col, (int)wname, ng_name(map, i), cend,
 		       st->dim, ng_typename(sv[i].type), st->reset,
 		       level[i], sv[i].n_desc,
-		       pcol, ng_onfailname(pol), st->reset);
+		       pcol, ng_onfailname(pol), st->reset,
+		       sv[i].notify_fd ? st->green : st->dim, rdy, st->reset);
 
 		if (doff[i] == doff[i + 1]) {
 			printf("%s%s%s", st->dim, st->none, st->reset);

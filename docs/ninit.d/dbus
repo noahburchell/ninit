@@ -1,6 +1,10 @@
 #!/bin/bash
 #% depon: fs
 #% type: daemon
+#% notify: 3
 
 mkdir -p /run/dbus
-exec dbus-daemon --system --nofork --nopidfile
+
+{ until [ -S /run/dbus/system_bus_socket ]; do sleep 0.02; done; echo >&3; } &
+
+exec 3>&- dbus-daemon --system --nofork --nopidfile

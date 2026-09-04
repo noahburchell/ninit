@@ -1,6 +1,7 @@
 #include "logging.h"
 
 #include <assert.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -57,6 +58,21 @@ void log_adopt_fd(int fd)
 	log_color = isatty(fd);
 }
 
+static void log_write(const char *buf, size_t len)
+{
+	while (len) {
+		ssize_t w = write(log_fd, buf, len);
+
+		if (w < 0) {
+			if (errno == EINTR)
+				continue;
+			return;
+		}
+		buf += w;
+		len -= (size_t)w;
+	}
+}
+
 static int stamp(char *buf, size_t cap)
 {
 	struct timespec now;
@@ -76,7 +92,7 @@ void ninit_log(int level, const char *fmt, ...)
 	char buf[1024];
 	const char *const *tags = log_color ? tag_color : tag_plain;
 	va_list ap;
-	int n;
+	int n, ret;
 
 	if ((unsigned)level >= LOG_N)
 		level = LOG_INFO;
@@ -89,15 +105,16 @@ void ninit_log(int level, const char *fmt, ...)
 	}
 
 	va_start(ap, fmt);
-	n += vsnprintf(buf + n, sizeof(buf) - n, fmt, ap);
+	ret = vsnprintf(buf + n, sizeof(buf) - n, fmt, ap);
 	va_end(ap);
 
+	if (ret > 0)
+		n += ret;
 	if (n > (int)sizeof(buf) - 2)
 		n = (int)sizeof(buf) - 2;
 	buf[n++] = '\n';
 
-	// one write so concurrent reaping cannot interleave a line
-	(void)!write(log_fd, buf, (size_t)n);
+	log_write(buf, (size_t)n);
 }
 
 #define LOG_CONT	"         "

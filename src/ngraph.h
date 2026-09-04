@@ -5,7 +5,7 @@
 #include <assert.h>
 
 #define NG_MAGIC	0x4744494eu // 'NIDG'
-#define NG_VERSION	3u
+#define NG_VERSION	5u
 
 #define NG_TYPE_ONESHOT	0
 #define NG_TYPE_DAEMON	1
@@ -19,6 +19,12 @@
 // a target is a sync point with no script
 #define NG_NO_SCRIPT	UINT32_MAX
 
+// a daemon is complete when it writes a newline to this descriptor; 0 means it
+// has none and is complete as soon as it is spawned. 0..2 are stdio.
+#define NG_NOTIFY_NONE	0
+#define NG_NOTIFY_MIN	3
+#define NG_NOTIFY_MAX	255
+
 #define NG_SHELL	"/bin/bash"
 
 // kernel doesnt give path, bash does this for us but maybe better to hardcode
@@ -28,8 +34,12 @@ static_assert(__builtin_strncmp(NG_PATH, "PATH=", 5) == 0, "NG_PATH must be a pu
 
 #define NG_MAX_SCRIPT	131071u
 
-#define NG_DEFAULT_DIR	"/etc/ninit/ninit.d"
-#define NG_DEFAULT_FILE	"/etc/ninit/depgraph"
+// the compiler is quadratic in this: the descendant bitset alone costs
+// n * ceil(n/64) * 8 bytes, so the cap is what has actually been measured
+#define NG_MAX_SVC	8192u
+
+#define NG_DEFAULT_DIR	"/etc/ninit.d"
+#define NG_DEFAULT_FILE	"/etc/ninit.d/depgraph"
 
 struct ng_hdr {
 	uint32_t magic;
@@ -53,13 +63,15 @@ struct ng_svc {
 	uint8_t type;
 	uint8_t flags;
 	uint16_t n_desc;
-	uint16_t pad;
+	uint16_t notify_fd;
 	uint32_t script_off;
 	uint32_t name_off;
 };
 
 static_assert(sizeof(struct ng_hdr) == 64, "header must be one cache line");
 static_assert(sizeof(struct ng_svc) == 16, "four services per cache line");
+static_assert(sizeof(struct ng_hdr) % 8 == 0, "header must not misalign what follows");
+static_assert(sizeof(struct ng_svc) % 4 == 0, "service table must not misalign the rdep arrays");
 
 static inline const struct ng_svc *ng_svcs(const void *m)
 {
@@ -91,12 +103,19 @@ static inline const char *ng_script(const void *m, uint32_t i)
 	return ng_blob(m) + ng_svcs(m)[i].script_off;
 }
 
+static inline uint16_t ng_notify(const void *m, uint32_t i)
+{
+	return ng_svcs(m)[i].notify_fd;
+}
+
 static inline uint8_t ng_onfail(const void *m, uint32_t i)
 {
 	return ng_svcs(m)[i].flags & NG_ONFAIL_MASK;
 }
 
 uint32_t ng_crc32c(const void *data, size_t len);
+
+uint32_t ng_image_crc32c(const void *map, size_t len);
 
 const char *ng_verify(const void *map, size_t len);
 
