@@ -13,7 +13,7 @@ void ninit_log(int level, const char *fmt, ...) __attribute__((format(printf, 2,
 void log_raw(int level, const char *buf, size_t len);
 void print_welcome(void);
 
-#if NINIT_QUIET
+#ifdef NINIT_QUIET
 #define log_ok(...)	((void)0)
 #define log_info(...)	((void)0)
 #else
