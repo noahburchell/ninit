@@ -23,6 +23,7 @@ struct src {
 	int have_type;
 	uint8_t onfail;
 	int have_onfail;
+	uint16_t notify;
 	struct strv depon;
 	struct strv depof;
 };
@@ -174,6 +175,8 @@ static void parse_src(struct src *s, const char *fname, const char *body, size_t
 		key = trim(line);
 		line = nl;
 
+		if (*key && *key != '#')
+			break;
 		if (key[0] != '#' || key[1] != '%')
 			continue;
 		key = trim(key + 2);
@@ -206,6 +209,18 @@ static void parse_src(struct src *s, const char *fname, const char *body, size_t
 				die("%s/%s: unknown onfail:%s (want warn, stop or shell)",
 				    g_dir, fname, val);
 			s->have_onfail = 1;
+		} else if (!strcmp(key, "notify")) {
+			char *end;
+			unsigned long fd;
+
+			// strtoul wraps a leading - instead of rejecting it
+			errno = 0;
+			fd = strtoul(val, &end, 10);
+			if (*val == '-' || errno || end == val || *end ||
+			    fd < NG_NOTIFY_MIN || fd > NG_NOTIFY_MAX)
+				die("%s/%s: notify:%s must be a descriptor between %u and %u",
+				    g_dir, fname, val, NG_NOTIFY_MIN, NG_NOTIFY_MAX);
+			s->notify = (uint16_t)fd;
 		} else if (!strcmp(key, "type")) {
 			if (!strcmp(val, "oneshot"))
 				s->type = NG_TYPE_ONESHOT;
@@ -221,13 +236,18 @@ static void parse_src(struct src *s, const char *fname, const char *body, size_t
 		}
 	}
 
-	// the blob stores scripts nul terminated, so an embedded nul would truncate
 	if (strlen(body) != len)
 		die("%s/%s: contains a NUL byte", g_dir, fname);
 
 	code = has_code(body);
 	if (!s->have_type)
 		s->type = code ? NG_TYPE_ONESHOT : NG_TYPE_TARGET;
+
+	if (s->notify && s->type != NG_TYPE_DAEMON)
+		die("%s/%s: notify: is only meaningful for type:daemon; a %s %s",
+		    g_dir, fname, ng_typename(s->type),
+		    s->type == NG_TYPE_TARGET ? "has no process"
+					      : "is complete when it exits");
 
 	if (s->type == NG_TYPE_TARGET) {
 		if (code)
@@ -246,6 +266,24 @@ static void parse_src(struct src *s, const char *fname, const char *body, size_t
 static int keep(const struct dirent *d)
 {
 	return d->d_name[0] != '.';
+}
+
+static int cmp_dirent(const struct dirent **a, const struct dirent **b)
+{
+	return strcmp((*a)->d_name, (*b)->d_name);
+}
+
+static const char *name_problem(const char *s)
+{
+	const unsigned char *p = (const unsigned char *)s;
+
+	for (; *p; p++) {
+		if (*p == ',')
+			return "a comma";
+		if (*p <= ' ' || *p == 0x7f)
+			return "whitespace or a control character";
+	}
+	return NULL;
 }
 
 static int cmp_edge(const void *x, const void *y)
@@ -278,6 +316,7 @@ struct graph {
 	uint32_t *height;
 	uint8_t *color;
 	uint32_t *path;
+	uint32_t *iter;
 	uint32_t depth;
 };
 
@@ -298,29 +337,44 @@ static void cycle_death(struct graph *g, struct src *s, uint32_t v)
 	exit(1);
 }
 
-static void visit(struct graph *g, struct src *s, uint32_t v)
+static void visit(struct graph *g, struct src *s, uint32_t root)
 {
-	uint32_t j, h = 0;
-
-	if (g->color[v] == 1)
-		cycle_death(g, s, v);
-	if (g->color[v] == 2)
+	if (g->color[root])
 		return;
 
-	g->color[v] = 1;
-	g->path[g->depth++] = v;
+	g->color[root] = 1;
+	g->path[g->depth] = root;
+	g->iter[g->depth] = g->off[root];
+	g->depth++;
 
-	for (j = g->off[v]; j < g->off[v + 1]; j++) {
-		uint32_t w = g->idx[j];
+	while (g->depth) {
+		uint32_t top = g->depth - 1;
+		uint32_t v = g->path[top];
+		uint32_t j, h = 0;
 
-		visit(g, s, w);
-		if (g->height[w] + 1 > h)
-			h = g->height[w] + 1;
+		if (g->iter[top] < g->off[v + 1]) {
+			uint32_t w = g->idx[g->iter[top]++];
+
+			if (g->color[w] == 1)
+				cycle_death(g, s, w);
+			if (g->color[w] == 2)
+				continue;
+
+			g->color[w] = 1;
+			g->path[g->depth] = w;
+			g->iter[g->depth] = g->off[w];
+			g->depth++;
+			continue;
+		}
+
+		// every child is final now, so height is one past the tallest
+		for (j = g->off[v]; j < g->off[v + 1]; j++)
+			if (g->height[g->idx[j]] + 1 > h)
+				h = g->height[g->idx[j]] + 1;
+		g->height[v] = h;
+		g->color[v] = 2;
+		g->depth--;
 	}
-
-	g->depth--;
-	g->color[v] = 2;
-	g->height[v] = h;
 }
 
 static uint32_t *schedule(struct graph *g)
@@ -387,12 +441,14 @@ static uint32_t blob_add(struct blob *b, const char *s)
 static void write_atomic(const char *path, const void *buf, size_t len)
 {
 	char tmp[4104], old[4104], *slash;
+	const char *dir;
 	const char *p = buf;
 	size_t left = len;
 	int fd;
 
-	snprintf(tmp, sizeof(tmp), "%s.tmp", path);
-	snprintf(old, sizeof(old), "%s.old", path);
+	if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp) ||
+	    snprintf(old, sizeof(old), "%s.old", path) >= (int)sizeof(old))
+		die("output path is too long: %s", path);
 
 	fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
 	if (fd < 0)
@@ -425,16 +481,16 @@ static void write_atomic(const char *path, const void *buf, size_t len)
 		die("rename %s -> %s: %s", tmp, path, strerror(errno));
 	}
 
-	// the replace is only durable once the directory entry itself is synced
 	snprintf(tmp, sizeof(tmp), "%s", path);
 	slash = strrchr(tmp, '/');
-	if (slash) {
+	if (slash)
 		*slash = '\0';
-		fd = open(*tmp ? tmp : "/", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-		if (fd >= 0) {
-			fsync(fd);
-			close(fd);
-		}
+	dir = !slash ? "." : *tmp ? tmp : "/";
+
+	fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (fd >= 0) {
+		fsync(fd);
+		close(fd);
 	}
 }
 
@@ -449,16 +505,23 @@ int cmd_init(int argc, char **argv)
 	uint32_t n, m = 0, cap = 0, i, j, nroots = 0;
 	uint32_t *order, *inv;
 	uint64_t hash = 0xcbf29ce484222325ull;
+	const char *why;
 	int ne, k, custom_dir = 0;
 
+	// argv is already past argv[0] and the subcommand
 	for (k = 0; k < argc; k++) {
-		if ((!strcmp(argv[k], "-d") || !strcmp(argv[k], "--dir")) && k + 1 < argc) {
-			dir = argv[++k];
+		if (!strcmp(argv[k], "-d") || !strcmp(argv[k], "--dir")) {
+			if (++k == argc)
+				die("init: %s needs a directory", argv[k - 1]);
+			dir = argv[k];
 			custom_dir = 1;
-		} else if ((!strcmp(argv[k], "-o") || !strcmp(argv[k], "--out")) && k + 1 < argc)
-			out = argv[++k];
-		else
+		} else if (!strcmp(argv[k], "-o") || !strcmp(argv[k], "--out")) {
+			if (++k == argc)
+				die("init: %s needs a file", argv[k - 1]);
+			out = argv[k];
+		} else {
 			die("init: unexpected argument '%s'", argv[k]);
+		}
 	}
 	g_dir = dir;
 	if (!out) {
@@ -470,7 +533,7 @@ int cmd_init(int argc, char **argv)
 		}
 	}
 
-	ne = scandir(dir, &ents, keep, alphasort);
+	ne = scandir(dir, &ents, keep, cmp_dirent);
 	if (ne < 0)
 		die("scandir %s: %s", dir, strerror(errno));
 
@@ -485,9 +548,15 @@ int cmd_init(int argc, char **argv)
 		snprintf(path, sizeof(path), "%s/%s", dir, ents[k]->d_name);
 		if (stat(path, &st) < 0 || !S_ISREG(st.st_mode))
 			continue;
+
 		if (!strcmp(ents[k]->d_name, "depgraph") ||
 		    !strncmp(ents[k]->d_name, "depgraph.", 9))
 			continue;
+
+		why = name_problem(ents[k]->d_name);
+		if (why)
+			die("%s/%s: filename contains %s; depon/depof could never name it",
+			    dir, ents[k]->d_name, why);
 
 		buf = slurp(path, &len);
 
@@ -500,9 +569,8 @@ int cmd_init(int argc, char **argv)
 	}
 	if (!n)
 		die("no services in %s", dir);
-	// struct ng_svc holds unmet and n_desc in a uint16_t each
-	if (n > UINT16_MAX)
-		die("%u services in %s; the format tops out at %u", n, dir, UINT16_MAX);
+	if (n > NG_MAX_SVC)
+		die("%u services in %s; the tested maximum is %u", n, dir, NG_MAX_SVC);
 
 	for (i = 0; i < n; i++) {
 		for (j = 0; j < srcs[i].depon.n + srcs[i].depof.n; j++) {
@@ -527,7 +595,8 @@ int cmd_init(int argc, char **argv)
 		}
 	}
 
-	qsort(edges, m, sizeof(*edges), cmp_edge);
+	if (m)
+		qsort(edges, m, sizeof(*edges), cmp_edge);
 	j = 0;
 	for (i = 0; i < m; i++)
 		if (!i || cmp_edge(&edges[i], &edges[j - 1]))
@@ -542,6 +611,7 @@ int cmd_init(int argc, char **argv)
 	g.height = xmalloc(n * sizeof(*g.height));
 	g.color = xmalloc(n);
 	g.path = xmalloc(n * sizeof(*g.path));
+	g.iter = xmalloc(n * sizeof(*g.iter));
 
 	for (i = 0; i < m; i++) {
 		g.off[edges[i].a + 1]++;
@@ -571,7 +641,8 @@ int cmd_init(int argc, char **argv)
 		edges[i].a = inv[edges[i].a];
 		edges[i].b = inv[edges[i].b];
 	}
-	qsort(edges, m, sizeof(*edges), cmp_edge);
+	if (m)
+		qsort(edges, m, sizeof(*edges), cmp_edge);
 
 	{
 		struct blob blob = { 0 };
@@ -615,11 +686,15 @@ int cmd_init(int argc, char **argv)
 			for (w = 0; w < nw; w++)
 				nd += (uint32_t)__builtin_popcountll(desc[(size_t)i * nw + w]);
 
-			if (s->have_onfail)
+			if (s->have_onfail) {
+				if (s->onfail == NG_ONFAIL_WARN && nd)
+					die("%s/%s: onfail:warn but %u service%s depend%s on it",
+					    g_dir, s->name, nd, nd == 1 ? "" : "s",
+					    nd == 1 ? "s" : "");
 				pol = s->onfail;
-			else if (!nd)
+			} else if (!nd)
 				pol = NG_ONFAIL_WARN;
-			else if (nd * 2 >= n)
+			else if (nd >= 2 && nd * 2 >= n)
 				pol = NG_ONFAIL_SHELL;
 			else
 				pol = NG_ONFAIL_STOP;
@@ -628,7 +703,7 @@ int cmd_init(int argc, char **argv)
 			sv[i].type = s->type;
 			sv[i].flags = pol;
 			sv[i].n_desc = (uint16_t)nd;
-			sv[i].pad = 0;
+			sv[i].notify_fd = s->notify;
 			sv[i].name_off = blob_add(&blob, s->name);
 			sv[i].script_off = s->script ? blob_add(&blob, s->script)
 						     : NG_NO_SCRIPT;
@@ -667,14 +742,11 @@ int cmd_init(int argc, char **argv)
 		h->off_blob = (uint32_t)off;
 		memcpy(buf + off, blob.p, blob.n);
 
-		h->crc32 = ng_crc32c(buf + sizeof(*h), total - sizeof(*h));
+		h->crc32 = ng_image_crc32c(buf, total);
 
-		{
-			const char *why = ng_verify(buf, total);
-
-			if (why)
-				die("internal: built a graph that fails verify: %s", why);
-		}
+		why = ng_verify(buf, total);
+		if (why)
+			die("internal: built a graph that fails verify: %s", why);
 
 		write_atomic(out, buf, total);
 		printf("%s: %u services, %u edges, %u roots, %zu bytes\n",

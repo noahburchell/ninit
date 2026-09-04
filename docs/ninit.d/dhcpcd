@@ -2,4 +2,4 @@
 #% depon: udev
 
 ip link set lo up
-dhcpcd -w eth0
+dhcpcd -w enp8s0

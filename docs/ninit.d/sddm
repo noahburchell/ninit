@@ -1,5 +1,5 @@
 #!/bin/bash
-#% depon: basic network
+#% depon: basic dhcpcd
 #% type: daemon
 
 exec /usr/bin/sddm

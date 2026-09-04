@@ -1,6 +1,10 @@
 #!/bin/bash
 #% type: daemon
 #% depon: fs
+#% notify: 3
 # for me my kmods are on a subvol so udev cant happen until fs mounted. for you this will probably be different
 
-exec /sbin/udevd
+{ until [ -S /run/udev/control ]; do sleep 0.02; done
+  udevadm settle && echo >&3; } &
+
+exec 3>&- /sbin/udevd

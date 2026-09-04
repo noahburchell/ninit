@@ -1,12 +1,12 @@
 #include "ngraph.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 __attribute__((target("sse4.2")))
-uint32_t ng_crc32c(const void *data, size_t len)
+static uint64_t crc32c_feed(uint64_t crc, const void *data, size_t len)
 {
 	const unsigned char *p = data;
-	uint64_t crc = ~0u;
 
 	while (len >= 8) {
 		uint64_t v;
@@ -18,6 +18,23 @@ uint32_t ng_crc32c(const void *data, size_t len)
 	}
 	while (len--)
 		crc = __builtin_ia32_crc32qi((uint32_t)crc, *p++);
+
+	return crc;
+}
+
+uint32_t ng_crc32c(const void *data, size_t len)
+{
+	return ~(uint32_t)crc32c_feed(~0u, data, len);
+}
+
+uint32_t ng_image_crc32c(const void *map, size_t len)
+{
+	struct ng_hdr h = *(const struct ng_hdr *)map;
+	uint64_t crc;
+
+	h.crc32 = 0;
+	crc = crc32c_feed(~0u, &h, sizeof(h));
+	crc = crc32c_feed(crc, (const char *)map + sizeof(h), len - sizeof(h));
 
 	return ~(uint32_t)crc;
 }
@@ -68,6 +85,8 @@ const char *ng_verify(const void *map, size_t len)
 
 	n = h->n_svc;
 	m = h->n_edges;
+	if (n > NG_MAX_SVC)
+		return "n_svc exceeds the supported maximum";
 	if (h->n_roots > n)
 		return "n_roots exceeds n_svc";
 	if (h->reserved[0] || h->reserved[1])
@@ -82,7 +101,7 @@ const char *ng_verify(const void *map, size_t len)
 	if (!range_ok(h->off_blob, h->blob_len, h->total_len, 1))
 		return "blob out of bounds";
 
-	if (ng_crc32c((const char *)map + sizeof(*h), len - sizeof(*h)) != h->crc32)
+	if (ng_image_crc32c(map, len) != h->crc32)
 		return "crc mismatch (corrupt)";
 
 	blob = ng_blob(map);
@@ -115,8 +134,11 @@ const char *ng_verify(const void *map, size_t len)
 			return "unmet exceeds n_svc";
 		if (s->n_desc >= n)
 			return "n_desc exceeds n_svc";
-		if (s->pad)
-			return "service padding is not zero";
+		if (s->notify_fd &&
+		    (s->notify_fd < NG_NOTIFY_MIN || s->notify_fd > NG_NOTIFY_MAX))
+			return "notify fd out of range";
+		if (s->notify_fd && s->type != NG_TYPE_DAEMON)
+			return "only a daemon can carry a notify fd";
 		if (s->type > NG_TYPE_TARGET)
 			return "unknown service type";
 		if ((s->flags & NG_ONFAIL_MASK) > NG_ONFAIL_SHELL)
@@ -134,6 +156,21 @@ const char *ng_verify(const void *map, size_t len)
 		} else if (s->script_off >= h->blob_len) {
 			return "script offset out of range";
 		}
+	}
+
+	if (n) {
+		uint32_t *indeg = calloc(n, sizeof(*indeg));
+
+		if (!indeg)
+			return "out of memory verifying in-degrees";
+		for (i = 0; i < m; i++)
+			indeg[ridx[i]]++;
+		for (i = 0; i < n; i++)
+			if (sv[i].unmet != indeg[i]) {
+				free(indeg);
+				return "unmet does not match the in-degree of the edge list";
+			}
+		free(indeg);
 	}
 
 	return NULL;

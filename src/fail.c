@@ -127,6 +127,16 @@ static int emerg_console(void)
 	int fd = open("/dev/console", O_RDWR | O_NOCTTY | O_CLOEXEC);
 	int err;
 
+	// dup2(fd, fd) is a no-op that leaves CLOEXEC set, so the shell would lose
+	// the descriptor it was handed; keep the console clear of 0..2
+	if (fd >= 0 && fd < 3) {
+		int up = fcntl(fd, F_DUPFD_CLOEXEC, 3);
+
+		if (up >= 0) {
+			close(fd);
+			fd = up;
+		}
+	}
 	if (fd >= 0)
 		return fd;
 
