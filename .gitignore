@@ -7,3 +7,4 @@ docs/notes.rst
 docs/conf.py
 docs/_build/
 __pycache__/
+testing.log
