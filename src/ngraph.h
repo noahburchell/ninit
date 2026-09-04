@@ -24,6 +24,8 @@
 // kernel doesnt give path, bash does this for us but maybe better to hardcode
 #define NG_PATH	"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+static_assert(__builtin_strncmp(NG_PATH, "PATH=", 5) == 0, "NG_PATH must be a putenv-style entry");
+
 #define NG_MAX_SCRIPT	131071u
 
 #define NG_DEFAULT_DIR	"/etc/ninit/ninit.d"
@@ -61,17 +63,17 @@ static_assert(sizeof(struct ng_svc) == 16, "four services per cache line");
 
 static inline const struct ng_svc *ng_svcs(const void *m)
 {
-	return (const struct ng_svc *)((const char *)m + ((const struct ng_hdr *)m)->off_svc);
+	return (const void *)((const char *)m + ((const struct ng_hdr *)m)->off_svc);
 }
 
 static inline const uint32_t *ng_rdep_off(const void *m)
 {
-	return (const uint32_t *)((const char *)m + ((const struct ng_hdr *)m)->off_rdep_off);
+	return (const void *)((const char *)m + ((const struct ng_hdr *)m)->off_rdep_off);
 }
 
 static inline const uint32_t *ng_rdep_idx(const void *m)
 {
-	return (const uint32_t *)((const char *)m + ((const struct ng_hdr *)m)->off_rdep_idx);
+	return (const void *)((const char *)m + ((const struct ng_hdr *)m)->off_rdep_idx);
 }
 
 static inline const char *ng_blob(const void *m)

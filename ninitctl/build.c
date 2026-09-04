@@ -18,7 +18,7 @@ struct strv {
 
 struct src {
 	char *name;
-	char *script;
+	const char *script;
 	uint8_t type;
 	int have_type;
 	uint8_t onfail;
@@ -239,7 +239,7 @@ static void parse_src(struct src *s, const char *fname, const char *body, size_t
 		if (len > NG_MAX_SCRIPT)
 			die("%s/%s: script is %zu bytes; execve caps one argument at %u",
 			    g_dir, fname, len, NG_MAX_SCRIPT);
-		s->script = (char *)body;
+		s->script = body;
 	}
 }
 
@@ -500,6 +500,9 @@ int cmd_init(int argc, char **argv)
 	}
 	if (!n)
 		die("no services in %s", dir);
+	// struct ng_svc holds unmet and n_desc in a uint16_t each
+	if (n > UINT16_MAX)
+		die("%u services in %s; the format tops out at %u", n, dir, UINT16_MAX);
 
 	for (i = 0; i < n; i++) {
 		for (j = 0; j < srcs[i].depon.n + srcs[i].depof.n; j++) {
@@ -639,7 +642,7 @@ int cmd_init(int argc, char **argv)
 		total += blob.n;
 
 		buf = xmalloc(total);
-		h = (struct ng_hdr *)buf;
+		h = (void *)buf;
 		h->magic = NG_MAGIC;
 		h->version = NG_VERSION;
 		h->total_len = (uint32_t)total;

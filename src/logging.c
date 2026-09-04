@@ -12,17 +12,17 @@ static int log_color;
 static struct timespec log_start;
 
 static const char *const tag_color[] = {
-	"\033[32m  ok  \033[0m",
+	"\033[32m  OK  \033[0m",
 	"      ",
-	"\033[1;33m warn \033[0m",
-	"\033[1;31m fail \033[0m",
+	"\033[1;33m WARN \033[0m",
+	"\033[1;31m FAIL \033[0m",
 };
 
 static const char *const tag_plain[] = {
-	"  ok  ",
+	"  OK  ",
 	"      ",
-	" warn ",
-	" fail ",
+	" WARN ",
+	" FAIL ",
 };
 
 void log_init(void)
@@ -100,7 +100,7 @@ void log_raw(int level, const char *buf, size_t len)
 
 void print_welcome(void)
 {
-#if NINIT_QUIET
+#ifdef NINIT_QUIET
 	return;
 #else
 	FILE *file = fopen("/etc/os-release", "r");
