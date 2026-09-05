@@ -27,6 +27,10 @@ types:
 - daemon: complete when it writes a newline to its notify fd, or right after spawn if it has none. exiting later is logged, and respawned if 'restart: always'
 - target: no commands. complete when its dependencies are
 
+a daemon must run in the foreground: 'exec' the real binary with whatever flag stops it daemonising ('-n', '--nofork', '--foreground'). the process pid 1 starts is the service, and its exit is the service exiting. a script that forks and returns is reported complete and then immediately treated as dead
+
+a readiness probe belongs in a background subshell of the same script, which writes the newline and exits while the main shell execs the daemon. docs/ninit.d/dbus and docs/ninit.d/udev do this
+
 a failed service is retried once, then 'onfail' decides. without 'onfail' the policy is inferred from how much of the graph depends on it
 
 service info:

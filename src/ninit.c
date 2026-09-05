@@ -27,6 +27,11 @@
 #define START_TIMEOUT_MS 90000
 #define TERM_GRACE_MS	5000
 #define KILL_GRACE_MS	2000
+#define DEGRADED_POLL_MS 200
+#define DRAIN_POLL_CHUNKS 16
+#define DRAIN_FINAL_CHUNKS 1024
+#define SHUTDOWN_DRAIN_MS 100
+#define HWCLOCK_GRACE_MS 5000
 #define RO_PASSES	3
 
 #define EXIT_NOEXEC	(127 << 8)
@@ -43,9 +48,9 @@ struct run {
 	long long restart_at;
 	uint8_t burst;
 	uint8_t attempt;
-	uint8_t exited;
 	uint8_t hup;
 	uint8_t timedout;
+	uint8_t starting;
 	uint16_t tail_len;
 	uint16_t line_len;
 	long long started;
@@ -404,12 +409,12 @@ static void absorb(uint32_t i, const char *buf, size_t len)
 #endif
 }
 
-static void drain_out(uint32_t i)
+static void drain_out(uint32_t i, unsigned chunks)
 {
 	struct run *r = &runs[i];
 	char buf[4096];
 
-	while (r->out_fd >= 0) {
+	while (r->out_fd >= 0 && chunks--) {
 		ssize_t k = read(r->out_fd, buf, sizeof(buf));
 
 		if (k > 0) {
@@ -428,9 +433,11 @@ static void drain_out(uint32_t i)
 
 static void spawn(uint32_t i);
 static void service_failed(uint32_t i, int status);
+static void start_failed(uint32_t i, int status);
 
 static void complete(uint32_t i)
 {
+	runs[i].starting = 0;
 	if (state[i] == NG_ST_RUNNING)
 		n_active--;
 	state[i] = NG_ST_DONE;
@@ -469,9 +476,9 @@ static int launch(uint32_t i)
 
 	r->tail_len = 0;
 	r->line_len = 0;
-	r->exited = 0;
 	r->hup = 0;
 	r->timedout = 0;
+	r->starting = 1;
 
 	if (pipe2(out, O_CLOEXEC) < 0) {
 		log_err("%s: pipe: %s", ng_name(map, i), strerror(errno));
@@ -550,7 +557,7 @@ static void service_failed(uint32_t i, int status)
 	enum fail_act act;
 	char why[160];
 
-	drain_out(i);
+	drain_out(i, DRAIN_FINAL_CHUNKS);
 	close_fds(i);
 	if (live_has(i))
 		live_del(i);
@@ -588,9 +595,11 @@ static void drain_notify(uint32_t i)
 		ssize_t k = read(r->ntf_fd, buf, sizeof(buf));
 
 		if (k > 0) {
-			if (state[i] == NG_ST_RUNNING && memchr(buf, '\n', (size_t)k)) {
+			if (r->starting && memchr(buf, '\n', (size_t)k)) {
+				r->starting = 0;
 				log_done("%s (%lld ms)", ng_name(map, i), now_ms() - r->started);
-				complete(i);
+				if (state[i] == NG_ST_RUNNING)
+					complete(i);
 			}
 			continue;
 		}
@@ -601,18 +610,46 @@ static void drain_notify(uint32_t i)
 
 		close(r->ntf_fd);
 		r->ntf_fd = -1;
-		if (state[i] != NG_ST_RUNNING) {
+		if (!r->starting) {
 			maybe_free(i);
 			return;
 		}
 
 		if (r->pid > 0) {
 			r->hup = 1;
-			kill(r->pid, SIGKILL);
+			kill(-r->pid, SIGKILL);
 			return;
 		}
-		service_failed(i, FAIL_ST_NOTIFY_HUP);
+		start_failed(i, FAIL_ST_NOTIFY_HUP);
 		return;
+	}
+}
+
+static void drain_output(void)
+{
+	uint32_t k = n_live;
+
+	while (k--) {
+		uint32_t i = live[k];
+
+		if (runs[i].out_fd >= 0)
+			drain_out(i, DRAIN_POLL_CHUNKS);
+	}
+}
+
+static void drain_all(void)
+{
+	uint32_t k = n_live;
+
+	while (k--) {
+		uint32_t i = live[k];
+
+		if (runs[i].out_fd >= 0)
+			drain_out(i, DRAIN_POLL_CHUNKS);
+		if (runs[i].ntf_fd >= 0)
+			drain_notify(i);
+		if (live_has(i))
+			maybe_free(i);
 	}
 }
 
@@ -634,6 +671,21 @@ static void restart_schedule(uint32_t i, int status)
 
 	fail_describe(status, how, sizeof(how));
 	log_warn("%s: exited (%s), restarting in %u ms", ng_name(map, i), how, d);
+}
+
+static void start_failed(uint32_t i, int status)
+{
+	runs[i].starting = 0;
+	if (state[i] == NG_ST_RUNNING) {
+		service_failed(i, status);
+		return;
+	}
+	if (!shutting_down && ng_restart(map, i)) {
+		restart_schedule(i, status);
+		return;
+	}
+	close_fds(i);
+	maybe_free(i);
 }
 
 static void fire_restarts(void)
@@ -678,6 +730,27 @@ static long long restarts_due(void)
 	return best;
 }
 
+static long long starts_due(void)
+{
+	long long best = -1, now = now_ms();
+	uint32_t k;
+
+	for (k = 0; k < n_live; k++) {
+		struct run *r = &runs[live[k]];
+		long long d;
+
+		if (!r->starting || r->timedout)
+			continue;
+		d = r->started + START_TIMEOUT_MS - now;
+		if (d < 0)
+			d = 0;
+		if (best < 0 || d < best)
+			best = d;
+	}
+
+	return best;
+}
+
 static void child_exited(uint32_t i, int status)
 {
 	struct run *r = &runs[i];
@@ -685,10 +758,15 @@ static void child_exited(uint32_t i, int status)
 	char how[64];
 
 	r->pid = 0;
-	drain_out(i);
+	drain_out(i, DRAIN_FINAL_CHUNKS);
 
 	if (state[i] != NG_ST_RUNNING) {
+		r->starting = 0;
 		if (state[i] == NG_ST_DONE && !shutting_down) {
+			if (r->timedout)
+				status = FAIL_ST_TIMEOUT;
+			else if (r->hup)
+				status = FAIL_ST_NOTIFY_HUP;
 			if (ng_restart(map, i)) {
 				restart_schedule(i, status);
 				return;
@@ -704,12 +782,12 @@ static void child_exited(uint32_t i, int status)
 		maybe_free(i);
 		return;
 	}
-	if (r->hup) {
-		service_failed(i, FAIL_ST_NOTIFY_HUP);
-		return;
-	}
 	if (r->timedout) {
 		service_failed(i, FAIL_ST_TIMEOUT);
+		return;
+	}
+	if (r->hup) {
+		service_failed(i, FAIL_ST_NOTIFY_HUP);
 		return;
 	}
 
@@ -724,11 +802,6 @@ static void child_exited(uint32_t i, int status)
 		return;
 	}
 
-	// a daemon that forked and exited 0 may still report ready through a child
-	if (WIFEXITED(status) && WEXITSTATUS(status) == 0 && r->ntf_fd >= 0) {
-		r->exited = 1;
-		return;
-	}
 	service_failed(i, status);
 }
 
@@ -777,11 +850,14 @@ static void wait_children(long long grace)
 		long long left;
 
 		reap();
+		drain_output();
 		if (kill(-1, 0) < 0 && errno == ESRCH)
 			return;
 		left = deadline - now_ms();
 		if (left <= 0)
 			return;
+		if (left > SHUTDOWN_DRAIN_MS)
+			left = SHUTDOWN_DRAIN_MS;
 		poll(&p, 1, (int)left);
 		while (read(sfd, &si, sizeof(si)) == (ssize_t)sizeof(si))
 			;
@@ -919,6 +995,30 @@ static void stop_swap(void)
 	fclose(f);
 }
 
+static int wait_pid_ms(pid_t pid, long long ms)
+{
+	long long deadline = now_ms() + ms;
+	int st;
+
+	for (;;) {
+		struct pollfd p = { .fd = sfd, .events = POLLIN };
+		struct signalfd_siginfo si;
+		pid_t r = waitpid(pid, &st, WNOHANG);
+		long long left;
+
+		if (r == pid || (r < 0 && errno != EINTR))
+			return 1;
+		left = deadline - now_ms();
+		if (left <= 0)
+			return 0;
+		if (left > SHUTDOWN_DRAIN_MS)
+			left = SHUTDOWN_DRAIN_MS;
+		poll(&p, 1, (int)left);
+		while (read(sfd, &si, sizeof(si)) == (ssize_t)sizeof(si))
+			;
+	}
+}
+
 static void save_hwclock(void)
 {
 	static char arg0[] = "hwclock", arg1[] = "--systohc", arg2[] = "--utc";
@@ -926,7 +1026,6 @@ static void save_hwclock(void)
 	static char path[] = NG_PATH;
 	static char *const envp[] = { path, NULL };
 	pid_t pid = fork();
-	int st;
 
 	if (pid < 0)
 		return;
@@ -936,8 +1035,13 @@ static void save_hwclock(void)
 		execve("/usr/sbin/hwclock", argv, envp);
 		_exit(127);
 	}
-	while (waitpid(pid, &st, 0) < 0 && errno == EINTR)
-		;
+	if (wait_pid_ms(pid, HWCLOCK_GRACE_MS))
+		return;
+
+	log_warn("shutdown: hwclock did not finish in %d s, killing it",
+		 HWCLOCK_GRACE_MS / 1000);
+	kill(pid, SIGKILL);
+	wait_pid_ms(pid, KILL_GRACE_MS);
 }
 
 static void shutdown_system(int how, const char *what) __attribute__((noreturn));
@@ -997,7 +1101,7 @@ static void report_stalls(void)
 	for (k = 0; k < n_live; k++) {
 		uint32_t i = live[k];
 
-		if (state[i] == NG_ST_RUNNING)
+		if (runs[i].starting)
 			log_wait("%s: still running after %lld s", ng_name(map, i),
 				 (now_ms() - runs[i].started) / 1000);
 	}
@@ -1015,7 +1119,7 @@ static void check_timeouts(void)
 		uint32_t i = live[k];
 		struct run *r = &runs[i];
 
-		if (state[i] != NG_ST_RUNNING || r->timedout ||
+		if (!r->starting || r->timedout ||
 		    now - r->started < START_TIMEOUT_MS) {
 			k++;
 			continue;
@@ -1025,12 +1129,12 @@ static void check_timeouts(void)
 			ng_name(map, i), START_TIMEOUT_MS / 1000);
 		r->timedout = 1;
 		if (r->pid > 0) {
-			kill(r->pid, SIGKILL); // child_exited routes it
+			kill(-r->pid, SIGKILL); // child_exited routes it
 			k++;
 			continue;
 		}
 
-		service_failed(i, FAIL_ST_TIMEOUT);
+		start_failed(i, FAIL_ST_TIMEOUT);
 		k = 0;
 	}
 }
@@ -1079,11 +1183,12 @@ static void start_graph(void)
 
 int main(int argc, char **argv)
 {
+	static struct pollfd sig_only[1];
 	const char *graph = NG_DEFAULT_FILE, *why;
 	struct pollfd *pfds;
 	uint32_t *pf_idx;
 	uint8_t *pf_kind;
-	int placeholder;
+	int placeholder, degraded;
 
 	if (getpid() != 1) {
 		log_err("ninit must run as pid 1");
@@ -1134,8 +1239,16 @@ int main(int argc, char **argv)
 	pfds = calloc(1 + 2 * (size_t)n_svc, sizeof(*pfds));
 	pf_idx = calloc(1 + 2 * (size_t)n_svc, sizeof(*pf_idx));
 	pf_kind = calloc(1 + 2 * (size_t)n_svc, sizeof(*pf_kind));
-	if (!pfds || !pf_idx || !pf_kind)
+	degraded = !pfds || !pf_idx || !pf_kind;
+	if (degraded) {
+		free(pfds);
+		free(pf_idx);
+		free(pf_kind);
+		pfds = sig_only;
+		pf_idx = NULL;
+		pf_kind = NULL;
 		fail_emergency_shell("boot: out of memory building the poll set");
+	}
 
 	for (;;) {
 		static long long last_stall;
@@ -1147,24 +1260,25 @@ int main(int argc, char **argv)
 		check_timeouts();
 		check_boot_done();
 
+		if (degraded)
+			drain_all();
+
 		pfds[0].fd = sfd;
 		pfds[0].events = POLLIN;
-		if (pfds && pf_idx && pf_kind) {
-			for (k = 0; k < n_live; k++) {
-				uint32_t i = live[k];
+		for (k = 0; !degraded && k < n_live; k++) {
+			uint32_t i = live[k];
 
-				if (runs[i].out_fd >= 0) {
-					pfds[nfds].fd = runs[i].out_fd;
-					pfds[nfds].events = POLLIN;
-					pf_idx[nfds] = i;
-					pf_kind[nfds++] = 0;
-				}
-				if (runs[i].ntf_fd >= 0) {
-					pfds[nfds].fd = runs[i].ntf_fd;
-					pfds[nfds].events = POLLIN;
-					pf_idx[nfds] = i;
-					pf_kind[nfds++] = 1;
-				}
+			if (runs[i].out_fd >= 0) {
+				pfds[nfds].fd = runs[i].out_fd;
+				pfds[nfds].events = POLLIN;
+				pf_idx[nfds] = i;
+				pf_kind[nfds++] = 0;
+			}
+			if (runs[i].ntf_fd >= 0) {
+				pfds[nfds].fd = runs[i].ntf_fd;
+				pfds[nfds].events = POLLIN;
+				pf_idx[nfds] = i;
+				pf_kind[nfds++] = 1;
 			}
 		}
 
@@ -1172,6 +1286,11 @@ int main(int argc, char **argv)
 		due = restarts_due();
 		if (due >= 0 && (wait < 0 || due < wait))
 			wait = due;
+		due = starts_due();
+		if (due >= 0 && (wait < 0 || due < wait))
+			wait = due;
+		if (degraded && (wait < 0 || wait > DEGRADED_POLL_MS))
+			wait = DEGRADED_POLL_MS;
 
 		rc = poll(pfds, nfds, (int)wait);
 		if (rc < 0) {
@@ -1197,7 +1316,7 @@ int main(int argc, char **argv)
 			if (pf_kind[k])
 				drain_notify(i);
 			else
-				drain_out(i);
+				drain_out(i, DRAIN_POLL_CHUNKS);
 			if (live_has(i))
 				maybe_free(i);
 		}
