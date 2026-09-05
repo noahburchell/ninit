@@ -43,6 +43,10 @@ static_assert(NG_MAX_SVC <= UINT16_MAX, "service counts must fit the 16-bit fiel
 #define NG_DEFAULT_DIR	"/etc/ninit.d"
 #define NG_DEFAULT_FILE	"/etc/ninit.d/depgraph"
 
+// services get no login shell, so pid 1 has to carry the system locale
+#define NG_LOCALE_CONF	"/etc/locale.conf"
+#define NG_FALLBACK_LANG "C.UTF-8"
+
 struct ng_hdr {
 	uint32_t magic;
 	uint32_t version;
@@ -128,3 +132,5 @@ const char *ng_verify(const void *map, size_t len);
 
 const char *ng_typename(uint8_t type);
 const char *ng_onfailname(uint8_t policy);
+
+int ng_locale_lang(char *buf, size_t cap);

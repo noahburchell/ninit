@@ -197,6 +197,8 @@ static const void *load_graph(const char *path, const char **why)
 		return NULL;
 	}
 	*why = ng_verify(m, (size_t)st.st_size);
+	if (!*why && !((const struct ng_hdr *)m)->n_svc)
+		*why = "no services to start";
 	if (*why) {
 		munmap(m, (size_t)st.st_size);
 		return NULL;
@@ -224,12 +226,22 @@ static size_t put_num(char *dst, size_t at, unsigned v)
 	return at;
 }
 
+static char env_lang[128] = "LANG=" NG_FALLBACK_LANG;
+
+static void load_locale(void)
+{
+	char lang[96];
+
+	if (ng_locale_lang(lang, sizeof(lang)))
+		snprintf(env_lang, sizeof(env_lang), "LANG=%s", lang);
+}
+
 static void child_exec(uint32_t i, int out_w, int ntf_w) __attribute__((noreturn));
 
 static void child_exec(uint32_t i, int out_w, int ntf_w)
 {
 	static char env_path[] = NG_PATH, env_home[] = "HOME=/", env_term[] = "TERM=linux";
-	static char *const envp[] = { env_path, env_home, env_term, NULL };
+	static char *const envp[] = { env_path, env_home, env_term, env_lang, NULL };
 	static char arg_bash[] = "bash", arg_sh[] = "sh", arg_c[] = "-c";
 	char *argv[5];
 	char msg[128];
@@ -954,6 +966,7 @@ int main(int argc, char **argv)
 	}
 	log_reopen_console();
 	raise_nofile();
+	load_locale();
 	print_welcome();
 	boot_t0 = now_ms();
 
