@@ -1,0 +1,10 @@
+#!/bin/bash
+#% depon: fs
+#% onfail: warn
+
+for p in /usr/local/sbin/seedrng /usr/sbin/seedrng /usr/libexec/rc/sbin/seedrng; do
+	[ -x "$p" ] && exec "$p"
+done
+
+echo "seedrng: no seedrng binary found" >&2
+exit 1
