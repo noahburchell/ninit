@@ -1,10 +1,24 @@
 #!/bin/bash
+#% depon: tmpfiles-dev
 #% type: daemon
-#% depon: fs
 #% notify: 3
-# for me my kmods are on a subvol so udev cant happen until fs mounted. for you this will probably be different
+#% restart: always
 
-{ until [ -S /run/udev/control ]; do sleep 0.02; done
-  udevadm settle && echo >&3; } &
+for u in /sbin/udevd /lib/systemd/systemd-udevd /usr/lib/systemd/systemd-udevd; do
+	[ -x "$u" ] && udevd="$u" && break
+done
+[ -n "$udevd" ] || { echo "udev: no udevd binary found" >&2; exit 1; }
 
-exec 3>&- /sbin/udevd
+{
+	for _ in $(seq 1 500); do
+		[ -S /run/udev/control ] && break
+		sleep 0.02
+	done
+	if udevadm control --ping >/dev/null 2>&1; then
+		echo >&3
+	else
+		echo "udev: daemon did not answer a ping within 10s" >&2
+	fi
+} &
+
+exec 3>&- "$udevd"

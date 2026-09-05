@@ -1,6 +1,7 @@
 #!/bin/bash
-#% depon: basic dhcpcd
+#% depon: basic, dhcpcd
 #% type: daemon
+#% restart: always
 #% onfail: warn
 
 exec /usr/sbin/sshd -D -e

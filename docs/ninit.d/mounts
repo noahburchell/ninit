@@ -1,0 +1,5 @@
+#!/bin/bash
+#% depon: fs
+#% onfail: shell
+
+mount -a -t ext4,xfs,btrfs,vfat

@@ -1,0 +1,13 @@
+#!/bin/bash
+#% onfail: warn
+
+mountpoint -q /proc/sys/fs/binfmt_misc ||
+	mount -t binfmt_misc -o nosuid,nodev,noexec binfmt_misc /proc/sys/fs/binfmt_misc
+
+for f in /usr/lib/binfmt.d/*.conf /run/binfmt.d/*.conf /etc/binfmt.d/*.conf; do
+	[ -f "$f" ] || continue
+	while read -r line; do
+		case "$line" in ''|'#'*) continue ;; esac
+		printf '%s\n' "$line" > /proc/sys/fs/binfmt_misc/register
+	done < "$f"
+done

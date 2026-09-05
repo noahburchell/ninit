@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE pkgmetadata SYSTEM "https://www.gentoo.org/dtd/metadata.dtd">
+<pkgmetadata>
+	<maintainer type="person">
+		<email>nburchell5@gmail.com</email>
+		<name>Noah Burchell</name>
+	</maintainer>
+	<use>
+		<flag name="busybox">Try /bin/busybox before /bin/sh for the emergency shell</flag>
+		<flag name="quiet">Only print warnings and failures on the console during boot</flag>
+		<flag name="debug">Build with AddressSanitizer and UndefinedBehaviorSanitizer (testing only)</flag>
+	</use>
+	<upstream>
+		<remote-id type="github">noahburchell/ninit</remote-id>
+	</upstream>
+</pkgmetadata>

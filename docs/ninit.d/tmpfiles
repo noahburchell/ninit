@@ -1,0 +1,6 @@
+#!/bin/bash
+#% depon: mounts
+
+systemd-tmpfiles --create --remove --boot --exclude-prefix=/dev ||
+	echo "tmpfiles: some entries were skipped" >&2
+exit 0

@@ -1,0 +1,8 @@
+#!/bin/bash
+
+for n in $(seq 1 12); do
+	[ -c "/dev/tty$n" ] || continue
+	printf '\033%%G' > "/dev/tty$n"
+	kbd_mode -u -C "/dev/tty$n" 2>/dev/null
+done
+exit 0

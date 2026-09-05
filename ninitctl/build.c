@@ -23,6 +23,7 @@ struct src {
 	int have_type;
 	uint8_t onfail;
 	int have_onfail;
+	uint8_t restart;
 	uint16_t notify;
 	struct strv depon;
 	struct strv depof;
@@ -163,6 +164,8 @@ static void parse_src(struct src *s, const char *fname, const char *body, size_t
 	memcpy(scratch, body, len + 1);
 
 	s->name = strdup(fname);
+	if (!s->name)
+		die("out of memory");
 	s->type = NG_TYPE_TARGET;
 
 	while (line && *line) {
@@ -209,11 +212,18 @@ static void parse_src(struct src *s, const char *fname, const char *body, size_t
 				die("%s/%s: unknown onfail:%s (want warn, stop or shell)",
 				    g_dir, fname, val);
 			s->have_onfail = 1;
+		} else if (!strcmp(key, "restart")) {
+			if (!strcmp(val, "always"))
+				s->restart = 1;
+			else if (!strcmp(val, "no") || !strcmp(val, "never"))
+				s->restart = 0;
+			else
+				die("%s/%s: unknown restart:%s (want always or no)",
+				    g_dir, fname, val);
 		} else if (!strcmp(key, "notify")) {
 			char *end;
 			unsigned long fd;
 
-			// strtoul wraps a leading - instead of rejecting it
 			errno = 0;
 			fd = strtoul(val, &end, 10);
 			if (*val == '-' || errno || end == val || *end ||
@@ -239,6 +249,19 @@ static void parse_src(struct src *s, const char *fname, const char *body, size_t
 	if (strlen(body) != len)
 		die("%s/%s: contains a NUL byte", g_dir, fname);
 
+	while (line && *line) {
+		char *nl = strchr(line, '\n');
+		const char *key;
+
+		if (nl)
+			*nl++ = '\0';
+		key = trim(line);
+		line = nl;
+		if (key[0] == '#' && key[1] == '%')
+			die("%s/%s: directive '%s' comes after the first command; directives must lead the file",
+			    g_dir, fname, key);
+	}
+
 	code = has_code(body);
 	if (!s->have_type)
 		s->type = code ? NG_TYPE_ONESHOT : NG_TYPE_TARGET;
@@ -248,6 +271,12 @@ static void parse_src(struct src *s, const char *fname, const char *body, size_t
 		    g_dir, fname, ng_typename(s->type),
 		    s->type == NG_TYPE_TARGET ? "has no process"
 					      : "is complete when it exits");
+
+	if (s->restart && s->type != NG_TYPE_DAEMON)
+		die("%s/%s: restart: is only meaningful for type:daemon; a %s %s",
+		    g_dir, fname, ng_typename(s->type),
+		    s->type == NG_TYPE_TARGET ? "has no process"
+					      : "is meant to run once and exit");
 
 	if (s->type == NG_TYPE_TARGET) {
 		if (code)
@@ -276,12 +305,17 @@ static int cmp_dirent(const struct dirent **a, const struct dirent **b)
 static const char *name_problem(const char *s)
 {
 	const unsigned char *p = (const unsigned char *)s;
+	size_t n = strlen(s);
 
+	if (n && s[n - 1] == '~')
+		return "looks like an editor backup; delete it or move it to unused/";
+	if (n > 1 && s[0] == '#' && s[n - 1] == '#')
+		return "looks like an editor autosave; delete it or move it to unused/";
 	for (; *p; p++) {
 		if (*p == ',')
-			return "a comma";
+			return "contains a comma; depon/depof could never name it";
 		if (*p <= ' ' || *p == 0x7f)
-			return "whitespace or a control character";
+			return "contains whitespace or a control character; depon/depof could never name it";
 	}
 	return NULL;
 }
@@ -528,7 +562,8 @@ int cmd_init(int argc, char **argv)
 		if (!custom_dir) {
 			out = NG_DEFAULT_FILE;
 		} else {
-			snprintf(outbuf, sizeof(outbuf), "%s/depgraph", dir);
+			if (snprintf(outbuf, sizeof(outbuf), "%s/depgraph", dir) >= (int)sizeof(outbuf))
+				die("init: directory path is too long: %s", dir);
 			out = outbuf;
 		}
 	}
@@ -545,8 +580,11 @@ int cmd_init(int argc, char **argv)
 		char *buf;
 		size_t len;
 
-		snprintf(path, sizeof(path), "%s/%s", dir, ents[k]->d_name);
-		if (stat(path, &st) < 0 || !S_ISREG(st.st_mode))
+		if (snprintf(path, sizeof(path), "%s/%s", dir, ents[k]->d_name) >= (int)sizeof(path))
+			die("%s/%s: path is too long", dir, ents[k]->d_name);
+		if (stat(path, &st) < 0)
+			die("stat %s: %s", path, strerror(errno));
+		if (!S_ISREG(st.st_mode))
 			continue;
 
 		if (!strcmp(ents[k]->d_name, "depgraph") ||
@@ -555,15 +593,16 @@ int cmd_init(int argc, char **argv)
 
 		why = name_problem(ents[k]->d_name);
 		if (why)
-			die("%s/%s: filename contains %s; depon/depof could never name it",
-			    dir, ents[k]->d_name, why);
+			die("%s/%s: filename %s", dir, ents[k]->d_name, why);
 
 		buf = slurp(path, &len);
 
 		for (const char *p = ents[k]->d_name; *p; p++)
 			hash = (hash ^ (unsigned char)*p) * 0x100000001b3ull;
+		hash = (hash ^ 0) * 0x100000001b3ull;
 		for (size_t q = 0; q < len; q++)
 			hash = (hash ^ (unsigned char)buf[q]) * 0x100000001b3ull;
+		hash = (hash ^ 0) * 0x100000001b3ull;
 
 		parse_src(&srcs[n++], ents[k]->d_name, buf, len);
 	}
@@ -701,7 +740,7 @@ int cmd_init(int argc, char **argv)
 
 			sv[i].unmet = (uint16_t)g.indeg[order[i]];
 			sv[i].type = s->type;
-			sv[i].flags = pol;
+			sv[i].flags = pol | (s->restart ? NG_FLAG_RESTART : 0);
 			sv[i].n_desc = (uint16_t)nd;
 			sv[i].notify_fd = s->notify;
 			sv[i].name_off = blob_add(&blob, s->name);

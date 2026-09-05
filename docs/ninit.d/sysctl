@@ -1,4 +1,4 @@
 #!/bin/bash
-#% onfail: warn
 
-sysctl --system
+sysctl --system || echo "sysctl: some keys were rejected" >&2
+exit 0

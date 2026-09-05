@@ -1,5 +1,6 @@
 #!/bin/bash
-#% depon: basic dhcpcd
+#% depon: basic, elogind
 #% type: daemon
+#% restart: always
 
-exec /usr/bin/sddm
+exec sddm

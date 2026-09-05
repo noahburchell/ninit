@@ -1,0 +1,8 @@
+#!/bin/bash
+
+if [ -r /etc/hostname ]; then
+	hostname "$(cat /etc/hostname)" || echo "hostname: could not set it" >&2
+else
+	echo "hostname: /etc/hostname is missing" >&2
+fi
+exit 0

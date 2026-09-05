@@ -1,0 +1,11 @@
+#!/bin/bash
+#% depon: fs
+
+for f in /usr/lib/modules-load.d/*.conf /run/modules-load.d/*.conf /etc/modules-load.d/*.conf; do
+	[ -f "$f" ] || continue
+	while read -r m; do
+		case "$m" in ''|'#'*) continue ;; esac
+		modprobe -q "$m" || echo "modules-load: $m failed" >&2
+	done < "$f"
+done
+exit 0

@@ -1,0 +1,4 @@
+#!/bin/bash
+
+loadkeys -q windowkeys us || echo "keymaps: loadkeys failed" >&2
+exit 0

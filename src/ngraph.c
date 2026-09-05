@@ -3,8 +3,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(__x86_64__) || defined(__i386__)
+#define NG_CRC_X86 1
+#else
+#define NG_CRC_X86 0
+#endif
+
+#if NG_CRC_X86
 __attribute__((target("sse4.2")))
-static uint64_t crc32c_feed(uint64_t crc, const void *data, size_t len)
+static uint64_t crc32c_feed_hw(uint64_t crc, const void *data, size_t len)
 {
 	const unsigned char *p = data;
 
@@ -20,6 +27,48 @@ static uint64_t crc32c_feed(uint64_t crc, const void *data, size_t len)
 		crc = __builtin_ia32_crc32qi((uint32_t)crc, *p++);
 
 	return crc;
+}
+#endif
+
+static uint32_t crc32c_table[256];
+
+static void crc32c_table_init(void)
+{
+	for (uint32_t i = 0; i < 256; i++) {
+		uint32_t c = i;
+
+		for (int k = 0; k < 8; k++)
+			c = (c & 1) ? (c >> 1) ^ 0x82f63b78u : c >> 1;
+		crc32c_table[i] = c;
+	}
+}
+
+static uint64_t crc32c_feed_sw(uint64_t crc, const void *data, size_t len)
+{
+	const unsigned char *p = data;
+	uint32_t c = (uint32_t)crc;
+
+	if (!crc32c_table[1])
+		crc32c_table_init();
+	while (len--)
+		c = crc32c_table[(c ^ *p++) & 0xff] ^ (c >> 8);
+
+	return c;
+}
+
+static uint64_t crc32c_feed(uint64_t crc, const void *data, size_t len)
+{
+#if NG_CRC_X86
+	static int have_hw = -1;
+
+	if (have_hw < 0) {
+		__builtin_cpu_init();
+		have_hw = __builtin_cpu_supports("sse4.2");
+	}
+	if (have_hw)
+		return crc32c_feed_hw(crc, data, len);
+#endif
+	return crc32c_feed_sw(crc, data, len);
 }
 
 uint32_t ng_crc32c(const void *data, size_t len)
@@ -143,6 +192,12 @@ const char *ng_verify(const void *map, size_t len)
 			return "unknown service type";
 		if ((s->flags & NG_ONFAIL_MASK) > NG_ONFAIL_SHELL)
 			return "unknown onfail policy";
+		if (s->flags & ~NG_FLAG_MASK)
+			return "unknown flag bits are set";
+		if ((s->flags & NG_ONFAIL_MASK) == NG_ONFAIL_WARN && roff[i] != roff[i + 1])
+			return "onfail warn on a service that has dependents";
+		if ((s->flags & NG_FLAG_RESTART) && s->type != NG_TYPE_DAEMON)
+			return "only a daemon can be restarted";
 		if (s->name_off >= h->blob_len)
 			return "name offset out of range";
 		if (i < h->n_roots && s->unmet != 0)

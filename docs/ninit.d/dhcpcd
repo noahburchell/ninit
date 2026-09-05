@@ -1,5 +1,6 @@
 #!/bin/bash
-#% depon: udev
+#% depon: udev-trigger, loopback
+#% type: daemon
+#% restart: always
 
-ip link set lo up
-dhcpcd -w enp8s0
+exec dhcpcd -B
