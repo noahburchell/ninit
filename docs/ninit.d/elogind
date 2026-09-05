@@ -1,6 +1,6 @@
 #!/bin/bash
-#% depon: fs dbus
-#% depof: sddm
+#% depon: dbus, cgroups, udev-trigger
 #% type: daemon
+#% restart: always
 
-exec /lib/elogind/elogind --foreground
+exec /lib/elogind/elogind

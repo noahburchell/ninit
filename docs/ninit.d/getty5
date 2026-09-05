@@ -1,6 +1,6 @@
 #!/bin/bash
-#% depon: udev-trigger, loopback
+#% depon: mounts
 #% type: daemon
 #% restart: always
 
-exec dhcpcd -B
+exec agetty tty5 linux

@@ -5,22 +5,24 @@
 #include <assert.h>
 
 #define NG_MAGIC	0x4744494eu // 'NIDG'
-#define NG_VERSION	5u
+#define NG_VERSION	6u
 
 #define NG_TYPE_ONESHOT	0
 #define NG_TYPE_DAEMON	1
 #define NG_TYPE_TARGET	2
 
+// flags: bits 0..1 are the onfail policy, bit 2 restarts a completed daemon
 #define NG_ONFAIL_MASK	0x03
 #define NG_ONFAIL_WARN	0
 #define NG_ONFAIL_STOP	1
 #define NG_ONFAIL_SHELL	2
 
+#define NG_FLAG_RESTART	0x04
+#define NG_FLAG_MASK	(NG_ONFAIL_MASK | NG_FLAG_RESTART)
+
 // a target is a sync point with no script
 #define NG_NO_SCRIPT	UINT32_MAX
 
-// a daemon is complete when it writes a newline to this descriptor; 0 means it
-// has none and is complete as soon as it is spawned. 0..2 are stdio.
 #define NG_NOTIFY_NONE	0
 #define NG_NOTIFY_MIN	3
 #define NG_NOTIFY_MAX	255
@@ -34,9 +36,9 @@ static_assert(__builtin_strncmp(NG_PATH, "PATH=", 5) == 0, "NG_PATH must be a pu
 
 #define NG_MAX_SCRIPT	131071u
 
-// the compiler is quadratic in this: the descendant bitset alone costs
-// n * ceil(n/64) * 8 bytes, so the cap is what has actually been measured
 #define NG_MAX_SVC	8192u
+
+static_assert(NG_MAX_SVC <= UINT16_MAX, "service counts must fit the 16-bit fields");
 
 #define NG_DEFAULT_DIR	"/etc/ninit.d"
 #define NG_DEFAULT_FILE	"/etc/ninit.d/depgraph"
@@ -111,6 +113,11 @@ static inline uint16_t ng_notify(const void *m, uint32_t i)
 static inline uint8_t ng_onfail(const void *m, uint32_t i)
 {
 	return ng_svcs(m)[i].flags & NG_ONFAIL_MASK;
+}
+
+static inline int ng_restart(const void *m, uint32_t i)
+{
+	return ng_svcs(m)[i].flags & NG_FLAG_RESTART;
 }
 
 uint32_t ng_crc32c(const void *data, size_t len);

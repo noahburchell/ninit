@@ -1,5 +1,5 @@
 #!/bin/bash
 #% type: target
-#% depon: fs, udev
+#% depon: mounts, swap, tmpfiles, udev-trigger, sysctl, hostname, keymaps, termencoding
 
-# synchronisation point
+# ready for desktop!

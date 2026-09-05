@@ -17,10 +17,16 @@ enum fail_act {
 	FAIL_SHELL,
 };
 
+#define FAIL_ST_NOTIFY_HUP	(-1)
+
+void fail_describe(int status, char *buf, size_t cap);
+
 enum fail_act fail_service(const void *map, uint32_t i, int status, unsigned attempt,
 			   const char *tail, size_t tail_len);
 
 uint32_t fail_poison(const void *map, uint32_t i, uint8_t *state);
+
+void ninit_cloexec_except(int keep);
 
 void fail_emergency_shell(const char *why);
 

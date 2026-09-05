@@ -1,0 +1,13 @@
+#!/bin/bash
+#% onfail: shell
+
+mkdir -p /sys/fs/cgroup
+
+if ! mountpoint -q /sys/fs/cgroup; then
+	mount -t cgroup2 -o nosuid,nodev,noexec,nsdelegate cgroup2 /sys/fs/cgroup
+fi
+
+[ "$(stat -fc '%T' /sys/fs/cgroup)" = cgroup2fs ] || {
+	echo "cgroups: /sys/fs/cgroup is not cgroup v2" >&2
+	exit 1
+}

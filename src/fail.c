@@ -11,7 +11,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <time.h>
@@ -27,16 +29,29 @@ static const char *verb_s(unsigned n)
 	return n == 1 ? "s" : "";
 }
 
+static const char *const signame[] = {
+	[SIGHUP] = "HUP", [SIGINT] = "INT", [SIGQUIT] = "QUIT", [SIGILL] = "ILL",
+	[SIGTRAP] = "TRAP", [SIGABRT] = "ABRT", [SIGBUS] = "BUS", [SIGFPE] = "FPE",
+	[SIGKILL] = "KILL", [SIGUSR1] = "USR1", [SIGSEGV] = "SEGV", [SIGUSR2] = "USR2",
+	[SIGPIPE] = "PIPE", [SIGALRM] = "ALRM", [SIGTERM] = "TERM", [SIGCHLD] = "CHLD",
+	[SIGCONT] = "CONT", [SIGSTOP] = "STOP", [SIGTSTP] = "TSTP", [SIGTTIN] = "TTIN",
+	[SIGTTOU] = "TTOU", [SIGURG] = "URG", [SIGXCPU] = "XCPU", [SIGXFSZ] = "XFSZ",
+	[SIGVTALRM] = "VTALRM", [SIGPROF] = "PROF", [SIGWINCH] = "WINCH", [SIGIO] = "IO",
+	[SIGPWR] = "PWR", [SIGSYS] = "SYS",
+#ifdef SIGSTKFLT
+	[SIGSTKFLT] = "STKFLT",
+#endif
+};
+
 static void describe(int status, char *buf, size_t cap)
 {
-	if (WIFEXITED(status))
+	if (status == FAIL_ST_NOTIFY_HUP)
+		snprintf(buf, cap, "closed its notify fd before reporting ready");
+	else if (WIFEXITED(status))
 		snprintf(buf, cap, "exit %d", WEXITSTATUS(status));
 	else if (WIFSIGNALED(status)) {
-#ifdef __GLIBC__
-		const char *ab = sigabbrev_np(WTERMSIG(status));
-#else
-		const char *ab = NULL;
-#endif
+		unsigned sig = (unsigned)WTERMSIG(status);
+		const char *ab = sig < sizeof(signame) / sizeof(*signame) ? signame[sig] : NULL;
 		const char *core = WCOREDUMP(status) ? " (core dumped)" : "";
 
 		if (ab)
@@ -46,6 +61,11 @@ static void describe(int status, char *buf, size_t cap)
 	}
 	else
 		snprintf(buf, cap, "status %#x", (unsigned)status);
+}
+
+void fail_describe(int status, char *buf, size_t cap)
+{
+	describe(status, buf, cap);
 }
 
 enum fail_act fail_service(const void *map, uint32_t i, int status, unsigned attempt,
@@ -111,7 +131,37 @@ uint32_t fail_poison(const void *map, uint32_t i, uint8_t *state)
 #define EMERG_EXEC_MS	 5000
 #define EMERG_NOEXEC	 127
 
-static char emerg_path[] = NG_PATH;
+#ifndef CLOSE_RANGE_CLOEXEC
+#define CLOSE_RANGE_CLOEXEC (1u << 2)
+#endif
+
+static void cloexec_range(unsigned lo, unsigned hi)
+{
+	struct rlimit rl;
+	unsigned fd, max;
+
+#ifdef SYS_close_range
+	if (syscall(SYS_close_range, lo, hi, CLOSE_RANGE_CLOEXEC) == 0)
+		return;
+#endif
+	max = getrlimit(RLIMIT_NOFILE, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY &&
+	      rl.rlim_cur < 65536 ? (unsigned)rl.rlim_cur : 65536;
+	if (hi != ~0u && hi + 1 < max)
+		max = hi + 1;
+	for (fd = lo; fd < max; fd++)
+		fcntl((int)fd, F_SETFD, FD_CLOEXEC);
+}
+
+void ninit_cloexec_except(int keep)
+{
+	if (keep < 3) {
+		cloexec_range(3, ~0u);
+		return;
+	}
+	if (keep > 3)
+		cloexec_range(3, (unsigned)keep - 1);
+	cloexec_range((unsigned)keep + 1, ~0u);
+}
 
 static pid_t emerg_pid = -1;
 static struct timespec emerg_at;
@@ -127,8 +177,6 @@ static int emerg_console(void)
 	int fd = open("/dev/console", O_RDWR | O_NOCTTY | O_CLOEXEC);
 	int err;
 
-	// dup2(fd, fd) is a no-op that leaves CLOEXEC set, so the shell would lose
-	// the descriptor it was handed; keep the console clear of 0..2
 	if (fd >= 0 && fd < 3) {
 		int up = fcntl(fd, F_DUPFD_CLOEXEC, 3);
 
@@ -196,23 +244,28 @@ static int emerg_console_reset(int con)
 	return vt;
 }
 
-static pid_t emerg_spawn(int con, const char *term, int barrier)
+static pid_t emerg_spawn(int con, int vt, int barrier)
 {
+	static char arg0[] = "-sh", path[] = NG_PATH, home[] = "HOME=/";
+	static char term_vt[] = "TERM=linux", term_serial[] = "TERM=vt220";
+	static char *const argv[] = { arg0, NULL };
+	static char *const env_vt[] = { path, term_vt, home, NULL };
+	static char *const env_serial[] = { path, term_serial, home, NULL };
+	char *const *envp = vt ? env_vt : env_serial;
+	struct sigaction dfl = { .sa_handler = SIG_DFL };
 	sigset_t none;
 	pid_t pid;
-	int sig, sh_err;
-#ifdef NINIT_BUSYBOX
-	int bb_err;
-#endif
+	int sig, errs[2] = { 0, 0 };
 
 	pid = fork();
 	if (pid != 0)
 		return pid;
 
+	// only async-signal-safe calls from here to execve
 	sigemptyset(&none);
 	sigprocmask(SIG_SETMASK, &none, NULL);
 	for (sig = 1; sig < NSIG; sig++)
-		signal(sig, SIG_DFL);
+		sigaction(sig, &dfl, NULL);
 
 	setsid();
 	ioctl(con, TIOCSCTTY, 1);
@@ -220,35 +273,26 @@ static pid_t emerg_spawn(int con, const char *term, int barrier)
 	dup2(con, 1);
 	dup2(con, 2);
 
-	close_range(3, ~0u, CLOSE_RANGE_CLOEXEC);
-	log_adopt_fd(STDERR_FILENO);
+	ninit_cloexec_except(-1);
 
 	// pid 1 may have dropped umask to 0
 	(void)!chdir("/");
 	umask(022);
 
-	putenv(emerg_path);
-	setenv("TERM", term, 1);
-
-	// a missing busybox only bad if /bin/sh is missing too
 #ifdef NINIT_BUSYBOX
-	execl(NINIT_BUSYBOX, "-sh", (char *)NULL);
-	bb_err = errno;
+	execve(NINIT_BUSYBOX, argv, envp);
+	errs[0] = errno;
 #endif
-	execl("/bin/sh", "-sh", (char *)NULL);
-	sh_err = errno;
-#ifdef NINIT_BUSYBOX
-	log_warn("shell: exec %s: %s", NINIT_BUSYBOX, strerror(bb_err));
-#endif
-	log_err("shell: exec /bin/sh: %s", strerror(sh_err));
-	(void)!write(barrier, &sh_err, sizeof(sh_err));
+	execve("/bin/sh", argv, envp);
+	errs[1] = errno;
+	(void)!write(barrier, errs, sizeof(errs));
 	_exit(EMERG_NOEXEC);
 }
 
 static int emerg_confirm(int fd)
 {
 	struct pollfd pfd = { .fd = fd, .events = POLLIN };
-	int err = 0, n;
+	int errs[2] = { 0, 0 }, n;
 
 	do
 		n = poll(&pfd, 1, EMERG_EXEC_MS);
@@ -257,10 +301,16 @@ static int emerg_confirm(int fd)
 		return 0;
 
 	do
-		n = (int)read(fd, &err, sizeof(err));
+		n = (int)read(fd, errs, sizeof(errs));
 	while (n < 0 && errno == EINTR);
+	if (n != (int)sizeof(errs))
+		return 0;
 
-	return n == (int)sizeof(err) ? err : 0;
+#ifdef NINIT_BUSYBOX
+	log_warn("shell: exec %s: %s", NINIT_BUSYBOX, strerror(errs[0]));
+#endif
+	log_err("shell: exec /bin/sh: %s", strerror(errs[1]));
+	return errs[1];
 }
 
 static int emerg_start(void)
@@ -282,7 +332,7 @@ static int emerg_start(void)
 	}
 
 	vt = emerg_console_reset(con);
-	pid = emerg_spawn(con, vt ? "linux" : "vt220", bar[1]);
+	pid = emerg_spawn(con, vt, bar[1]);
 	err = errno;
 	close(con);
 	close(bar[1]);

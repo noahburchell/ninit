@@ -2,9 +2,19 @@
 #% depon: fs
 #% type: daemon
 #% notify: 3
+#% restart: always
 
 mkdir -p /run/dbus
 
-{ until [ -S /run/dbus/system_bus_socket ]; do sleep 0.02; done; echo >&3; } &
+{
+	for _ in $(seq 1 500); do
+		if [ -S /run/dbus/system_bus_socket ]; then
+			echo >&3
+			exit 0
+		fi
+		sleep 0.02
+	done
+	echo "dbus: no system bus socket after 10s" >&2
+} &
 
 exec 3>&- dbus-daemon --system --nofork --nopidfile
