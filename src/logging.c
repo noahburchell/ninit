@@ -11,12 +11,14 @@
 #include <unistd.h>
 
 #define LOG_WRITE_MS	100
+#define LOG_BATCH_MS	250
 
 static int log_fd = 2;
 static int log_color;
 static struct timespec log_start;
 static unsigned long log_dropped;
 static int log_stalled;
+static long long log_wait_until;
 
 static const char *const tag_color[] = {
 	"\033[32mDONE\033[0m",
@@ -39,6 +41,14 @@ static const char *const tag_plain[] = {
 static_assert(sizeof(tag_color) / sizeof(*tag_color) == LOG_N, "tag_color must cover every level");
 static_assert(sizeof(tag_plain) / sizeof(*tag_plain) == LOG_N, "tag_plain must cover every level");
 
+static long long log_now_ms(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
 static void log_set_nonblock(void)
 {
 	int fl = fcntl(log_fd, F_GETFL);
@@ -47,11 +57,18 @@ static void log_set_nonblock(void)
 		fcntl(log_fd, F_SETFL, fl | O_NONBLOCK);
 }
 
+void log_batch_begin(void)
+{
+	log_wait_until = log_now_ms() + LOG_BATCH_MS;
+	log_stalled = 0;
+}
+
 void log_init(void)
 {
 	clock_gettime(CLOCK_MONOTONIC, &log_start);
 	log_color = isatty(log_fd);
 	log_set_nonblock();
+	log_batch_begin();
 }
 
 void log_reopen_console(void)
@@ -74,17 +91,9 @@ void log_adopt_fd(int fd)
 	log_set_nonblock();
 }
 
-static long long log_now_ms(void)
+static int log_write(const char *buf, size_t len)
 {
-	struct timespec ts;
-
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
-}
-
-static void log_write(const char *buf, size_t len)
-{
-	long long deadline = 0;
+	long long deadline = 0, now;
 
 	while (len) {
 		struct pollfd p = { .fd = log_fd, .events = POLLOUT };
@@ -100,21 +109,26 @@ static void log_write(const char *buf, size_t len)
 			continue;
 		if (w < 0 && errno != EAGAIN) {
 			log_dropped++;
-			return;
+			return 0;
 		}
-		if (log_stalled) {
+		now = log_now_ms();
+		if (log_stalled || now >= log_wait_until) {
 			log_dropped++;
-			return;
+			return 0;
 		}
 		if (!deadline) {
-			deadline = log_now_ms() + LOG_WRITE_MS;
-		} else if (log_now_ms() >= deadline) {
+			deadline = now + LOG_WRITE_MS;
+			if (deadline > log_wait_until)
+				deadline = log_wait_until;
+		} else if (now >= deadline) {
 			log_stalled = 1;
 			log_dropped++;
-			return;
+			return 0;
 		}
 		poll(&p, 1, 10);
 	}
+
+	return 1;
 }
 
 static int stamp(char *buf, size_t cap)
@@ -131,9 +145,28 @@ static int stamp(char *buf, size_t cap)
 	return snprintf(buf, cap, "[%03lld.%03lld] ", ms / 1000, ms % 1000);
 }
 
+static int log_report_dropped(unsigned long lost)
+{
+	const char *const *tags = log_color ? tag_color : tag_plain;
+	char buf[160];
+	int n, ret;
+
+	n = stamp(buf, sizeof(buf));
+	n += snprintf(buf + n, sizeof(buf) - n, "%s > ", tags[LOG_WARN]);
+	ret = snprintf(buf + n, sizeof(buf) - n,
+		       "console: dropped %lu message%s, it is not keeping up",
+		       lost, lost == 1 ? "" : "s");
+	if (ret > 0)
+		n += ret;
+	if (n > (int)sizeof(buf) - 2)
+		n = (int)sizeof(buf) - 2;
+	buf[n++] = '\n';
+
+	return log_write(buf, (size_t)n);
+}
+
 void ninit_log(int level, const char *fmt, ...)
 {
-	static int reporting;
 	char buf[1024];
 	const char *const *tags = log_color ? tag_color : tag_plain;
 	va_list ap;
@@ -142,14 +175,11 @@ void ninit_log(int level, const char *fmt, ...)
 	if ((unsigned)level >= LOG_N)
 		level = LOG_INFO;
 
-	if (log_dropped && !reporting) {
+	if (log_dropped) {
 		unsigned long lost = log_dropped;
 
-		log_dropped = 0;
-		reporting = 1;
-		ninit_log(LOG_WARN, "console: dropped %lu message%s, it is not keeping up",
-			  lost, lost == 1 ? "" : "s");
-		reporting = 0;
+		if (log_report_dropped(lost))
+			log_dropped -= lost;
 	}
 
 	if (level == LOG_INFO) {

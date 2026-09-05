@@ -791,6 +791,9 @@ static void child_exited(uint32_t i, int status)
 			}
 			fail_describe(status, how, sizeof(how));
 			log_warn("%s: exited (%s)", name, how);
+			kill_group(i);
+			drain_out(i, DRAIN_FINAL_CHUNKS);
+			close_fds(i);
 		}
 		maybe_free(i);
 		return;
@@ -867,6 +870,7 @@ static void wait_children(long long grace)
 		struct signalfd_siginfo si;
 		long long left;
 
+		log_batch_begin();
 		reap();
 		drain_output();
 		if (kill(-1, 0) < 0 && errno == ESRCH)
@@ -1291,6 +1295,7 @@ int main(int argc, char **argv)
 		nfds_t nfds = 1, k;
 		int rc;
 
+		log_batch_begin();
 		fire_restarts();
 		check_timeouts();
 		check_boot_done();
