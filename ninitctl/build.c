@@ -298,6 +298,23 @@ static int keep(const struct dirent *d)
 	return d->d_name[0] != '.';
 }
 
+static int same_dir(const char *a, const char *b)
+{
+	struct stat sa, sb;
+
+	return stat(a, &sa) == 0 && stat(b, &sb) == 0 &&
+	       sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino;
+}
+
+static int is_output_name(const char *name, const char *base, size_t base_len)
+{
+	if (!base)
+		return 0;
+	if (!strcmp(name, base))
+		return 1;
+	return !strncmp(name, base, base_len) && name[base_len] == '.';
+}
+
 static int cmp_dirent(const struct dirent **a, const struct dirent **b)
 {
 	return strcmp((*a)->d_name, (*b)->d_name);
@@ -534,7 +551,9 @@ static void write_atomic(const char *path, const void *buf, size_t len)
 		die("rename %s -> %s: %s", tmp, path, strerror(errno));
 	}
 
-	fsync(dfd);
+	if (fsync(dfd) < 0)
+		die("%s: published, but syncing %s failed: %s; it may not survive a crash",
+		    path, dir, strerror(errno));
 	close(dfd);
 }
 
@@ -549,7 +568,8 @@ int cmd_init(int argc, char **argv)
 	uint32_t n, m = 0, cap = 0, i, j, nroots = 0;
 	uint32_t *order, *inv;
 	uint64_t hash = 0xcbf29ce484222325ull;
-	const char *why;
+	const char *why, *out_base;
+	size_t out_base_len;
 	int ne, k, custom_dir = 0;
 
 	// argv is already past argv[0] and the subcommand
@@ -578,6 +598,29 @@ int cmd_init(int argc, char **argv)
 		}
 	}
 
+	{
+		char outdir[4096];
+		char *slash;
+
+		if (snprintf(outdir, sizeof(outdir), "%s", out) >= (int)sizeof(outdir))
+			die("init: output path is too long: %s", out);
+		slash = strrchr(outdir, '/');
+		if (slash) {
+			out_base = out + (slash - outdir) + 1;
+			if (slash == outdir)
+				outdir[1] = '\0';
+			else
+				*slash = '\0';
+		} else {
+			out_base = out;
+			outdir[0] = '.';
+			outdir[1] = '\0';
+		}
+		if (!*out_base || !same_dir(dir, outdir))
+			out_base = NULL;
+		out_base_len = out_base ? strlen(out_base) : 0;
+	}
+
 	ne = scandir(dir, &ents, keep, cmp_dirent);
 	if (ne < 0)
 		die("scandir %s: %s", dir, strerror(errno));
@@ -590,15 +633,17 @@ int cmd_init(int argc, char **argv)
 		char *buf;
 		size_t len;
 
+		if (!strcmp(ents[k]->d_name, "depgraph") ||
+		    !strncmp(ents[k]->d_name, "depgraph.", 9))
+			continue;
+		if (is_output_name(ents[k]->d_name, out_base, out_base_len))
+			continue;
+
 		if (snprintf(path, sizeof(path), "%s/%s", dir, ents[k]->d_name) >= (int)sizeof(path))
 			die("%s/%s: path is too long", dir, ents[k]->d_name);
 		if (stat(path, &st) < 0)
 			die("stat %s: %s", path, strerror(errno));
 		if (!S_ISREG(st.st_mode))
-			continue;
-
-		if (!strcmp(ents[k]->d_name, "depgraph") ||
-		    !strncmp(ents[k]->d_name, "depgraph.", 9))
 			continue;
 
 		why = name_problem(ents[k]->d_name);

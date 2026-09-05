@@ -29,9 +29,10 @@
 #define KILL_GRACE_MS	2000
 #define DEGRADED_POLL_MS 200
 #define DRAIN_POLL_CHUNKS 16
-#define DRAIN_FINAL_CHUNKS 1024
+#define DRAIN_FINAL_CHUNKS 64
 #define SHUTDOWN_DRAIN_MS 100
 #define HWCLOCK_GRACE_MS 5000
+#define SIGNAL_POLL_MS	200
 #define RO_PASSES	3
 
 #define EXIT_NOEXEC	(127 << 8)
@@ -42,6 +43,7 @@ static const unsigned restart_delay_ms[] = { 100, 250, 500, 1000, 2000, 5000 };
 
 struct run {
 	pid_t pid;
+	pid_t pgid;
 	int out_fd;
 	int ntf_fd;
 	uint32_t live_pos;
@@ -69,6 +71,7 @@ static int draining;
 static uint32_t n_active, n_done;
 static int boot_reported, shutting_down;
 static int sfd = -1, null_fd = -1;
+static sigset_t sig_want;
 static struct rlimit child_nofile;
 static long long boot_t0;
 
@@ -158,20 +161,20 @@ static void seed_dev(void)
 
 static void setup_signals(void)
 {
-	sigset_t all, want;
+	sigset_t all;
 
 	sigfillset(&all);
 	sigprocmask(SIG_SETMASK, &all, NULL);
 
-	sigemptyset(&want);
-	sigaddset(&want, SIGCHLD);
-	sigaddset(&want, SIGTERM);
-	sigaddset(&want, SIGINT);
-	sigaddset(&want, SIGUSR1);
-	sigaddset(&want, SIGUSR2);
-	sfd = signalfd(-1, &want, SFD_NONBLOCK | SFD_CLOEXEC);
+	sigemptyset(&sig_want);
+	sigaddset(&sig_want, SIGCHLD);
+	sigaddset(&sig_want, SIGTERM);
+	sigaddset(&sig_want, SIGINT);
+	sigaddset(&sig_want, SIGUSR1);
+	sigaddset(&sig_want, SIGUSR2);
+	sfd = signalfd(-1, &sig_want, SFD_NONBLOCK | SFD_CLOEXEC);
 	if (sfd < 0)
-		log_err("signalfd: %s", strerror(errno));
+		log_err("signalfd: %s, dequeuing signals directly instead", strerror(errno));
 
 	reboot(RB_DISABLE_CAD);
 }
@@ -345,6 +348,18 @@ static void live_del(uint32_t i)
 	runs[last].live_pos = pos;
 }
 
+static void signal_group(uint32_t i, int sig)
+{
+	if (runs[i].pgid > 0)
+		kill(-runs[i].pgid, sig);
+}
+
+static void kill_group(uint32_t i)
+{
+	signal_group(i, SIGKILL);
+	runs[i].pgid = 0;
+}
+
 static void close_fds(uint32_t i)
 {
 	struct run *r = &runs[i];
@@ -478,7 +493,7 @@ static int launch(uint32_t i)
 	r->line_len = 0;
 	r->hup = 0;
 	r->timedout = 0;
-	r->starting = 1;
+	r->starting = ng_svcs(map)[i].type != NG_TYPE_DAEMON || ng_notify(map, i) != 0;
 
 	if (pipe2(out, O_CLOEXEC) < 0) {
 		log_err("%s: pipe: %s", ng_name(map, i), strerror(errno));
@@ -511,6 +526,7 @@ static int launch(uint32_t i)
 	}
 
 	r->pid = pid;
+	r->pgid = pid;
 	r->out_fd = out[0];
 	r->ntf_fd = ntf[0];
 	r->started = now_ms();
@@ -557,6 +573,7 @@ static void service_failed(uint32_t i, int status)
 	enum fail_act act;
 	char why[160];
 
+	kill_group(i);
 	drain_out(i, DRAIN_FINAL_CHUNKS);
 	close_fds(i);
 	if (live_has(i))
@@ -586,16 +603,16 @@ static void service_failed(uint32_t i, int status)
 	}
 }
 
-static void drain_notify(uint32_t i)
+static void drain_notify(uint32_t i, unsigned chunks)
 {
 	struct run *r = &runs[i];
 	char buf[256];
 
-	while (r->ntf_fd >= 0) {
+	while (r->ntf_fd >= 0 && chunks--) {
 		ssize_t k = read(r->ntf_fd, buf, sizeof(buf));
 
 		if (k > 0) {
-			if (r->starting && memchr(buf, '\n', (size_t)k)) {
+			if (r->starting && !r->timedout && !r->hup && memchr(buf, '\n', (size_t)k)) {
 				r->starting = 0;
 				log_done("%s (%lld ms)", ng_name(map, i), now_ms() - r->started);
 				if (state[i] == NG_ST_RUNNING)
@@ -617,7 +634,7 @@ static void drain_notify(uint32_t i)
 
 		if (r->pid > 0) {
 			r->hup = 1;
-			kill(-r->pid, SIGKILL);
+			signal_group(i, SIGKILL);
 			return;
 		}
 		start_failed(i, FAIL_ST_NOTIFY_HUP);
@@ -647,7 +664,7 @@ static void drain_all(void)
 		if (runs[i].out_fd >= 0)
 			drain_out(i, DRAIN_POLL_CHUNKS);
 		if (runs[i].ntf_fd >= 0)
-			drain_notify(i);
+			drain_notify(i, DRAIN_POLL_CHUNKS);
 		if (live_has(i))
 			maybe_free(i);
 	}
@@ -666,6 +683,7 @@ static void restart_schedule(uint32_t i, int status)
 	if (r->burst < last)
 		r->burst++;
 
+	kill_group(i);
 	close_fds(i);
 	r->restart_at = now_ms() + d;
 
@@ -1072,26 +1090,43 @@ static void shutdown_system(int how, const char *what)
 		pause();
 }
 
+static void dispatch_signal(int signo)
+{
+	switch (signo) {
+	case SIGCHLD:
+		reap();
+		break;
+	case SIGTERM:
+	case SIGINT:
+		shutdown_system(RB_AUTOBOOT, "reboot");
+	case SIGUSR1:
+		shutdown_system(RB_HALT_SYSTEM, "halt");
+	case SIGUSR2:
+		shutdown_system(RB_POWER_OFF, "poweroff");
+	default:
+		break;
+	}
+}
+
 static void handle_signals(void)
 {
 	struct signalfd_siginfo si;
 
-	while (read(sfd, &si, sizeof(si)) == (ssize_t)sizeof(si)) {
-		switch (si.ssi_signo) {
-		case SIGCHLD:
-			reap();
-			break;
-		case SIGTERM:
-		case SIGINT:
-			shutdown_system(RB_AUTOBOOT, "reboot");
-		case SIGUSR1:
-			shutdown_system(RB_HALT_SYSTEM, "halt");
-		case SIGUSR2:
-			shutdown_system(RB_POWER_OFF, "poweroff");
-		default:
-			break;
-		}
-	}
+	while (read(sfd, &si, sizeof(si)) == (ssize_t)sizeof(si))
+		dispatch_signal((int)si.ssi_signo);
+}
+
+static void poll_signals(void)
+{
+	static const struct timespec zero = { 0, 0 };
+	siginfo_t si;
+
+	sfd = signalfd(-1, &sig_want, SFD_NONBLOCK | SFD_CLOEXEC);
+	if (sfd >= 0)
+		log_note("signalfd: recovered, back to event-driven signals");
+
+	while (sigtimedwait(&sig_want, &si, &zero) > 0)
+		dispatch_signal(si.si_signo);
 }
 
 static void report_stalls(void)
@@ -1129,7 +1164,7 @@ static void check_timeouts(void)
 			ng_name(map, i), START_TIMEOUT_MS / 1000);
 		r->timedout = 1;
 		if (r->pid > 0) {
-			kill(-r->pid, SIGKILL); // child_exited routes it
+			signal_group(i, SIGKILL); // child_exited routes it
 			k++;
 			continue;
 		}
@@ -1259,7 +1294,10 @@ int main(int argc, char **argv)
 		fire_restarts();
 		check_timeouts();
 		check_boot_done();
+		fail_emergency_tick();
 
+		if (sfd < 0)
+			poll_signals();
 		if (degraded)
 			drain_all();
 
@@ -1289,8 +1327,13 @@ int main(int argc, char **argv)
 		due = starts_due();
 		if (due >= 0 && (wait < 0 || due < wait))
 			wait = due;
+		due = fail_emergency_due();
+		if (due >= 0 && (wait < 0 || due < wait))
+			wait = due;
 		if (degraded && (wait < 0 || wait > DEGRADED_POLL_MS))
 			wait = DEGRADED_POLL_MS;
+		if (sfd < 0 && (wait < 0 || wait > SIGNAL_POLL_MS))
+			wait = SIGNAL_POLL_MS;
 
 		rc = poll(pfds, nfds, (int)wait);
 		if (rc < 0) {
@@ -1314,7 +1357,7 @@ int main(int argc, char **argv)
 			if (!pfds[k].revents)
 				continue;
 			if (pf_kind[k])
-				drain_notify(i);
+				drain_notify(i, DRAIN_POLL_CHUNKS);
 			else
 				drain_out(i, DRAIN_POLL_CHUNKS);
 			if (live_has(i))

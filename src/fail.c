@@ -131,6 +131,7 @@ uint32_t fail_poison(const void *map, uint32_t i, uint8_t *state)
 #define EMERG_FAIL_MAX	 5
 #define EMERG_NOEXEC_MAX 2
 #define EMERG_EXEC_MS	 5000
+#define EMERG_RETRY_MS	 2000
 #define EMERG_NOEXEC	 127
 
 #ifndef CLOSE_RANGE_CLOEXEC
@@ -189,6 +190,15 @@ static int emerg_gone;
 static enum emerg_state emerg_conf;
 static int emerg_greeted;
 static unsigned emerg_noexec;
+static long long emerg_retry_at;
+
+static long long emerg_now_ms(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
 
 static int emerg_console(void)
 {
@@ -423,7 +433,30 @@ static void emerg_restart(void)
 		log_err("shell: gave up after %u attempts, the console is unattended", emerg_fail);
 		return;
 	}
-	log_err("shell: not running, the console is unattended");
+	emerg_retry_at = emerg_now_ms() + EMERG_RETRY_MS;
+	log_err("shell: not running, retrying in %d ms", EMERG_RETRY_MS);
+}
+
+long long fail_emergency_due(void)
+{
+	long long d;
+
+	if (!emerg_retry_at || emerg_gone)
+		return -1;
+	d = emerg_retry_at - emerg_now_ms();
+	return d < 0 ? 0 : d;
+}
+
+void fail_emergency_tick(void)
+{
+	if (!emerg_retry_at || emerg_gone)
+		return;
+	if (emerg_now_ms() < emerg_retry_at)
+		return;
+	emerg_retry_at = 0;
+	if (emerg_pid > 0)
+		return;
+	emerg_restart();
 }
 
 void fail_emergency_shell(const char *why)

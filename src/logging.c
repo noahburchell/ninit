@@ -3,15 +3,20 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
 
+#define LOG_WRITE_MS	100
+
 static int log_fd = 2;
 static int log_color;
 static struct timespec log_start;
+static unsigned long log_dropped;
+static int log_stalled;
 
 static const char *const tag_color[] = {
 	"\033[32mDONE\033[0m",
@@ -34,15 +39,24 @@ static const char *const tag_plain[] = {
 static_assert(sizeof(tag_color) / sizeof(*tag_color) == LOG_N, "tag_color must cover every level");
 static_assert(sizeof(tag_plain) / sizeof(*tag_plain) == LOG_N, "tag_plain must cover every level");
 
+static void log_set_nonblock(void)
+{
+	int fl = fcntl(log_fd, F_GETFL);
+
+	if (fl >= 0 && !(fl & O_NONBLOCK))
+		fcntl(log_fd, F_SETFL, fl | O_NONBLOCK);
+}
+
 void log_init(void)
 {
 	clock_gettime(CLOCK_MONOTONIC, &log_start);
 	log_color = isatty(log_fd);
+	log_set_nonblock();
 }
 
 void log_reopen_console(void)
 {
-	int fd = open("/dev/console", O_WRONLY | O_NOCTTY | O_CLOEXEC);
+	int fd = open("/dev/console", O_WRONLY | O_NONBLOCK | O_NOCTTY | O_CLOEXEC);
 
 	if (fd < 0)
 		return;
@@ -50,26 +64,56 @@ void log_reopen_console(void)
 		close(log_fd);
 	log_fd = fd;
 	log_color = isatty(log_fd);
+	log_set_nonblock();
 }
 
 void log_adopt_fd(int fd)
 {
 	log_fd = fd;
 	log_color = isatty(fd);
+	log_set_nonblock();
+}
+
+static long long log_now_ms(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
 static void log_write(const char *buf, size_t len)
 {
+	long long deadline = 0;
+
 	while (len) {
+		struct pollfd p = { .fd = log_fd, .events = POLLOUT };
 		ssize_t w = write(log_fd, buf, len);
 
-		if (w < 0) {
-			if (errno == EINTR)
-				continue;
+		if (w > 0) {
+			buf += w;
+			len -= (size_t)w;
+			log_stalled = 0;
+			continue;
+		}
+		if (w < 0 && errno == EINTR)
+			continue;
+		if (w < 0 && errno != EAGAIN) {
+			log_dropped++;
 			return;
 		}
-		buf += w;
-		len -= (size_t)w;
+		if (log_stalled) {
+			log_dropped++;
+			return;
+		}
+		if (!deadline) {
+			deadline = log_now_ms() + LOG_WRITE_MS;
+		} else if (log_now_ms() >= deadline) {
+			log_stalled = 1;
+			log_dropped++;
+			return;
+		}
+		poll(&p, 1, 10);
 	}
 }
 
@@ -89,6 +133,7 @@ static int stamp(char *buf, size_t cap)
 
 void ninit_log(int level, const char *fmt, ...)
 {
+	static int reporting;
 	char buf[1024];
 	const char *const *tags = log_color ? tag_color : tag_plain;
 	va_list ap;
@@ -96,6 +141,16 @@ void ninit_log(int level, const char *fmt, ...)
 
 	if ((unsigned)level >= LOG_N)
 		level = LOG_INFO;
+
+	if (log_dropped && !reporting) {
+		unsigned long lost = log_dropped;
+
+		log_dropped = 0;
+		reporting = 1;
+		ninit_log(LOG_WARN, "console: dropped %lu message%s, it is not keeping up",
+			  lost, lost == 1 ? "" : "s");
+		reporting = 0;
+	}
 
 	if (level == LOG_INFO) {
 		n = 0;
