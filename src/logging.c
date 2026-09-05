@@ -84,7 +84,7 @@ static int stamp(char *buf, size_t cap)
 	if (ms < 0)
 		ms = 0;
 
-	return snprintf(buf, cap, "[%4lld.%03lld] ", ms / 1000, ms % 1000);
+	return snprintf(buf, cap, "[%03lld.%03lld] ", ms / 1000, ms % 1000);
 }
 
 void ninit_log(int level, const char *fmt, ...)
