@@ -16,6 +16,7 @@
 #include <sys/resource.h>
 #include <sys/signalfd.h>
 #include <sys/stat.h>
+#include <sys/swap.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -23,8 +24,10 @@
 #define TAIL_CAP	1024
 #define LINE_CAP	256
 #define STALL_MS	10000
+#define START_TIMEOUT_MS 90000
 #define TERM_GRACE_MS	5000
 #define KILL_GRACE_MS	2000
+#define RO_PASSES	3
 
 #define EXIT_NOEXEC	(127 << 8)
 
@@ -42,6 +45,7 @@ struct run {
 	uint8_t attempt;
 	uint8_t exited;
 	uint8_t hup;
+	uint8_t timedout;
 	uint16_t tail_len;
 	uint16_t line_len;
 	long long started;
@@ -288,6 +292,9 @@ static void child_exec(uint32_t i, int out_w, int ntf_w)
 	ninit_cloexec_except(nfd ? nfd : -1);
 	setrlimit(RLIMIT_NOFILE, &child_nofile);
 
+	// oom_score_adj is inherited, and only pid 1 may be exempt
+	ninit_oom_score_adj("0\n", 2);
+
 	(void)!chdir("/");
 	umask(022);
 
@@ -464,6 +471,7 @@ static int launch(uint32_t i)
 	r->line_len = 0;
 	r->exited = 0;
 	r->hup = 0;
+	r->timedout = 0;
 
 	if (pipe2(out, O_CLOEXEC) < 0) {
 		log_err("%s: pipe: %s", ng_name(map, i), strerror(errno));
@@ -700,6 +708,10 @@ static void child_exited(uint32_t i, int status)
 		service_failed(i, FAIL_ST_NOTIFY_HUP);
 		return;
 	}
+	if (r->timedout) {
+		service_failed(i, FAIL_ST_TIMEOUT);
+		return;
+	}
 
 	if (ng_svcs(map)[i].type == NG_TYPE_ONESHOT) {
 		if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
@@ -847,11 +859,85 @@ static void remount_ro(void)
 		}
 	}
 
-	while (n)
-		mount(NULL, mps[--n], NULL, MS_REMOUNT | MS_RDONLY, NULL);
-	mount(NULL, "/", NULL, MS_REMOUNT | MS_RDONLY, NULL);
+	for (int pass = 0; pass < RO_PASSES; pass++) {
+		size_t left = 0, k = n;
+
+		while (k--) {
+			if (!mps[k])
+				continue;
+			if (mount(NULL, mps[k], NULL, MS_REMOUNT | MS_RDONLY, NULL) == 0)
+				mps[k] = NULL;
+			else
+				left++;
+		}
+		if (!left)
+			break;
+	}
+
+	for (size_t k = n; k--; ) {
+		if (!mps[k] || !strcmp(mps[k], "/"))
+			continue;
+		log_warn("shutdown: %s would not go read-only, detaching it", mps[k]);
+		if (umount2(mps[k], MNT_DETACH) < 0)
+			log_warn("shutdown: detaching %s: %s", mps[k], strerror(errno));
+	}
+
+	for (int pass = 0; pass < RO_PASSES; pass++)
+		if (mount(NULL, "/", NULL, MS_REMOUNT | MS_RDONLY, NULL) == 0)
+			break;
+		else if (pass == RO_PASSES - 1)
+			log_err("shutdown: / would not go read-only: %s", strerror(errno));
+
 	free(mps);
 	free(buf);
+}
+
+// the hardware clock and swap both need the filesystems still writable
+static void stop_swap(void)
+{
+	char line[512];
+	FILE *f = fopen("/proc/swaps", "re");
+
+	if (!f)
+		return;
+	if (!fgets(line, sizeof(line), f)) { // header
+		fclose(f);
+		return;
+	}
+	while (fgets(line, sizeof(line), f)) {
+		char *sp = strchr(line, ' ');
+
+		if (!sp)
+			sp = strchr(line, '\t');
+		if (!sp)
+			continue;
+		*sp = '\0';
+		unescape_mount(line);
+		if (swapoff(line) < 0)
+			log_warn("shutdown: swapoff %s: %s", line, strerror(errno));
+	}
+	fclose(f);
+}
+
+static void save_hwclock(void)
+{
+	static char arg0[] = "hwclock", arg1[] = "--systohc", arg2[] = "--utc";
+	static char *const argv[] = { arg0, arg1, arg2, NULL };
+	static char path[] = NG_PATH;
+	static char *const envp[] = { path, NULL };
+	pid_t pid = fork();
+	int st;
+
+	if (pid < 0)
+		return;
+	if (pid == 0) {
+		ninit_cloexec_except(-1);
+		execve("/sbin/hwclock", argv, envp);
+		execve("/usr/sbin/hwclock", argv, envp);
+		_exit(127);
+	}
+	while (waitpid(pid, &st, 0) < 0 && errno == EINTR)
+		;
 }
 
 static void shutdown_system(int how, const char *what) __attribute__((noreturn));
@@ -867,6 +953,10 @@ static void shutdown_system(int how, const char *what)
 		kill(-1, SIGKILL);
 		wait_children(KILL_GRACE_MS);
 	}
+	log_note("%s: saving the clock and disabling swap", what);
+	save_hwclock();
+	stop_swap();
+
 	log_note("%s: syncing and remounting read-only", what);
 	sync();
 	remount_ro();
@@ -910,6 +1000,38 @@ static void report_stalls(void)
 		if (state[i] == NG_ST_RUNNING)
 			log_wait("%s: still running after %lld s", ng_name(map, i),
 				 (now_ms() - runs[i].started) / 1000);
+	}
+}
+
+static void check_timeouts(void)
+{
+	long long now = now_ms();
+	uint32_t k;
+
+	if (shutting_down)
+		return;
+
+	for (k = 0; k < n_live; ) {
+		uint32_t i = live[k];
+		struct run *r = &runs[i];
+
+		if (state[i] != NG_ST_RUNNING || r->timedout ||
+		    now - r->started < START_TIMEOUT_MS) {
+			k++;
+			continue;
+		}
+
+		log_err("%s: no progress after %d s, giving up on it",
+			ng_name(map, i), START_TIMEOUT_MS / 1000);
+		r->timedout = 1;
+		if (r->pid > 0) {
+			kill(r->pid, SIGKILL); // child_exited routes it
+			k++;
+			continue;
+		}
+
+		service_failed(i, FAIL_ST_TIMEOUT);
+		k = 0;
 	}
 }
 
@@ -978,6 +1100,9 @@ int main(int argc, char **argv)
 	mount_api_fs();
 	seed_dev();
 
+	// keep it off the oom victim list
+	ninit_oom_score_adj("-1000\n", 6);
+
 	null_fd = open("/dev/null", O_RDWR | O_CLOEXEC | O_NOCTTY);
 	if (null_fd >= 0 && placeholder) {
 		dup2(null_fd, 0);
@@ -1019,6 +1144,7 @@ int main(int argc, char **argv)
 		int rc;
 
 		fire_restarts();
+		check_timeouts();
 		check_boot_done();
 
 		pfds[0].fd = sfd;
