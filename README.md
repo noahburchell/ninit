@@ -4,7 +4,7 @@
 
 compiles '/etc/ninit.d' into a binary dependency graph. pid 1 mmaps it and runs the services in dependency order, as many in parallel as possible
 
-boot with 'init=/usr/sbin/ninit'. 'ninit_graph=/path' on the kernel command line picks another graph file. it mounts /proc /sys /dev (devtmpfs) /run /dev/pts and /dev/shm itself if they aren't mounted already
+boot with 'init=/usr/sbin/ninit'. 'ninit_graph=/path' on the kernel command line picks another graph file. it mounts /proc /sys /dev (devtmpfs, and does the dev symlinks) /run /dev/pts and /dev/shm itself if they aren't mounted already
 
 ### service files
 
