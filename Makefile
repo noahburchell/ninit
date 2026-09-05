@@ -70,15 +70,15 @@ endif
 
 LDFLAGS  ?= -Wl,-O2 -Wl,--as-needed -Wl,--hash-style=gnu -Wl,-z,pack-relative-relocs -flto=auto
 CFLAGS   ?= -march=native -O3 -pipe -fno-semantic-interposition -flto=auto
-CFLAGS   += -std=gnu23 $(WARN)
-CPPFLAGS += -D_GNU_SOURCE
+override CFLAGS   += -std=gnu23 $(WARN)
+override CPPFLAGS += -D_GNU_SOURCE
 
 ifneq (,$(filter quiet,$(USE)))
-CPPFLAGS += -DNINIT_QUIET=1
+override CPPFLAGS += -DNINIT_QUIET=1
 endif
 
 ifneq (,$(filter busybox,$(USE)))
-CPPFLAGS += -DNINIT_BUSYBOX=\"$(BUSYBOX)\"
+override CPPFLAGS += -DNINIT_BUSYBOX=\"$(BUSYBOX)\"
 endif
 
 ifneq (,$(filter debug,$(USE)))
@@ -88,8 +88,8 @@ SANFLAGS := -fsanitize=address,undefined -fsanitize-address-use-after-scope \
 ifneq ($(CC_IS_CLANG),0)
 SANFLAGS += -fsanitize=integer,local-bounds -fno-sanitize=unsigned-integer-overflow
 endif
-CFLAGS  += $(SANFLAGS)
-LDFLAGS += $(SANFLAGS)
+override CFLAGS  += $(SANFLAGS)
+override LDFLAGS += $(SANFLAGS)
 endif
 
 NINIT_SRC   := src/ninit.c src/logging.c src/ngraph.c src/fail.c
@@ -141,9 +141,6 @@ install: all
 		echo "no services in $(DESTDIR)$(SVCDIR); add some and run 'ninitctl init'"; \
 	fi
 
-# sysvinit ships poweroff and reboot as symlinks to halt, so a plain rename
-# would leave poweroff.old pointing at our own tool; a saved symlink is rewritten
-# to name the saved target instead
 tools_install: $(BUILD)/ninit-shutdown
 	install -d $(DESTDIR)$(SBINDIR)
 	install -m755 $(BUILD)/ninit-shutdown $(DESTDIR)$(SBINDIR)/ninit-shutdown
