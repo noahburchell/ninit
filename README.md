@@ -47,6 +47,8 @@ or use a real getty
 
 ### building it
 
+warning: the makefile builds with -march=native so if you are going to distribute a binary remove it.
+
 ```
 make
 make USE="quiet busybox"
