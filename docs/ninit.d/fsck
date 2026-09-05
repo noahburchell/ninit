@@ -1,0 +1,12 @@
+#!/bin/bash
+#% onfail: shell
+
+fsck -A -T -p
+rc=$?
+
+[ $((rc & 2)) -ne 0 ] && echo "fsck: a reboot is needed to finish the repair" >&2
+
+[ $rc -lt 4 ] && exit 0
+
+echo "fsck: unrepaired filesystem errors (exit $rc)" >&2
+exit 1

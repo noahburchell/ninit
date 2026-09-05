@@ -18,6 +18,7 @@ enum fail_act {
 };
 
 #define FAIL_ST_NOTIFY_HUP	(-1)
+#define FAIL_ST_TIMEOUT		(-2)
 
 void fail_describe(int status, char *buf, size_t cap);
 
@@ -27,6 +28,8 @@ enum fail_act fail_service(const void *map, uint32_t i, int status, unsigned att
 uint32_t fail_poison(const void *map, uint32_t i, uint8_t *state);
 
 void ninit_cloexec_except(int keep);
+
+void ninit_oom_score_adj(const char *v, size_t len);
 
 void fail_emergency_shell(const char *why);
 

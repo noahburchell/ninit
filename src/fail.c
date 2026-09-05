@@ -47,6 +47,8 @@ static void describe(int status, char *buf, size_t cap)
 {
 	if (status == FAIL_ST_NOTIFY_HUP)
 		snprintf(buf, cap, "closed its notify fd before reporting ready");
+	else if (status == FAIL_ST_TIMEOUT)
+		snprintf(buf, cap, "timed out and was killed");
 	else if (WIFEXITED(status))
 		snprintf(buf, cap, "exit %d", WEXITSTATUS(status));
 	else if (WIFSIGNALED(status)) {
@@ -150,6 +152,16 @@ static void cloexec_range(unsigned lo, unsigned hi)
 		max = hi + 1;
 	for (fd = lo; fd < max; fd++)
 		fcntl((int)fd, F_SETFD, FD_CLOEXEC);
+}
+
+void ninit_oom_score_adj(const char *v, size_t len)
+{
+	int fd = open("/proc/self/oom_score_adj", O_WRONLY | O_CLOEXEC);
+
+	if (fd < 0)
+		return;
+	(void)!write(fd, v, len);
+	close(fd);
 }
 
 void ninit_cloexec_except(int keep)
@@ -274,6 +286,9 @@ static pid_t emerg_spawn(int con, int vt, int barrier)
 	dup2(con, 2);
 
 	ninit_cloexec_except(-1);
+
+	// oom exemption must not reach whatever is run from this shell
+	ninit_oom_score_adj("0\n", 2);
 
 	// pid 1 may have dropped umask to 0
 	(void)!chdir("/");
