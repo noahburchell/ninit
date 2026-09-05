@@ -468,8 +468,8 @@ void fail_summary(const void *map, const uint8_t *state)
 		  failed, plural_s(failed), skipped);
 	for (i = 0; i < n; i++)
 		if (state[i] == NG_ST_FAILED)
-			log_err("boot: %-7s %s", "failed", ng_name(map, i));
+			log_err("boot: %s failed", ng_name(map, i));
 	for (i = 0; i < n; i++)
 		if (state[i] == NG_ST_SKIPPED)
-			log_warn("boot: %-7s %s", "skipped", ng_name(map, i));
+			log_warn("boot: skipped %s", ng_name(map, i));
 }

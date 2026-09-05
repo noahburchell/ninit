@@ -368,7 +368,7 @@ static void flush_line(uint32_t i)
 	struct run *r = &runs[i];
 
 	if (r->line_len)
-		log_info("%s: %.*s", ng_name(map, i), (int)r->line_len, r->line);
+		log_note("%s: %.*s", ng_name(map, i), (int)r->line_len, r->line);
 #endif
 	runs[i].line_len = 0;
 }
@@ -1066,7 +1066,7 @@ static void start_graph(void)
 		runs[i].ntf_fd = -1;
 	}
 
-	log_info("boot: %u services, %u roots", n_svc, h->n_roots);
+	log_note("boot: %u services, %u roots", n_svc, h->n_roots);
 	for (i = 0; i < h->n_roots; i++) {
 		if (ng_svcs(map)[i].type == NG_TYPE_TARGET) {
 			log_done("%s", ng_name(map, i));

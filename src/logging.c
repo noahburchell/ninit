@@ -143,6 +143,7 @@ void print_welcome(void)
 	FILE *file = fopen("/etc/os-release", "r");
 	char line[128];
 	int found = 0;
+	const char *b = log_color ? "\033[1m" : "", *r = log_color ? "\033[0m" : "";
 
 	if (!file)
 		file = fopen("/usr/lib/os-release", "r");
@@ -163,13 +164,13 @@ void print_welcome(void)
 		if (quote && len && name[len - 1] == quote)
 			name[--len] = '\0';
 
-		log_info("Welcome to %s!", name);
+		log_info("\n" LOG_CONT "Welcome to %s%s%s!\n", b, name, r);
 		found = 1;
 		break;
 	}
 	if (file)
 		fclose(file);
 	if (!found)
-		log_info("Welcome to Linux!");
+		log_info("\n" LOG_CONT "Welcome to %s%s%s!\n", b, "Linux", r);
 #endif
 }
