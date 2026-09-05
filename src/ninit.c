@@ -128,6 +128,25 @@ static void mount_api_fs(void)
 	mount_one("shm", "/dev/shm", "tmpfs", MS_NOSUID | MS_NODEV, "mode=1777");
 }
 
+// devtmpfs makes the device nodes but not these
+static void seed_dev(void)
+{
+	static const char *const link[][2] = {
+		{ "/proc/self/fd",	"/dev/fd" },
+		{ "/proc/self/fd/0",	"/dev/stdin" },
+		{ "/proc/self/fd/1",	"/dev/stdout" },
+		{ "/proc/self/fd/2",	"/dev/stderr" },
+	};
+
+	for (size_t i = 0; i < sizeof(link) / sizeof(*link); i++)
+		if (symlink(link[i][0], link[i][1]) < 0 && errno != EEXIST)
+			log_warn("dev: symlink %s: %s", link[i][1], strerror(errno));
+
+	if (access("/proc/kcore", F_OK) == 0 &&
+	    symlink("/proc/kcore", "/dev/core") < 0 && errno != EEXIST)
+		log_warn("dev: symlink /dev/core: %s", strerror(errno));
+}
+
 static void setup_signals(void)
 {
 	sigset_t all, want;
@@ -957,6 +976,7 @@ int main(int argc, char **argv)
 	(void)!chdir("/");
 	setup_signals();
 	mount_api_fs();
+	seed_dev();
 
 	null_fd = open("/dev/null", O_RDWR | O_CLOEXEC | O_NOCTTY);
 	if (null_fd >= 0 && placeholder) {
