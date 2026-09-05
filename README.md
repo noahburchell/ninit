@@ -48,11 +48,11 @@ or use a real getty
 ### building it
 
 ```
-make                     # build/ninit, build/ninitctl
-make USE="quiet busybox" # quiet: only WARN/FAIL on the console
-                         # busybox: try /bin/busybox first for the emergency shell
-sudo make install        # binaries to /usr/sbin, graph built if /etc/ninit.d has services
+make
+make USE="quiet busybox"
+sudo make install
 ```
+USE= quiet: only WARN/FAIL on the console, busybox: try /bin/busybox first for the emergency shell
 
 ### ninitctl
 
