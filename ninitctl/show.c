@@ -132,22 +132,27 @@ int cmd_show(int argc, char **argv)
 		const char *pcol = pol == NG_ONFAIL_SHELL ? st->red :
 				   pol == NG_ONFAIL_STOP ? st->yellow : st->dim;
 
-		char rdy[8];
+		// a width in printf counts bytes
+		char rdy[8], rst[8];
 
 		if (sv[i].notify_fd)
-			snprintf(rdy, sizeof(rdy), "%u", sv[i].notify_fd);
+			snprintf(rdy, sizeof(rdy), "%3u", sv[i].notify_fd);
 		else
-			snprintf(rdy, sizeof(rdy), "%s", st->none);
+			snprintf(rdy, sizeof(rdy), "  %s", st->none);
 
-		printf("%s%3u%s  %s%-*s%s  %s%-7s%s  %3u  %5u  %s%-6s%s  %s%3s%s  %s%3s%s  ",
+		if (ng_restart(map, i))
+			snprintf(rst, sizeof(rst), "yes");
+		else
+			snprintf(rst, sizeof(rst), "  %s", st->none);
+
+		printf("%s%3u%s  %s%-*s%s  %s%-7s%s  %3u  %5u  %s%-6s%s  %s%s%s  %s%s%s  ",
 		       st->dim, i, st->reset,
 		       col, (int)wname, ng_name(map, i), cend,
 		       st->dim, ng_typename(sv[i].type), st->reset,
 		       level[i], sv[i].n_desc,
 		       pcol, ng_onfailname(pol), st->reset,
 		       sv[i].notify_fd ? st->green : st->dim, rdy, st->reset,
-		       ng_restart(map, i) ? st->green : st->dim,
-		       ng_restart(map, i) ? "yes" : st->none, st->reset);
+		       ng_restart(map, i) ? st->green : st->dim, rst, st->reset);
 
 		if (doff[i] == doff[i + 1]) {
 			printf("%s%s%s", st->dim, st->none, st->reset);

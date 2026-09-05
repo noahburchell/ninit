@@ -1,7 +1,9 @@
 #include "ngraph.h"
 
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #if defined(__x86_64__) || defined(__i386__)
 #define NG_CRC_X86 1
@@ -96,6 +98,53 @@ const char *ng_typename(uint8_t type)
 	case NG_TYPE_TARGET:	return "target";
 	default:		return "?";
 	}
+}
+
+// copies the LANG= value out of /etc/locale.conf
+int ng_locale_lang(char *buf, size_t cap)
+{
+	char raw[1024];
+	ssize_t n;
+	char *p;
+	int fd = open(NG_LOCALE_CONF, O_RDONLY | O_CLOEXEC | O_NOCTTY);
+
+	if (fd < 0)
+		return 0;
+	n = read(fd, raw, sizeof(raw) - 1);
+	close(fd);
+	if (n <= 0)
+		return 0;
+	raw[n] = '\0';
+
+	for (p = raw; *p; ) {
+		char *nl = strchr(p, '\n'), *v = p;
+		size_t len;
+
+		if (nl)
+			*nl = '\0';
+		p = nl ? nl + 1 : p + strlen(p);
+
+		while (*v == ' ' || *v == '\t')
+			v++;
+		if (strncmp(v, "LANG=", 5))
+			continue;
+		v += 5;
+		if (*v == '"' || *v == '\'') {
+			char q = *v++;
+			char *end = strchr(v, q);
+
+			if (end)
+				*end = '\0';
+		}
+		v[strcspn(v, " \t\r")] = '\0';
+		len = strlen(v);
+		if (!len || len >= cap)
+			return 0;
+		memcpy(buf, v, len + 1);
+		return 1;
+	}
+
+	return 0;
 }
 
 const char *ng_onfailname(uint8_t policy)

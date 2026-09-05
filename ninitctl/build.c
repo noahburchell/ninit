@@ -792,5 +792,18 @@ int cmd_init(int argc, char **argv)
 		       out, n, m, nroots, total);
 	}
 
+	{
+		char lang[96];
+
+		fflush(stdout);
+		if (!ng_locale_lang(lang, sizeof(lang)))
+			fprintf(stderr,
+				"ninitctl: %s %s, so services will run with LANG=%s\n"
+				"ninitctl: create it, e.g. printf 'LANG=en_US.UTF-8\\n' > %s\n",
+				NG_LOCALE_CONF,
+				access(NG_LOCALE_CONF, R_OK) ? "is missing" : "sets no LANG",
+				NG_FALLBACK_LANG, NG_LOCALE_CONF);
+	}
+
 	return 0;
 }
