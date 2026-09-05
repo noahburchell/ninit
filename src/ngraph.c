@@ -17,6 +17,7 @@ static uint64_t crc32c_feed_hw(uint64_t crc, const void *data, size_t len)
 {
 	const unsigned char *p = data;
 
+#ifdef __x86_64__
 	while (len >= 8) {
 		uint64_t v;
 
@@ -25,6 +26,16 @@ static uint64_t crc32c_feed_hw(uint64_t crc, const void *data, size_t len)
 		p += 8;
 		len -= 8;
 	}
+#else
+	while (len >= 4) {
+		uint32_t v;
+
+		memcpy(&v, p, 4);
+		crc = __builtin_ia32_crc32si((uint32_t)crc, v);
+		p += 4;
+		len -= 4;
+	}
+#endif
 	while (len--)
 		crc = __builtin_ia32_crc32qi((uint32_t)crc, *p++);
 

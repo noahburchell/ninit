@@ -35,4 +35,8 @@ void fail_emergency_shell(const char *why);
 
 int fail_emergency_reaped(pid_t pid, int status);
 
+long long fail_emergency_due(void);
+
+void fail_emergency_tick(void);
+
 void fail_summary(const void *map, const uint8_t *state);
