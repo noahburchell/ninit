@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 
 struct strv {
@@ -474,19 +475,35 @@ static uint32_t blob_add(struct blob *b, const char *s)
 
 static void write_atomic(const char *path, const void *buf, size_t len)
 {
-	char tmp[4104], old[4104], *slash;
+	char tmp[4104], old[4104], parent[4104], *slash;
 	const char *dir;
 	const char *p = buf;
 	size_t left = len;
-	int fd;
+	int fd, dfd;
 
-	if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp) ||
-	    snprintf(old, sizeof(old), "%s.old", path) >= (int)sizeof(old))
+	if (snprintf(tmp, sizeof(tmp), "%s.XXXXXX", path) >= (int)sizeof(tmp) ||
+	    snprintf(old, sizeof(old), "%s.old", path) >= (int)sizeof(old) ||
+	    snprintf(parent, sizeof(parent), "%s", path) >= (int)sizeof(parent))
 		die("output path is too long: %s", path);
 
-	fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+	slash = strrchr(parent, '/');
+	if (slash)
+		*slash = '\0';
+	dir = !slash ? "." : *parent ? parent : "/";
+
+	dfd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (dfd < 0)
+		die("open %s: %s", dir, strerror(errno));
+	if (flock(dfd, LOCK_EX) < 0)
+		die("lock %s: %s", dir, strerror(errno));
+
+	fd = mkostemp(tmp, O_CLOEXEC);
 	if (fd < 0)
-		die("open %s: %s", tmp, strerror(errno));
+		die("mkstemp %s: %s", tmp, strerror(errno));
+	if (fchmod(fd, 0644) < 0) {
+		unlink(tmp);
+		die("fchmod %s: %s", tmp, strerror(errno));
+	}
 
 	while (left) {
 		ssize_t n = write(fd, p, left);
@@ -507,25 +524,18 @@ static void write_atomic(const char *path, const void *buf, size_t len)
 	close(fd);
 
 	unlink(old);
-	if (link(path, old) < 0 && errno != ENOENT)
+	if (link(path, old) < 0 && errno != ENOENT) {
+		unlink(tmp);
 		die("link %s -> %s: %s", path, old, strerror(errno));
+	}
 
 	if (rename(tmp, path) < 0) {
 		unlink(tmp);
 		die("rename %s -> %s: %s", tmp, path, strerror(errno));
 	}
 
-	snprintf(tmp, sizeof(tmp), "%s", path);
-	slash = strrchr(tmp, '/');
-	if (slash)
-		*slash = '\0';
-	dir = !slash ? "." : *tmp ? tmp : "/";
-
-	fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-	if (fd >= 0) {
-		fsync(fd);
-		close(fd);
-	}
+	fsync(dfd);
+	close(dfd);
 }
 
 int cmd_init(int argc, char **argv)

@@ -175,12 +175,18 @@ void ninit_cloexec_except(int keep)
 	cloexec_range((unsigned)keep + 1, ~0u);
 }
 
+enum emerg_state {
+	EMERG_EXEC_FAILED = -1,
+	EMERG_EXEC_UNKNOWN = 0,
+	EMERG_EXEC_OK = 1,
+};
+
 static pid_t emerg_pid = -1;
 static struct timespec emerg_at;
 static unsigned emerg_fast;
 static unsigned emerg_fail;
 static int emerg_gone;
-static int emerg_execed;
+static enum emerg_state emerg_conf;
 static int emerg_greeted;
 static unsigned emerg_noexec;
 
@@ -304,7 +310,7 @@ static pid_t emerg_spawn(int con, int vt, int barrier)
 	_exit(EMERG_NOEXEC);
 }
 
-static int emerg_confirm(int fd)
+static enum emerg_state emerg_confirm(int fd, int *err)
 {
 	struct pollfd pfd = { .fd = fd, .events = POLLIN };
 	int errs[2] = { 0, 0 }, n;
@@ -312,20 +318,32 @@ static int emerg_confirm(int fd)
 	do
 		n = poll(&pfd, 1, EMERG_EXEC_MS);
 	while (n < 0 && errno == EINTR);
-	if (n <= 0)
-		return 0;
+	if (n < 0) {
+		log_warn("shell: poll: %s, cannot tell whether it started", strerror(errno));
+		return EMERG_EXEC_UNKNOWN;
+	}
+	if (n == 0) {
+		log_warn("shell: nothing from it after %d s, cannot tell whether it started",
+			 EMERG_EXEC_MS / 1000);
+		return EMERG_EXEC_UNKNOWN;
+	}
 
 	do
 		n = (int)read(fd, errs, sizeof(errs));
 	while (n < 0 && errno == EINTR);
-	if (n != (int)sizeof(errs))
-		return 0;
+	if (n == 0)
+		return EMERG_EXEC_OK;
+	if (n != (int)sizeof(errs)) {
+		log_warn("shell: short exec report, cannot tell whether it started");
+		return EMERG_EXEC_UNKNOWN;
+	}
 
 #ifdef NINIT_BUSYBOX
 	log_warn("shell: exec %s: %s", NINIT_BUSYBOX, strerror(errs[0]));
 #endif
 	log_err("shell: exec /bin/sh: %s", strerror(errs[1]));
-	return errs[1];
+	*err = errs[1];
+	return EMERG_EXEC_FAILED;
 }
 
 static int emerg_start(void)
@@ -361,10 +379,10 @@ static int emerg_start(void)
 
 	emerg_pid = pid;
 
-	err = emerg_confirm(bar[0]);
+	err = 0;
+	emerg_conf = emerg_confirm(bar[0], &err);
 	close(bar[0]);
-	emerg_execed = !err;
-	if (err)
+	if (emerg_conf == EMERG_EXEC_FAILED)
 		log_err("shell: no working shell on this machine: %s", strerror(err));
 
 	return 0;
@@ -382,7 +400,7 @@ static long long emerg_uptime_ms(void)
 static void emerg_restart(void)
 {
 	if (emerg_start() == 0) {
-		if (!emerg_execed) {
+		if (emerg_conf == EMERG_EXEC_FAILED) {
 			if (++emerg_noexec >= EMERG_NOEXEC_MAX) {
 				emerg_gone = 1;
 				log_err("shell: none can be started here, reboot with sysrq or power-cycle");
@@ -390,6 +408,8 @@ static void emerg_restart(void)
 			return;
 		}
 		emerg_fail = 0;
+		if (emerg_conf != EMERG_EXEC_OK)
+			return;
 		emerg_noexec = 0;
 		if (!emerg_greeted) {
 			emerg_greeted = 1;
