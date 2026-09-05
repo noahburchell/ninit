@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <signal.h>
+#include <stdckdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -128,11 +129,13 @@ static long parse_when(const char *s)
 		return 0;
 
 	if (*s == '+') {
+		long secs;
+
 		errno = 0;
 		v = strtol(s + 1, &end, 10);
-		if (errno || end == s + 1 || *end || v < 0)
+		if (errno || end == s + 1 || *end || v < 0 || ckd_mul(&secs, v, 60L))
 			return -1;
-		return v * 60;
+		return secs;
 	}
 
 	if (strchr(s, ':')) {
