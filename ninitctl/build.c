@@ -306,13 +306,12 @@ static int same_dir(const char *a, const char *b)
 	       sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino;
 }
 
-static int is_output_name(const char *name, const char *base, size_t base_len)
+static int is_artifact(const char *name, const char *base, size_t base_len)
 {
-	if (!base)
+	if (!base || strncmp(name, base, base_len))
 		return 0;
-	if (!strcmp(name, base))
-		return 1;
-	return !strncmp(name, base, base_len) && name[base_len] == '.';
+	return !name[base_len] || !strcmp(name + base_len, ".old") ||
+	       !strcmp(name + base_len, ".tmp");
 }
 
 static int cmp_dirent(const struct dirent **a, const struct dirent **b)
@@ -492,21 +491,29 @@ static uint32_t blob_add(struct blob *b, const char *s)
 
 static void write_atomic(const char *path, const void *buf, size_t len)
 {
-	char tmp[4104], old[4104], parent[4104], *slash;
-	const char *dir;
+	char tmp[8224], old[4104], parent[4104], *slash;
+	const char *dir, *base;
 	const char *p = buf;
 	size_t left = len;
+	mode_t um;
 	int fd, dfd;
 
-	if (snprintf(tmp, sizeof(tmp), "%s.XXXXXX", path) >= (int)sizeof(tmp) ||
-	    snprintf(old, sizeof(old), "%s.old", path) >= (int)sizeof(old) ||
-	    snprintf(parent, sizeof(parent), "%s", path) >= (int)sizeof(parent))
+	if (snprintf(parent, sizeof(parent), "%s", path) >= (int)sizeof(parent))
 		die("output path is too long: %s", path);
 
 	slash = strrchr(parent, '/');
-	if (slash)
+	if (slash) {
 		*slash = '\0';
-	dir = !slash ? "." : *parent ? parent : "/";
+		base = path + (slash - parent) + 1;
+		dir = *parent ? parent : "/";
+	} else {
+		base = path;
+		dir = ".";
+	}
+
+	if (snprintf(tmp, sizeof(tmp), "%s/.%s.XXXXXX", dir, base) >= (int)sizeof(tmp) ||
+	    snprintf(old, sizeof(old), "%s.old", path) >= (int)sizeof(old))
+		die("output path is too long: %s", path);
 
 	dfd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
 	if (dfd < 0)
@@ -514,10 +521,13 @@ static void write_atomic(const char *path, const void *buf, size_t len)
 	if (flock(dfd, LOCK_EX) < 0)
 		die("lock %s: %s", dir, strerror(errno));
 
+	um = umask(0);
+	umask(um);
+
 	fd = mkostemp(tmp, O_CLOEXEC);
 	if (fd < 0)
 		die("mkstemp %s: %s", tmp, strerror(errno));
-	if (fchmod(fd, 0644) < 0) {
+	if (fchmod(fd, 0644 & ~um) < 0) {
 		unlink(tmp);
 		die("fchmod %s: %s", tmp, strerror(errno));
 	}
@@ -633,10 +643,8 @@ int cmd_init(int argc, char **argv)
 		char *buf;
 		size_t len;
 
-		if (!strcmp(ents[k]->d_name, "depgraph") ||
-		    !strncmp(ents[k]->d_name, "depgraph.", 9))
-			continue;
-		if (is_output_name(ents[k]->d_name, out_base, out_base_len))
+		if (is_artifact(ents[k]->d_name, "depgraph", 8) ||
+		    is_artifact(ents[k]->d_name, out_base, out_base_len))
 			continue;
 
 		if (snprintf(path, sizeof(path), "%s/%s", dir, ents[k]->d_name) >= (int)sizeof(path))
