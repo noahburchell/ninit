@@ -68,7 +68,8 @@ WARN += -Wshadow-all \
 	-Wthread-safety
 endif
 
-CFLAGS   ?= -O2 -g
+LDFLAGS  ?= -Wl,-O2 -Wl,--as-needed -Wl,--hash-style=gnu -Wl,-z,pack-relative-relocs -flto=auto
+CFLAGS   ?= -march=native -O3 -pipe -fno-semantic-interposition -flto=auto
 CFLAGS   += -std=gnu23 $(WARN)
 CPPFLAGS += -D_GNU_SOURCE
 
