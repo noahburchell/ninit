@@ -864,8 +864,6 @@ static void svc_release(uint32_t i)
 			if (state[d] == NG_ST_PENDING) {
 				svc_try_start(d);
 			} else if (state[d] == NG_ST_DONE && !up[d] && ng_restart(map, d)) {
-				// spawn() would reset it to a fresh startup and
-				// start-tries could then retire a supervised daemon
 				if (!live_has(d))
 					live_add(d);
 				if (!runs[d].restart_at)
@@ -1240,8 +1238,6 @@ static void fire_restarts(void)
 	if (shutting_down)
 		return;
 
-	// descending: giving up on a service swaps the last one into its slot,
-	// and that one has already been seen
 	k = n_live;
 	while (k--) {
 		uint32_t i = live[k];
@@ -2438,8 +2434,6 @@ static void ctl_read(struct ctl *c)
 	char *nl;
 	ssize_t k;
 
-	// a connection with nothing to say still has to notice a hangup, or the
-	// dead socket stays ready and the loop spins until its operation ends
 	if (c->done || c->listing || c->svc != UINT32_MAX) {
 		char skip[256];
 
