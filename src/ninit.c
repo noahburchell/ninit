@@ -1,5 +1,6 @@
 #include "fail.h"
 #include "logging.h"
+#include "nctl.h"
 #include "ngraph.h"
 
 #include <errno.h>
@@ -46,10 +47,16 @@
 #define CG_MAGIC	0x63677270
 #define CG_PATH_MAX	(sizeof(CG_DIR) + NG_MAX_NAME + 24)
 #define CTL_MAX		8
-#define CTL_BUF		1024
+#define CTL_BUF		NCTL_REQ_MAX
+#define CTL_OUT		8192
 #define CTL_ACK_MS	30000
 
 #define EXIT_NOEXEC	(127 << 8)
+
+#define SVC_OP_NONE	0
+#define SVC_OP_TERM	1
+#define SVC_OP_KILL	2
+#define SVC_OP_START	3
 
 #define RESTART_SETTLED_MS 10000
 
@@ -70,9 +77,12 @@ struct run {
 	uint8_t timedout;
 	uint8_t starting;
 	uint8_t ntf_exec;
+	uint8_t op;
+	uint8_t op_restart;
 	uint16_t tail_len;
 	uint16_t line_len;
 	long long started;
+	long long op_at;
 	char tail[TAIL_CAP];
 	char line[LINE_CAP];
 };
@@ -86,24 +96,28 @@ static uint16_t *unmet;
 static struct run *runs;
 static uint32_t *live, n_live;
 static uint32_t *queue, q_head, q_tail;
+static uint32_t *rqueue;
+static uint8_t *released;
 static int draining;
-static uint32_t n_active, n_done, n_pending;
+static uint32_t n_active, n_done, n_pending, n_up;
 static uint32_t drain_left;
+static uint32_t drain_rotor;
 static int boot_reported, shutting_down;
 
 struct ctl {
 	int fd;
 	uint32_t svc;
-	long long deadline;
-	uint8_t op;
+	uint32_t list_at;
+	uint8_t listing;
+	uint8_t done;
+	uint16_t in_len;
+	uint16_t out_at, out_len;
+	char in[CTL_BUF];
+	char out[CTL_OUT];
 };
 
-#define CTL_OP_NONE	0
-#define CTL_OP_STOP	1
-#define CTL_OP_START	2
-#define CTL_OP_RESTART	3
-
 static int ctl_lfd = -1;
+static uint32_t n_ops;
 static struct ctl ctl_conn[CTL_MAX];
 static int n_ctl;
 static int sfd = -1, null_fd = -1;
@@ -213,20 +227,56 @@ static void cgroup_make(uint32_t i, char *procs, size_t cap)
 	char dir[CG_PATH_MAX];
 
 	procs[0] = '\0';
-	if (!cg_ok || !cg_path(i, "", dir, sizeof(dir)))
+	if (!cg_ok)
 		return;
-	if (mkdir(dir, 0755) < 0 && errno != EEXIST)
-		return;
-	if (!cg_path(i, "cgroup.procs", procs, cap))
+	if (!cg_path(i, "", dir, sizeof(dir)) ||
+	    !cg_path(i, "cgroup.procs", procs, cap)) {
 		procs[0] = '\0';
+		log_warn("%s: cgroup path is too long, falling back to its process group",
+			 ng_name(map, i));
+		return;
+	}
+	if (mkdir(dir, 0755) < 0 && errno != EEXIST) {
+		procs[0] = '\0';
+		log_warn("%s: mkdir %s: %s, falling back to its process group",
+			 ng_name(map, i), dir, strerror(errno));
+	}
+}
+
+static int cgroup_populated(uint32_t i)
+{
+	char path[CG_PATH_MAX], buf[256], *p;
+	ssize_t k;
+	int fd;
+
+	if (!cg_ok || !cg_path(i, "cgroup.events", path, sizeof(path)))
+		return -1;
+	fd = open(path, O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		return -1;
+	k = read(fd, buf, sizeof(buf) - 1);
+	close(fd);
+	if (k <= 0)
+		return -1;
+	buf[k] = '\0';
+	p = strstr(buf, "populated");
+	if (!p)
+		return -1;
+	p += 9;
+	while (*p == ' ' || *p == '\t')
+		p++;
+	return *p == '1';
 }
 
 static void cgroup_drop(uint32_t i)
 {
 	char dir[CG_PATH_MAX];
 
-	if (cg_ok && cg_path(i, "", dir, sizeof(dir)))
-		rmdir(dir);
+	if (!cg_ok || !cg_path(i, "", dir, sizeof(dir)))
+		return;
+	if (rmdir(dir) == 0 || errno == ENOENT)
+		return;
+	log_warn("%s: rmdir %s: %s", ng_name(map, i), dir, strerror(errno));
 }
 
 static int cgroup_signal(uint32_t i, int sig)
@@ -466,10 +516,18 @@ static void child_exec(uint32_t i, int out_w, int ntf_w, const char *cg)
 	setsid();
 	if (*cg) {
 		int cf = open(cg, O_WRONLY | O_CLOEXEC);
+		int joined = 0;
 
 		if (cf >= 0) {
-			(void)!write(cf, "0", 1);
+			joined = write(cf, "0", 1) == 1;
 			close(cf);
+		}
+		if (!joined) {
+			// out_w is already this service's stdout so pid 1 logs it
+			at = put_str(msg, 0, "ninit: could not join its cgroup: errno ");
+			at = put_num(msg, at, (unsigned)errno);
+			at = put_str(msg, at, ", it is only contained by its process group\n");
+			(void)!write(out_w, msg, at);
 		}
 	}
 	if (null_fd >= 0)
@@ -608,7 +666,7 @@ static void maybe_free(uint32_t i)
 	struct run *r = &runs[i];
 
 	if (r->pid == 0 && !r->stale_pid && r->out_fd < 0 && r->ntf_fd < 0 &&
-	    !r->restart_at && live_has(i)) {
+	    !r->restart_at && r->op == SVC_OP_NONE && live_has(i)) {
 		cgroup_drop(i);
 		live_del(i);
 	}
@@ -666,8 +724,10 @@ static void drain_out(uint32_t i, unsigned chunks, int budgeted)
 		ssize_t k;
 
 		if (budgeted) {
-			if (!drain_left)
+			if (!drain_left) {
+				drain_rotor = i;
 				return;
+			}
 			if (drain_left < take)
 				take = drain_left;
 		}
@@ -693,58 +753,157 @@ static void spawn(uint32_t i);
 static void service_failed(uint32_t i, int status);
 static void start_failed(uint32_t i, int status);
 
-static void go_down(uint32_t i)
+static void svc_abandon(uint32_t i)
 {
-	const uint32_t *roff = ng_rdep_off(map), *ridx = ng_rdep_idx(map);
-	uint32_t k;
+	struct run *r = &runs[i];
 
-	if (!up[i])
+	if (r->pid <= 0)
 		return;
-	up[i] = 0;
-	if (ng_order_only(map, i))
-		return;
-	for (k = roff[i]; k < roff[i + 1]; k++)
-		unmet[ridx[k]]++;
+	r->stale_pid = r->pid;
+	r->pid = 0;
 }
 
-static void complete(uint32_t i)
+static int svc_can_start(uint32_t i, const char **why)
+{
+	const struct run *r = &runs[i];
+
+	if (shutting_down) {
+		*why = "shutting down";
+		return 0;
+	}
+	if (want[i]) {
+		*why = "held stopped";
+		return 0;
+	}
+	if (r->pid > 0) {
+		*why = "already running";
+		return 0;
+	}
+	if (r->stale_pid) {
+		*why = "its previous instance has not exited";
+		return 0;
+	}
+	if (unmet[i]) {
+		*why = "waiting on a prerequisite";
+		return 0;
+	}
+	return 1;
+}
+
+static int svc_try_start(uint32_t i)
+{
+	const char *why;
+
+	if (!svc_can_start(i, &why))
+		return 0;
+	spawn(i);
+	return 1;
+}
+
+static void svc_mark_done(uint32_t i)
 {
 	runs[i].starting = 0;
 	if (state[i] == NG_ST_RUNNING)
 		n_active--;
-	if (state[i] == NG_ST_PENDING)
+	else if (state[i] == NG_ST_PENDING)
 		n_pending--;
 	if (state[i] != NG_ST_DONE) {
 		state[i] = NG_ST_DONE;
 		n_done++;
 	}
-	if (up[i])
+}
+
+static void svc_set_up(uint32_t i, int v)
+{
+	if (!up[i] == !v)
 		return;
-	up[i] = 1;
+	up[i] = (uint8_t)!!v;
+	if (v)
+		n_up++;
+	else
+		n_up--;
+}
+
+static void svc_release(uint32_t i)
+{
+	const uint32_t *roff = ng_rdep_off(map), *ridx = ng_rdep_idx(map);
+
+	if (released[i])
+		return;
+	released[i] = 1;
 	queue[q_tail++] = i;
 	if (draining)
 		return;
 
 	draining = 1;
 	while (q_head < q_tail) {
-		const uint32_t *roff = ng_rdep_off(map), *ridx = ng_rdep_idx(map);
 		uint32_t j = queue[q_head++], k;
 
 		for (k = roff[j]; k < roff[j + 1]; k++) {
 			uint32_t d = ridx[k];
 
-			if (--unmet[d] != 0 || state[d] != NG_ST_PENDING || want[d])
+			if (--unmet[d] != 0 || want[d])
 				continue;
 			if (ng_svcs(map)[d].type == NG_TYPE_TARGET) {
+				if (released[d])
+					continue;
+				svc_set_up(d, 1);
+				svc_mark_done(d);
 				log_done("%s", ng_name(map, d));
-				complete(d);
-			} else {
-				spawn(d);
+				released[d] = 1;
+				queue[q_tail++] = d;
+				continue;
 			}
+			if (state[d] == NG_ST_PENDING ||
+			    (state[d] == NG_ST_DONE && !up[d] && ng_restart(map, d)))
+				svc_try_start(d);
 		}
 	}
 	draining = 0;
 	q_head = q_tail = 0;
+}
+
+static void svc_reclaim(uint32_t i)
+{
+	const uint32_t *roff = ng_rdep_off(map), *ridx = ng_rdep_idx(map);
+	uint32_t rh = 0, rt = 0;
+
+	if (!released[i] || ng_order_only(map, i))
+		return;
+	released[i] = 0;
+	rqueue[rt++] = i;
+
+	while (rh < rt) {
+		uint32_t j = rqueue[rh++], k;
+
+		for (k = roff[j]; k < roff[j + 1]; k++) {
+			uint32_t d = ridx[k];
+
+			unmet[d]++;
+			if (ng_svcs(map)[d].type != NG_TYPE_TARGET)
+				continue;
+			if (!released[d] || ng_order_only(map, d))
+				continue;
+			released[d] = 0;
+			svc_set_up(d, 0);
+			rqueue[rt++] = d;
+		}
+	}
+}
+
+static void go_down(uint32_t i)
+{
+	if (!up[i] && !released[i])
+		return;
+	svc_set_up(i, 0);
+	svc_reclaim(i);
+}
+
+static void complete(uint32_t i)
+{
+	svc_mark_done(i);
+	svc_set_up(i, 1);
+	svc_release(i);
 }
 
 static int launch(uint32_t i)
@@ -822,15 +981,16 @@ static void spawn(uint32_t i)
 
 static void poison(uint32_t i)
 {
-	uint32_t skipped;
+	uint32_t skipped, undone;
 
 	if (state[i] == NG_ST_RUNNING)
 		n_active--;
 	else if (state[i] == NG_ST_PENDING)
 		n_pending--;
-	up[i] = 0;
-	skipped = fail_poison(map, i, state);
+	go_down(i);
+	skipped = fail_poison(map, i, state, up, &undone);
 	n_pending -= skipped;
+	n_done -= undone;
 	if (skipped)
 		log_warn("%s: %u dependent service%s will not start", ng_name(map, i),
 			 skipped, skipped == 1 ? "" : "s");
@@ -839,13 +999,14 @@ static void poison(uint32_t i)
 // a service that had completed is gone for good
 static void poison_deps(uint32_t i)
 {
-	uint32_t skipped;
+	uint32_t skipped, undone;
 
 	if (ng_order_only(map, i))
 		return;
-	skipped = fail_poison_deps(map, i, state);
+	skipped = fail_poison_deps(map, i, state, up, &undone);
 
 	n_pending -= skipped;
+	n_done -= undone;
 	if (skipped)
 		log_warn("%s: %u dependent service%s will not start", ng_name(map, i),
 			 skipped, skipped == 1 ? "" : "s");
@@ -862,10 +1023,7 @@ static void service_failed(uint32_t i, int status)
 	close_fds(i);
 	r->starting = 0;
 
-	if (r->pid > 0) {
-		r->stale_pid = r->pid;
-		r->pid = 0;
-	}
+	svc_abandon(i);
 	if (live_has(i) && !r->stale_pid)
 		live_del(i);
 
@@ -881,10 +1039,8 @@ static void service_failed(uint32_t i, int status)
 	case FAIL_RETRY: {
 		unsigned d = ng_pol(map, i)->retry_ms;
 
-		if (!r->stale_pid && !d) {
-			spawn(i);
+		if (!d && svc_try_start(i))
 			return;
-		}
 		if (!live_has(i))
 			live_add(i);
 		r->restart_at = now_ms() + (r->stale_pid ? KILL_GRACE_MS : d);
@@ -1032,6 +1188,7 @@ static void restart_schedule(uint32_t i, int status)
 	kill_group(i);
 	drain_out(i, DRAIN_FINAL_CHUNKS, 0);
 	close_fds(i);
+	svc_abandon(i);
 	r->restart_at = now_ms() + d;
 
 	fail_describe(status, how, sizeof(how));
@@ -1072,32 +1229,35 @@ static void fire_restarts(void)
 	for (k = 0; k < n_live; k++) {
 		uint32_t i = live[k];
 		struct run *r = &runs[i];
+		const char *why;
 
 		if (!r->restart_at || now < r->restart_at)
 			continue;
 		r->restart_at = 0;
 		if (want[i])
 			continue;
-		if (r->stale_pid) {
-			if (state[i] != NG_ST_RUNNING) {
+
+		if (!svc_can_start(i, &why)) {
+			if (r->stale_pid && state[i] == NG_ST_RUNNING) {
+				log_err("%s: the killed instance (pid %d) has not exited, not starting another",
+					ng_name(map, i), (int)r->stale_pid);
+				give_up(i, FAIL_ST_TIMEOUT);
+				continue;
+			}
+			if (r->stale_pid || r->pid > 0) {
 				r->restart_at = now + KILL_GRACE_MS;
 				continue;
 			}
-			log_err("%s: the killed instance (pid %d) has not exited, not starting another",
-				ng_name(map, i), (int)r->stale_pid);
-			give_up(i, FAIL_ST_TIMEOUT);
 			continue;
 		}
+
 		r->started = now;
 		if (launch(i) < 0) {
 			if (state[i] == NG_ST_RUNNING)
 				service_failed(i, EXIT_NOEXEC);
 			else
 				restart_schedule(i, EXIT_NOEXEC);
-			continue;
 		}
-		if (!ng_notify(map, i) && state[i] == NG_ST_DONE)
-			complete(i);
 	}
 }
 
@@ -1253,12 +1413,13 @@ static uint32_t find_pid(pid_t pid, int *stale)
 }
 
 // an abandoned instance finally died
-static void stale_reaped(uint32_t i)
+static void stale_reaped(uint32_t i, pid_t pid)
 {
 	struct run *r = &runs[i];
 
-	pid_del(r->stale_pid);
-	r->stale_pid = 0;
+	pid_del(pid);
+	if (r->stale_pid == pid)
+		r->stale_pid = 0;
 	if (r->restart_at)
 		r->restart_at = now_ms() + ng_pol(map, i)->retry_ms;
 	maybe_free(i);
@@ -1285,7 +1446,7 @@ static void reap(void)
 		if (i == UINT32_MAX)
 			continue;
 		if (stale)
-			stale_reaped(i);
+			stale_reaped(i, pid);
 		else
 			child_exited(i, status);
 	}
@@ -1608,11 +1769,11 @@ static int build_prereqs(uint32_t **poff, uint32_t **pidx)
 
 static void stop_ordered(void)
 {
-	const uint32_t *roff = ng_rdep_off(map), *ridx = ng_rdep_idx(map);
+	const uint32_t *roff = ng_rdep_off(map);
 	uint32_t *off = NULL, *idx = NULL, *waitc = NULL;
 	long long *stop_at = NULL, deadline;
 	uint8_t *st = NULL;
-	uint32_t i, k, left = 0;
+	uint32_t i, k, left = 0, live_svc = 0;
 
 	if (!n_svc || build_prereqs(&off, &idx) < 0)
 		goto out;
@@ -1623,20 +1784,16 @@ static void stop_ordered(void)
 		goto out;
 
 	for (i = 0; i < n_svc; i++) {
-		if (runs[i].pid <= 0) {
-			st[i] = 2;
-			continue;
-		}
-		left++;
-		for (k = roff[i]; k < roff[i + 1]; k++)
-			if (runs[ridx[k]].pid > 0)
-				waitc[i]++;
+		waitc[i] = roff[i + 1] - roff[i];
+		if (runs[i].pid > 0)
+			live_svc++;
 	}
-	if (!left)
+	if (!live_svc)
 		goto out;
+	left = n_svc;
 
-	log_note("shutdown: stopping %u service%s in dependency order", left,
-		 left == 1 ? "" : "s");
+	log_note("shutdown: stopping %u service%s in dependency order", live_svc,
+		 live_svc == 1 ? "" : "s");
 
 	deadline = now_ms() + STOP_TOTAL_MS;
 	for (;;) {
@@ -1645,9 +1802,11 @@ static void stop_ordered(void)
 		long long now = now_ms(), next = deadline;
 
 		for (i = 0; i < n_svc; i++) {
-			if (st[i] == 2)
+			if (st[i] == 2 || waitc[i])
 				continue;
-			if (!st[i] && !waitc[i]) {
+			if (!st[i]) {
+				if (runs[i].pid <= 0)
+					continue;	// settles below
 				signal_group(i, SIGTERM);
 				st[i] = 1;
 				stop_at[i] = now + ng_stop_ms(map, i);
@@ -1669,7 +1828,7 @@ static void stop_ordered(void)
 		drain_output();
 
 		for (i = 0; i < n_svc; i++) {
-			if (st[i] == 2 || runs[i].pid > 0)
+			if (st[i] == 2 || waitc[i] || runs[i].pid > 0)
 				continue;
 			st[i] = 2;
 			left--;
@@ -1682,8 +1841,12 @@ static void stop_ordered(void)
 
 		now = now_ms();
 		if (now >= deadline) {
-			log_warn("shutdown: %u service%s would not stop in order", left,
-				 left == 1 ? "" : "s");
+			uint32_t stuck = 0;
+
+			for (i = 0; i < n_svc; i++)
+				stuck += runs[i].pid > 0;
+			log_warn("shutdown: %u service%s would not stop in order", stuck,
+				 stuck == 1 ? "" : "s");
 			break;
 		}
 		if (next > now + SHUTDOWN_DRAIN_MS)
@@ -1873,29 +2036,106 @@ static void ctl_init(void)
 	log_note("control: listening on %s", NINIT_CTL_SOCK);
 }
 
-static void ctl_say(struct ctl *c, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+static void ctl_out(struct ctl *c, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 
-static void ctl_say(struct ctl *c, const char *fmt, ...)
+static void ctl_out(struct ctl *c, const char *fmt, ...)
 {
-	char buf[CTL_BUF];
 	va_list ap;
 	int n;
 
+	if (c->done || c->out_len >= CTL_OUT - 128)
+		return;
 	va_start(ap, fmt);
-	n = vsnprintf(buf, sizeof(buf) - 1, fmt, ap);
+	n = vsnprintf(c->out + c->out_len, CTL_OUT - c->out_len, fmt, ap);
 	va_end(ap);
 	if (n < 0)
 		return;
-	if (n > (int)sizeof(buf) - 2)
-		n = (int)sizeof(buf) - 2;
-	buf[n++] = '\n';
-	(void)!write(c->fd, buf, (size_t)n);
+	if ((size_t)n >= (size_t)(CTL_OUT - c->out_len))
+		n = CTL_OUT - c->out_len - 1;
+	c->out_len += (uint16_t)n;
 }
 
-static void ctl_close(struct ctl *c)
+static void ctl_end(struct ctl *c, int ok, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
+
+static void ctl_end(struct ctl *c, int ok, const char *fmt, ...)
+{
+	char buf[CTL_BUF];
+	va_list ap;
+
+	if (c->done)
+		return;
+	va_start(ap, fmt);
+	vsnprintf(buf, sizeof(buf), fmt, ap);
+	va_end(ap);
+	c->listing = 0;
+	c->svc = UINT32_MAX;
+	ctl_out(c, "%s%s\n", ok ? NCTL_OK : NCTL_ERR, buf);
+	c->done = 1;
+}
+
+static void ctl_drop(struct ctl *c)
 {
 	close(c->fd);
 	*c = ctl_conn[--n_ctl];
+}
+
+static void ctl_fill(struct ctl *c)
+{
+	while (c->listing && c->out_len < CTL_OUT - 256) {
+		uint32_t i = c->list_at;
+
+		if (c->listing == 2) {
+			const char *l = log_kept_line(i);
+
+			if (!l) {
+				c->listing = 0;
+				ctl_end(c, 1, "%u retained failure line%s", i,
+					i == 1 ? "" : "s");
+				return;
+			}
+			c->list_at++;
+			ctl_out(c, NCTL_DATA "%s\n", l);
+			continue;
+		}
+		if (i >= n_svc) {
+			c->listing = 0;
+			ctl_end(c, 1, "%u services, %u up", n_svc, n_up);
+			return;
+		}
+		c->list_at++;
+		ctl_out(c, NCTL_DATA "%s %s %s pid %d\n", ng_name(map, i), state_name(i),
+			want[i] ? "stopped" : "wanted", (int)runs[i].pid);
+	}
+}
+
+// returns 0 while output is still pending
+static int ctl_flush(struct ctl *c)
+{
+	while (c->out_at < c->out_len) {
+		ssize_t k = write(c->fd, c->out + c->out_at,
+				  (size_t)(c->out_len - c->out_at));
+
+		if (k > 0) {
+			c->out_at += (uint16_t)k;
+			continue;
+		}
+		if (k < 0 && errno == EINTR)
+			continue;
+		if (k < 0 && errno == EAGAIN)
+			return 0;
+		return 1; // the peer is gone
+	}
+	c->out_at = c->out_len = 0;
+	return 1;
+}
+
+static void ctl_pump(struct ctl *c)
+{
+	ctl_fill(c);
+	if (!ctl_flush(c))
+		return;
+	if (c->done && c->out_at == c->out_len)
+		ctl_drop(c);
 }
 
 static uint32_t ctl_find(const char *name)
@@ -1908,74 +2148,138 @@ static uint32_t ctl_find(const char *name)
 	return UINT32_MAX;
 }
 
-static int ctl_blocked(uint32_t i)
+// every connection watching this service learns how its operation ended
+static void svc_op_set(uint32_t i, uint8_t op, long long at)
 {
-	return unmet[i] != 0;
+	if ((runs[i].op == SVC_OP_NONE) != (op == SVC_OP_NONE)) {
+		if (op == SVC_OP_NONE)
+			n_ops--;
+		else
+			n_ops++;
+	}
+	runs[i].op = op;
+	runs[i].op_at = at;
 }
 
-static void ctl_stop(struct ctl *c, uint32_t i, uint8_t then)
+static void svc_op_done(uint32_t i, int ok, const char *msg)
+{
+	int k;
+
+	svc_op_set(i, SVC_OP_NONE, 0);
+	runs[i].op_restart = 0;
+	for (k = 0; k < n_ctl; k++)
+		if (ctl_conn[k].svc == i)
+			ctl_end(&ctl_conn[k], ok, "%s %s", ng_name(map, i), msg);
+	maybe_free(i);
+}
+
+static void svc_op_start(uint32_t i)
+{
+	struct run *r = &runs[i];
+	const char *why = "";
+
+	want[i] = 0;
+	r->attempt = 0;
+	r->burst = 0;
+	r->op_restart = 0;
+	if (state[i] != NG_ST_PENDING) {
+		state[i] = NG_ST_PENDING;
+		n_pending++;
+	}
+	if (!svc_try_start(i)) {
+		svc_can_start(i, &why);
+		svc_op_done(i, 0, why);
+		return;
+	}
+	svc_op_set(i, SVC_OP_START, now_ms() + (long long)ng_start_ms(map, i) + KILL_GRACE_MS);
+}
+
+static void svc_op_stop(uint32_t i, int restart)
 {
 	struct run *r = &runs[i];
 
 	want[i] = 1;
 	r->restart_at = 0;
-	if (r->pid <= 0 && !r->stale_pid) {
-		if (then == CTL_OP_RESTART) {
-			want[i] = 0;
-			r->attempt = 0;
-			r->burst = 0;
-			spawn(i);
-			c->op = CTL_OP_START;
-			c->svc = i;
-			c->deadline = now_ms() + CTL_ACK_MS;
+	r->op_restart = (uint8_t)restart;
+	if (!live_has(i))
+		live_add(i);
+
+	if (r->pid <= 0 && !r->stale_pid && cgroup_populated(i) <= 0) {
+		if (restart) {
+			svc_op_start(i);
 			return;
 		}
-		ctl_say(c, "ok %s already stopped", ng_name(map, i));
-		ctl_close(c);
+		svc_op_done(i, 1, "already stopped");
 		return;
 	}
 	signal_group(i, SIGTERM);
-	c->op = then == CTL_OP_RESTART ? CTL_OP_RESTART : CTL_OP_STOP;
-	c->svc = i;
-	c->deadline = now_ms() + (long long)ng_stop_ms(map, i) + KILL_GRACE_MS;
+	svc_op_set(i, SVC_OP_TERM, now_ms() + ng_stop_ms(map, i));
 }
 
-static void ctl_start(struct ctl *c, uint32_t i)
+static void ctl_tick(void)
 {
-	struct run *r = &runs[i];
+	long long now;
+	uint32_t k;
 
-	want[i] = 0;
-	if (r->pid > 0 || state[i] == NG_ST_RUNNING) {
-		ctl_say(c, "ok %s already starting", ng_name(map, i));
-		ctl_close(c);
+	if (!n_ops)
 		return;
+	now = now_ms();
+	for (k = 0; k < n_live; k++) {
+		uint32_t i = live[k];
+		struct run *r = &runs[i];
+		int gone = r->pid <= 0 && !r->stale_pid && cgroup_populated(i) <= 0;
+
+		switch (r->op) {
+		case SVC_OP_TERM:
+			if (gone) {
+				if (r->op_restart)
+					svc_op_start(i);
+				else
+					svc_op_done(i, 1, "stopped");
+				break;
+			}
+			if (now < r->op_at)
+				break;
+			log_warn("%s: still running %u ms after SIGTERM, killing it",
+				 ng_name(map, i), ng_stop_ms(map, i));
+			signal_group(i, SIGKILL);
+			svc_op_set(i, SVC_OP_KILL, now + KILL_GRACE_MS);
+			break;
+
+		case SVC_OP_KILL:
+			if (gone) {
+				if (r->op_restart)
+					svc_op_start(i);
+				else
+					svc_op_done(i, 1, "stopped, it needed SIGKILL");
+				break;
+			}
+			if (now >= r->op_at)
+				svc_op_done(i, 0, "would not stop, even after SIGKILL");
+			break;
+
+		case SVC_OP_START:
+			if (state[i] == NG_ST_DONE && up[i]) {
+				svc_op_done(i, 1, "up");
+				break;
+			}
+			if (state[i] == NG_ST_FAILED || state[i] == NG_ST_SKIPPED) {
+				svc_op_done(i, 0, state_name(i));
+				break;
+			}
+			if (now >= r->op_at)
+				svc_op_done(i, 0, "did not come up in time");
+			break;
+
+		default:
+			break;
+		}
 	}
-	if (state[i] == NG_ST_DONE && up[i]) {
-		ctl_say(c, "ok %s already up", ng_name(map, i));
-		ctl_close(c);
-		return;
-	}
-	if (ctl_blocked(i)) {
-		ctl_say(c, "err %s is waiting on %u prerequisite%s", ng_name(map, i),
-			unmet[i], unmet[i] == 1 ? "" : "s");
-		ctl_close(c);
-		return;
-	}
-	if (state[i] != NG_ST_PENDING) {
-		state[i] = NG_ST_PENDING;
-		n_pending++;
-	}
-	r->attempt = 0;
-	r->burst = 0;
-	spawn(i);
-	c->op = CTL_OP_START;
-	c->svc = i;
-	c->deadline = now_ms() + (long long)ng_start_ms(map, i) + KILL_GRACE_MS;
 }
 
 static void ctl_resume(struct ctl *c)
 {
-	uint32_t i, reset = 0;
+	uint32_t i, reset = 0, started = 0;
 
 	for (i = 0; i < n_svc; i++) {
 		if (state[i] != NG_ST_FAILED && state[i] != NG_ST_SKIPPED)
@@ -1987,224 +2291,188 @@ static void ctl_resume(struct ctl *c)
 		reset++;
 	}
 	if (!reset) {
-		ctl_say(c, "ok nothing to resume");
-		ctl_close(c);
+		ctl_end(c, 1, "nothing to resume");
 		return;
 	}
-	for (i = 0; i < n_svc; i++)
-		if (state[i] == NG_ST_PENDING && !want[i] && !unmet[i]) {
-			if (ng_svcs(map)[i].type == NG_TYPE_TARGET)
+	for (i = 0; i < n_svc; i++) {
+		if (state[i] != NG_ST_PENDING)
+			continue;
+		if (ng_svcs(map)[i].type == NG_TYPE_TARGET) {
+			if (!unmet[i] && !want[i])
 				complete(i);
-			else
-				spawn(i);
+			continue;
 		}
-	log_note("control: resuming %u service%s", reset, reset == 1 ? "" : "s");
-	ctl_say(c, "ok resuming %u service%s", reset, reset == 1 ? "" : "s");
-	ctl_close(c);
+		started += (uint32_t)svc_try_start(i);
+	}
+	log_note("control: resuming %u service%s, %u started", reset,
+		 reset == 1 ? "" : "s", started);
+	ctl_end(c, 1, "resuming %u service%s, %u started now", reset,
+		reset == 1 ? "" : "s", started);
 }
 
 static void ctl_cmd(struct ctl *c, char *line)
 {
 	char *arg = strchr(line, ' ');
 	uint32_t i;
+	int restart;
 
 	if (arg) {
 		*arg++ = '\0';
 		while (*arg == ' ')
 			arg++;
+		if (!*arg)
+			arg = NULL;
 	}
 
 	if (!strcmp(line, "status")) {
 		if (!arg) {
-			for (i = 0; i < n_svc; i++)
-				ctl_say(c, "%s %s %s pid %d", ng_name(map, i), state_name(i),
-					want[i] ? "stopped" : "wanted", (int)runs[i].pid);
-			ctl_say(c, "ok %u service%s, %u up", n_svc, n_svc == 1 ? "" : "s", n_done);
-			ctl_close(c);
+			c->listing = 1;
+			c->list_at = 0;
 			return;
 		}
 		i = ctl_find(arg);
 		if (i == UINT32_MAX) {
-			ctl_say(c, "err no service named %s", arg);
-			ctl_close(c);
+			ctl_end(c, 0, "no service named %s", arg);
 			return;
 		}
-		ctl_say(c, "%s %s %s pid %d", ng_name(map, i), state_name(i),
+		ctl_out(c, NCTL_DATA "%s %s %s pid %d\n", ng_name(map, i), state_name(i),
 			want[i] ? "stopped" : "wanted", (int)runs[i].pid);
-		ctl_say(c, "ok");
-		ctl_close(c);
+		ctl_end(c, 1, "%s", ng_name(map, i));
+		return;
+	}
+
+	if (!strcmp(line, "log")) {
+		if (!log_kept()) {
+			ctl_end(c, 1, "no failures recorded");
+			return;
+		}
+		c->listing = 2;
+		c->list_at = 0;
 		return;
 	}
 
 	if (!strcmp(line, "reload")) {
-		ctl_say(c, "err the running graph cannot be replaced; reboot to load a new one");
-		ctl_close(c);
+		ctl_end(c, 0, "the running graph cannot be replaced; reboot to load a new one");
 		return;
 	}
 
 	if (!strcmp(line, "resume")) {
-		if (shutting_down) {
-			ctl_say(c, "err shutting down");
-			ctl_close(c);
-			return;
-		}
-		ctl_resume(c);
+		if (shutting_down)
+			ctl_end(c, 0, "shutting down");
+		else
+			ctl_resume(c);
 		return;
 	}
 
-	if (strcmp(line, "stop") && strcmp(line, "start") && strcmp(line, "restart")) {
-		ctl_say(c, "err unknown command '%s' "
-			"(status, start, stop, restart, resume, reload)", line);
-		ctl_close(c);
+	restart = !strcmp(line, "restart");
+	if (!restart && strcmp(line, "stop") && strcmp(line, "start")) {
+		ctl_end(c, 0, "unknown command '%s' "
+			"(status, log, start, stop, restart, resume, reload)", line);
 		return;
 	}
-	if (!arg || !*arg) {
-		ctl_say(c, "err %s needs a service name", line);
-		ctl_close(c);
+	if (!arg) {
+		ctl_end(c, 0, "%s needs a service name", line);
 		return;
 	}
 	if (shutting_down) {
-		ctl_say(c, "err shutting down");
-		ctl_close(c);
+		ctl_end(c, 0, "shutting down");
 		return;
 	}
 	i = ctl_find(arg);
 	if (i == UINT32_MAX) {
-		ctl_say(c, "err no service named %s", arg);
-		ctl_close(c);
+		ctl_end(c, 0, "no service named %s", arg);
 		return;
 	}
 	if (ng_svcs(map)[i].type == NG_TYPE_TARGET) {
-		ctl_say(c, "err %s is a target, it has no process", arg);
-		ctl_close(c);
+		ctl_end(c, 0, "%s is a target, it has no process", arg);
+		return;
+	}
+	if (runs[i].op != SVC_OP_NONE) {
+		ctl_end(c, 0, "%s is busy with another operation", arg);
 		return;
 	}
 
 	log_note("control: %s %s", line, ng_name(map, i));
-	if (!strcmp(line, "start"))
-		ctl_start(c, i);
+	c->svc = i;
+	if (restart)
+		svc_op_stop(i, 1);
+	else if (!strcmp(line, "stop"))
+		svc_op_stop(i, 0);
 	else
-		ctl_stop(c, i, line[0] == 'r' ? CTL_OP_RESTART : CTL_OP_STOP);
+		svc_op_start(i);
 }
 
 static void ctl_read(struct ctl *c)
 {
-	char buf[CTL_BUF];
-	ssize_t k = read(c->fd, buf, sizeof(buf) - 1);
 	char *nl;
+	ssize_t k;
 
-	if (k <= 0) {
-		if (k < 0 && (errno == EAGAIN || errno == EINTR))
-			return;
-		ctl_close(c);
+	if (c->done || c->listing || c->svc != UINT32_MAX)
+		return;
+
+	k = read(c->fd, c->in + c->in_len, sizeof(c->in) - c->in_len - 1);
+	if (k == 0) {
+		ctl_drop(c);
 		return;
 	}
-	buf[k] = '\0';
-	nl = strchr(buf, '\n');
-	if (nl)
-		*nl = '\0';
-	buf[strcspn(buf, "\r")] = '\0';
-	ctl_cmd(c, buf);
+	if (k < 0) {
+		if (errno == EAGAIN || errno == EINTR)
+			return;
+		ctl_drop(c);
+		return;
+	}
+	c->in_len += (uint16_t)k;
+	c->in[c->in_len] = '\0';
+
+	nl = memchr(c->in, '\n', c->in_len);
+	if (!nl) {
+		if (c->in_len >= sizeof(c->in) - 1) {
+			ctl_end(c, 0, "request too long");
+			ctl_pump(c);
+		}
+		return;
+	}
+	*nl = '\0';
+	c->in[strcspn(c->in, "\r")] = '\0';
+	ctl_cmd(c, c->in);
+	c->in_len = 0;
+	ctl_pump(c);
 }
 
 static void ctl_accept(void)
 {
 	for (;;) {
 		int fd = accept4(ctl_lfd, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
+		struct ctl *c;
 
 		if (fd < 0)
 			return;
 		if (n_ctl == CTL_MAX) {
-			(void)!write(fd, "err too many control connections\n", 33);
+			(void)!write(fd, NCTL_ERR "too many control connections\n", 32);
 			close(fd);
 			continue;
 		}
-		ctl_conn[n_ctl].fd = fd;
-		ctl_conn[n_ctl].op = CTL_OP_NONE;
-		ctl_conn[n_ctl].svc = UINT32_MAX;
-		ctl_conn[n_ctl].deadline = 0;
-		n_ctl++;
-	}
-}
-
-static void ctl_tick(void)
-{
-	long long now = now_ms();
-	int k;
-
-	for (k = 0; k < n_ctl; ) {
-		struct ctl *c = &ctl_conn[k];
-		uint32_t i = c->svc;
-		struct run *r;
-
-		if (c->op == CTL_OP_NONE) {
-			k++;
-			continue;
-		}
-		r = &runs[i];
-
-		if (c->op == CTL_OP_STOP || c->op == CTL_OP_RESTART) {
-			if (r->pid <= 0 && !r->stale_pid) {
-				if (c->op == CTL_OP_RESTART) {
-					want[i] = 0;
-					r->attempt = 0;
-					r->burst = 0;
-					if (state[i] != NG_ST_PENDING) {
-						state[i] = NG_ST_PENDING;
-						n_pending++;
-					}
-					spawn(i);
-					c->op = CTL_OP_START;
-					c->deadline = now + (long long)ng_start_ms(map, i) +
-						      KILL_GRACE_MS;
-					k++;
-					continue;
-				}
-				ctl_say(c, "ok %s stopped", ng_name(map, i));
-				ctl_close(c);
-				continue;
-			}
-			if (now >= c->deadline) {
-				signal_group(i, SIGKILL);
-				ctl_say(c, "err %s did not stop in time, killed it",
-					ng_name(map, i));
-				ctl_close(c);
-				continue;
-			}
-			k++;
-			continue;
-		}
-
-		if (state[i] == NG_ST_DONE && up[i]) {
-			ctl_say(c, "ok %s up", ng_name(map, i));
-			ctl_close(c);
-			continue;
-		}
-		if (state[i] == NG_ST_FAILED || state[i] == NG_ST_SKIPPED) {
-			ctl_say(c, "err %s %s", ng_name(map, i), state_name(i));
-			ctl_close(c);
-			continue;
-		}
-		if (now >= c->deadline) {
-			ctl_say(c, "err %s did not come up in time", ng_name(map, i));
-			ctl_close(c);
-			continue;
-		}
-		k++;
+		c = &ctl_conn[n_ctl++];
+		memset(c, 0, sizeof(*c));
+		c->fd = fd;
+		c->svc = UINT32_MAX;
 	}
 }
 
 static long long ctl_due(void)
 {
-	long long best = -1, now = now_ms();
-	int k;
+	long long best = -1, now, d;
+	uint32_t k;
 
-	for (k = 0; k < n_ctl; k++) {
-		long long d;
+	if (!n_ops)
+		return -1;
+	now = now_ms();
+	for (k = 0; k < n_live; k++) {
+		const struct run *r = &runs[live[k]];
 
-		if (ctl_conn[k].op == CTL_OP_NONE)
+		if (r->op == SVC_OP_NONE)
 			continue;
-		d = ctl_conn[k].deadline - now;
+		d = r->op_at - now;
 		if (d < 0)
 			d = 0;
 		if (best < 0 || d < best)
@@ -2240,6 +2508,8 @@ static void start_graph(void)
 	state = calloc(n_svc, sizeof(*state));
 	up = calloc(n_svc, sizeof(*up));
 	want = calloc(n_svc, sizeof(*want));
+	released = calloc(n_svc, sizeof(*released));
+	rqueue = calloc(n_svc, sizeof(*rqueue));
 	unmet = calloc(n_svc, sizeof(*unmet));
 	runs = calloc(n_svc, sizeof(*runs));
 	live = calloc(n_svc, sizeof(*live));
@@ -2257,7 +2527,8 @@ static void start_graph(void)
 		pid_val = NULL;
 	}
 
-	if (!state || !up || !want || !unmet || !runs || !live || !queue) {
+	if (!state || !up || !want || !released || !rqueue || !unmet || !runs ||
+	    !live || !queue) {
 		n_svc = 0;
 		n_pending = 0;
 		fail_emergency_shell("boot: out of memory before starting any service");
@@ -2275,7 +2546,7 @@ static void start_graph(void)
 			log_done("%s", ng_name(map, i));
 			complete(i);
 		} else {
-			spawn(i);
+			svc_try_start(i);
 		}
 	}
 }
@@ -2355,6 +2626,7 @@ int main(int argc, char **argv)
 		static long long last_stall = -1;
 		long long wait, due;
 		nfds_t nfds = 1, k;
+		uint32_t start;
 		int rc;
 
 		log_batch_begin();
@@ -2362,6 +2634,10 @@ int main(int argc, char **argv)
 		fire_restarts();
 		check_timeouts();
 		ctl_tick();
+		for (int c = n_ctl; c-- > 0; )
+			if (ctl_conn[c].out_at < ctl_conn[c].out_len ||
+			    ctl_conn[c].listing || ctl_conn[c].done)
+				ctl_pump(&ctl_conn[c]);
 		check_boot_done();
 		fail_emergency_tick();
 
@@ -2375,8 +2651,13 @@ int main(int argc, char **argv)
 
 		pfds[0].fd = sfd;
 		pfds[0].events = POLLIN;
-		for (k = 0; !degraded && k < n_live; k++) {
-			uint32_t i = live[k];
+		start = live_has(drain_rotor) ? runs[drain_rotor].live_pos : 0;
+		for (k = 0; !degraded && k < n_live; k++, start++) {
+			uint32_t i;
+
+			if (start >= n_live)
+				start = 0;
+			i = live[start];
 
 			if (runs[i].out_fd >= 0) {
 				pfds[nfds].fd = runs[i].out_fd;
@@ -2405,8 +2686,12 @@ int main(int argc, char **argv)
 			pf_idx[nfds] = 0;
 			pf_kind[nfds++] = 4;
 			for (int c = 0; c < n_ctl; c++) {
-				pfds[nfds].fd = ctl_conn[c].fd;
+				struct ctl *cc = &ctl_conn[c];
+
+				pfds[nfds].fd = cc->fd;
 				pfds[nfds].events = POLLIN;
+				if (cc->out_at < cc->out_len || cc->listing)
+					pfds[nfds].events |= POLLOUT;
 				pf_idx[nfds] = (uint32_t)c;
 				pf_kind[nfds++] = 5;
 			}
@@ -2468,7 +2753,12 @@ int main(int argc, char **argv)
 			}
 			if (pf_kind[k] == 5) {
 				// a reply may have closed and reshuffled the slots
-				if (i < (uint32_t)n_ctl && ctl_conn[i].fd == pfds[k].fd)
+				if (i >= (uint32_t)n_ctl || ctl_conn[i].fd != pfds[k].fd)
+					continue;
+				if (pfds[k].revents & (POLLOUT | POLLERR | POLLHUP))
+					ctl_pump(&ctl_conn[i]);
+				if (i < (uint32_t)n_ctl && ctl_conn[i].fd == pfds[k].fd &&
+				    (pfds[k].revents & POLLIN))
 					ctl_read(&ctl_conn[i]);
 				continue;
 			}

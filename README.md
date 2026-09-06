@@ -2,7 +2,7 @@
 
 ### small init
 
-compiles '/etc/ninit.d' into a binary dependency graph. pid 1 mmaps it and runs the services in dependency order, as many in parallel as possible
+compiles '/etc/ninit.d' into a binary dependency graph. ninit mmaps it and runs the services in dependency order, as many in parallel as possible
 
 boot with 'init=/usr/sbin/ninit'. 'ninit_graph=/path' on the kernel command line picks another graph file. it mounts /proc /sys /dev (devtmpfs, and does the dev symlinks) /run /dev/pts and /dev/shm itself if they aren't mounted already
 
@@ -34,7 +34,16 @@ keeps dying before it is ready is a broken daemon, not one to respawn forever
 'deps: uptime' means a dependent may only start while this service is up. if it
 completes and then dies, anything below it that has not started yet is cut, and
 waits instead if the service is set to restart. 'deps: order' is the looser
-reading: the dependent only needs this service to have started once
+one, the dependent only needs this service to have started once, so that
+dependency is consumed once and never taken back
+
+'deps' is set on the service that others depend ON, not on the one that
+depends, so it applies to everything below it
+
+a target has no process of its own, so it is available exactly while all of its
+own dependencies are. if something behind a target dies, the target goes down
+too and so does everything waiting on it. failure and shutdown ordering both
+cross targets the same way
 
 examples are in docs/ninit.d
 
@@ -43,7 +52,7 @@ types:
 - daemon: complete when it writes a newline to its notify fd, or right after spawn if it has none. exiting later is logged, and respawned if 'restart: always'
 - target: no commands. complete when its dependencies are
 
-a daemon must run in the foreground: 'exec' the real binary with whatever flag stops it daemonising ('-n', '--nofork', '--foreground'). the process pid 1 starts is the service, and its exit is the service exiting. a script that forks and returns is reported complete and then immediately treated as dead
+a daemon must run in the foreground: 'exec' the real binary with whatever flag stops it daemonising ('-n', '--nofork', '--foreground'). the process ninit starts is the service, and its exit is the service exiting. a script that forks and returns is reported complete and then immediately treated as dead
 
 a readiness probe belongs in a background subshell of the same script, which writes the newline and exits while the main shell execs the daemon. docs/ninit.d/dbus and docs/ninit.d/udev do this
 
@@ -56,7 +65,7 @@ never depends on how large the rest of the graph is
 a daemon with no 'notify' is only known to have started, not to be ready, so
 'ninitctl init' warns when such a daemon has dependents. it is held until its
 shell has actually exec'd, so a missing interpreter is caught, but nothing can
-tell pid 1 that the program inside the script came up
+tell ninit that the program inside the script came up
 
 services are placed in their own cgroup under '/sys/fs/cgroup/ninit.services'
 and killed with 'cgroup.kill', so a descendant that calls setsid() cannot walk
@@ -68,7 +77,7 @@ another shell: the same text under a different shell is a different program.
 build with 'make NINIT_SHELL=/bin/dash' to change the interpreter
 
 service info:
-- they run with stdin on /dev/null and stdout and stderr through pid 1
+- they run with stdin on /dev/null and stdout and stderr through ninit
 - they run with only 'PATH' 'HOME=/' and 'TERM=linux'
 - they run in their own session with no controlling terminal
 
@@ -106,24 +115,36 @@ ninitctl add|del NAME... # move services between /etc/ninit.d and /etc/ninit.d/u
 ```
 
 'init' checks each script with 'bash -n' before publishing, so a syntax error is
-caught at build time rather than at boot. '--no-check' skips it. one exclusive
+caught at build time rather than at boot. it checks the exact bytes it captured,
+not the file on disk, so an edit mid-build cannot slip past it. '--no-check' skips it. one exclusive
 lock covers reading the sources and publishing, and 'add' and 'del' take the
 same lock, so a build always sees one coherent revision of the directory. the
 graph is written no more readable than the least readable service it contains
 
-the running system is controlled through pid 1 over '/run/ninit/control',
+the running system is controlled through ninit over '/run/ninit/control',
 which is root-only:
 
 ```
-ninitctl status [NAME]   # what pid 1 is running
+ninitctl status [NAME]   # what ninit is running
+ninitctl log             # failures ninit recorded
 ninitctl start NAME      # start it, or retry it after a failure
 ninitctl stop NAME       # stop it and keep it stopped
 ninitctl restart NAME    # stop it, then start it again
 ninitctl resume          # retry every failed and skipped service
 ```
 
+an operation belongs to the service, not to the connection that asked for it,
+so killing the client does not leave a stop half done. a stop escalates to
+SIGKILL after its 'stop-timeout' and a restart still starts afterwards. a
+service counts as stopped when its whole cgroup is empty, not when its
+main process has gone
+
+the console drops output when it cannot keep up, so failure lines are also kept
+in a small ring that 'ninitctl log' reads back. that is where a crash reason
+lives when the console lost it, or when built with USE=quiet
+
 'stop' records the desired state before it signals anything, and only answers
-once the service has actually gone. pid 1 reads its graph once, at boot: a
+once the service has actually gone. ninit reads its graph once, at boot: a
 rebuilt graph takes effect on the next boot, and 'resume' is how you retry
 services with the graph already loaded
 
@@ -131,12 +152,13 @@ the depgraph format is version 7. ninit checks it exactly. re-run 'ninitctl init
 
 ### shutting down
 
-services are stopped in dependency order: nothing is signalled until everything
-that depends on it has gone, and independent branches stop in parallel. each
+services are stopped in dependency order across the whole graph.
+nothing is signalled until everything that depends
+on it is gone, and independent branches stop in parallel. each
 service gets its own 'stop-timeout' before SIGKILL. after that ninit sends
 SIGTERM to whatever is left, waits 5s, sends SIGKILL, syncs, and remounts
 filesystems read-only. a filesystem that will not go read-only is unmounted
-properly if it can be; a lazy detach is a last resort and says so
+properly if it can be and a lazy detach is a last resort and says so
 
 ```
 kill -TERM 1   # reboot (also ctrl-alt-del)
@@ -149,9 +171,9 @@ busybox 'reboot' 'poweroff' and 'halt' send these
 'tools/shutdown.c' builds one binary 'ninit-shutdown' that answers to 'shutdown' 'poweroff' 'halt' 'reboot' and 'telinit' by looking at 'argv[0]' the way sysvinit and busybox do:
 - 'reboot' is 'shutdown -r'. 'poweroff' is 'shutdown -h'. 'halt' is 'shutdown -H'. 'telinit' takes only 0 and 6
 - TIME is 'now' '+MINUTES' or 'HH:MM'. a delayed shutdown waits in the foreground and ctrl-c cancels it
-- '-f' skips pid 1 and calls 'reboot(2)' after a sync, for when pid 1 is wedged
-- root signals pid 1 directly. an unprivileged caller cannot, so the tool asks elogind over D-Bus through 'dbus-send' and lets polkit decide. this is what systemd's own 'poweroff' does
-- if pid 1 is not ninit it hands over to the saved 'NAME.old' binary, passing the original name as 'argv[0]'. so these are safe to leave installed on a machine that also boots another init
+- '-f' skips ninit and calls 'reboot(2)' after a sync, for when ninit is cooked
+- root signals ninit directly. an unprivileged caller cannot, so the tool asks elogind over D-Bus through 'dbus-send' and lets polkit decide. this is what systemd's own 'poweroff' does
+- if ninit is not ninit it hands over to the saved 'NAME.old' binary, passing the original name as 'argv[0]'. so these are safe to leave installed on a machine that also boots another init
 
 ```
 make tools_install   # save the originals as NAME.old, install ours
@@ -173,7 +195,7 @@ console can use it. that is the same bargain sysvinit and busybox make, but if
 your console is a serial port or a BMC, treat it as a root credential. build
 with 'make USE=authshell' to put sulogin in front of it
 
-pid 1 does not block while the shell starts, and 'ninitctl' still works from it
+ninit does not block while the shell starts, and 'ninitctl' still works from it
 
 ### contact
 

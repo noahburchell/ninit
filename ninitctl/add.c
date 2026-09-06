@@ -30,6 +30,37 @@ static void print_rebuild_hint(const char *dir, int custom)
 	fputs("'\n", stdout);
 }
 
+static int relink(const char *path, const char *target, int enable)
+{
+	char fixed[4200], tmp[4200];
+	int n;
+
+	if (enable) {
+		if (!strncmp(target, "../", 3))
+			n = snprintf(fixed, sizeof(fixed), "%s", target + 3);
+		else
+			n = snprintf(fixed, sizeof(fixed), "%s/%s", SVC_UNUSED, target);
+	} else {
+		n = snprintf(fixed, sizeof(fixed), "../%s", target);
+	}
+	if (n < 0 || (size_t)n >= sizeof(fixed))
+		return 0;
+	if (!strcmp(fixed, target))
+		return 1;
+
+	n = snprintf(tmp, sizeof(tmp), "%s.ninitctl.tmp", path);
+	if (n < 0 || (size_t)n >= sizeof(tmp))
+		return 0;
+	unlink(tmp);
+	if (symlink(fixed, tmp) < 0)
+		return 0;
+	if (rename(tmp, path) < 0) {
+		unlink(tmp);
+		return 0;
+	}
+	return 1;
+}
+
 static int join(char *out, size_t cap, const char *dir, const char *name)
 {
 	size_t dl = strlen(dir), nl = strlen(name);
@@ -99,7 +130,9 @@ int svc_move(int argc, char **argv, int enable)
 
 	for (k = 0; k < argc; k++) {
 		const char *name = argv[k], *why;
-		struct stat st;
+		struct stat st, lst;
+		char target[4096];
+		size_t link_len;
 
 		if (!endopts || k < endopts) {
 			if (!strcmp(name, "--"))
@@ -143,6 +176,21 @@ int svc_move(int argc, char **argv, int enable)
 			continue;
 		}
 
+		link_len = 0;
+		if (lstat(from, &lst) == 0 && S_ISLNK(lst.st_mode)) {
+			ssize_t ln = readlink(from, target, sizeof(target) - 1);
+
+			if (ln < 0) {
+				fprintf(stderr, "ninitctl: readlink %s: %s\n", name,
+					strerror(errno));
+				bad++;
+				continue;
+			}
+			target[ln] = '\0';
+			if (target[0] != '/')
+				link_len = (size_t)ln;
+		}
+
 		if (renameat2(AT_FDCWD, from, AT_FDCWD, to, RENAME_NOREPLACE) < 0) {
 			if (errno == ENOENT)
 				fprintf(stderr, "ninitctl: %s: not in %s\n", name,
@@ -156,10 +204,27 @@ int svc_move(int argc, char **argv, int enable)
 			bad++;
 			continue;
 		}
+		if (link_len && !relink(to, target, enable))
+			fprintf(stderr, "ninitctl: %s: moved, but its relative link "
+				"could not be repointed\n", name);
+
 		printf("%s %s\n", enable ? "added" : "removed", name);
 		moved++;
 	}
 
+	if (moved) {
+		int ufd = open(unused, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+
+		if (fsync(dfd) < 0)
+			fprintf(stderr, "ninitctl: sync %s: %s; the move may not "
+				"survive a crash\n", dir, strerror(errno));
+		if (ufd >= 0) {
+			if (fsync(ufd) < 0)
+				fprintf(stderr, "ninitctl: sync %s: %s; the move may not "
+					"survive a crash\n", unused, strerror(errno));
+			close(ufd);
+		}
+	}
 	close(dfd);
 
 	if (moved)

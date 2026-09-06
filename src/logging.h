@@ -18,6 +18,13 @@ void ninit_log(int level, const char *fmt, ...) __attribute__((format(printf, 2,
 void log_raw(int level, const char *buf, size_t len);
 void print_welcome(void);
 
+// the retained failure ring, readable no matter what the console did with it
+#define LOG_KEEP	64
+#define LOG_KEEP_LEN	200
+
+unsigned log_kept(void);
+const char *log_kept_line(unsigned i);
+
 #ifdef NINIT_QUIET
 #define log_done(...)	((void)0)
 #define log_info(...)	((void)0)

@@ -48,7 +48,7 @@ int cmd_show(int argc, char **argv)
 			path = argv[k];
 		else {
 			fprintf(stderr, "ninitctl: show: unexpected argument '%s'\n", argv[k]);
-			return 1;
+			return 2;
 		}
 	}
 
@@ -165,8 +165,22 @@ int cmd_show(int argc, char **argv)
 		}
 		putchar('\n');
 
-		if (verbose && sv[i].type != NG_TYPE_TARGET) {
-			const char *p = ng_script(map, i);
+		if (verbose) {
+			const struct ng_pol *pl = ng_pol(map, i);
+			const char *p;
+
+			printf("%s     %s start-timeout %u ms, stop-timeout %u ms, "
+			       "start-tries %u, start-delay %u ms, deps %s%s%s\n",
+			       st->dim, st->vbar, ng_start_ms(map, i), ng_stop_ms(map, i),
+			       ng_start_tries(map, i), pl->retry_ms,
+			       ng_order_only(map, i) ? "order" : "uptime",
+			       pl->start_ms || pl->stop_ms || pl->start_tries ||
+			       pl->retry_ms || pl->pflags ? " (set)" : " (all default)",
+			       st->reset);
+
+			if (sv[i].type == NG_TYPE_TARGET)
+				continue;
+			p = ng_script(map, i);
 
 			while (*p) {
 				const char *nl = strchr(p, '\n');

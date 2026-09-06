@@ -232,13 +232,20 @@ int ng_locale_env(char (*out)[NG_LOCALE_LEN], int max, const char **why)
 
 		if (*v == '"' || *v == '\'') {
 			char q = *v++;
-			char *end = strchr(v, q);
+			char *end = strchr(v, q), *rest;
 
 			if (!end) {
 				*why = "has a value with no closing quote";
 				continue;
 			}
 			*end = '\0';
+			rest = end + 1;
+			while (*rest == ' ' || *rest == '\t' || *rest == '\r')
+				rest++;
+			if (*rest && *rest != '#') {
+				*why = "has trailing text after a quoted value";
+				continue;
+			}
 		} else {
 			v[strcspn(v, " \t\r#")] = '\0';
 		}
@@ -322,6 +329,17 @@ static int str_fits(const char *blob, uint32_t blob_len, uint32_t off, uint32_t 
 	if (left > cap + 1u)
 		left = cap + 1u;
 	return memchr(blob + off, '\0', left) != NULL;
+}
+
+static const char *g_sort_blob;
+static const struct ng_svc *g_sort_svc;
+
+static int cmp_name_off(const void *a, const void *b)
+{
+	uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+
+	return strcmp(g_sort_blob + g_sort_svc[x].name_off,
+		      g_sort_blob + g_sort_svc[y].name_off);
 }
 
 const char *ng_verify(const void *map, size_t len)
@@ -466,6 +484,30 @@ const char *ng_verify(const void *map, size_t len)
 				return "unmet does not match the in-degree of the edge list";
 			}
 		free(indeg);
+	}
+
+	if (n) {
+		uint32_t *order = malloc((size_t)n * sizeof(*order));
+
+		if (!order)
+			return "out of memory verifying names";
+		for (i = 0; i < n; i++) {
+			if (ng_name_problem(blob + sv[i].name_off)) {
+				free(order);
+				return "a service name is not a usable name";
+			}
+			order[i] = i;
+		}
+		g_sort_blob = blob;
+		g_sort_svc = sv;
+		qsort(order, n, sizeof(*order), cmp_name_off);
+		for (i = 1; i < n; i++)
+			if (!strcmp(blob + sv[order[i - 1]].name_off,
+				    blob + sv[order[i]].name_off)) {
+				free(order);
+				return "two services share a name";
+			}
+		free(order);
 	}
 
 	return NULL;
