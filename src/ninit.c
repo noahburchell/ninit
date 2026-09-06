@@ -217,8 +217,8 @@ static void cgroup_init(void)
 
 static int cg_path(uint32_t i, const char *leaf, char *buf, size_t cap)
 {
-	int n = snprintf(buf, cap, CG_DIR "/%s%s%s", ng_name(map, i), *leaf ? "/" : "", leaf);
-
+	//FUCKING UDEV BULLSHIT
+	int n = snprintf(buf, cap, CG_DIR "/svc-%u%s%s", i, *leaf ? "/" : "", leaf);
 	return n > 0 && (size_t)n < cap;
 }
 
