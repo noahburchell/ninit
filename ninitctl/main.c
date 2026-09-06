@@ -26,27 +26,39 @@ static void usage(FILE *f)
 	      "  restart NAME              stop it, then start it again\n"
 	      "  resume                    retry every failed and skipped service\n"
 	      "\n"
-	      "every command accepts -h. DIR defaults to " NG_DEFAULT_DIR ",\n"
+	      "DIR defaults to " NG_DEFAULT_DIR ",\n"
 	      "FILE to " NG_DEFAULT_FILE ".\n"
 	      "a rebuilt depgraph only takes effect on the next boot.\n",
 	      f);
+}
+
+static int takes_value(const char *a)
+{
+	return !strcmp(a, "-d") || !strcmp(a, "--dir") ||
+	       !strcmp(a, "-o") || !strcmp(a, "--out") ||
+	       !strcmp(a, "-f") || !strcmp(a, "--file");
 }
 
 static int wants_help(int argc, char **argv)
 {
 	int k;
 
-	for (k = 0; k < argc; k++)
+	for (k = 0; k < argc; k++) {
 		if (!strcmp(argv[k], "--"))
 			return 0;
-		else if (!strcmp(argv[k], "-h") || !strcmp(argv[k], "--help"))
+		if (takes_value(argv[k])) {
+			k++;
+			continue;
+		}
+		if (!strcmp(argv[k], "-h") || !strcmp(argv[k], "--help"))
 			return 1;
+	}
 	return 0;
 }
 
 int main(int argc, char **argv)
 {
-	static const char *const ctl_verbs[] = { "status", "start", "stop",
+	static const char *const ctl_verbs[] = { "status", "log", "start", "stop",
 						 "restart", "resume", "reload" };
 	int rest = argc - 2;
 	char **args = argv + 2;

@@ -108,7 +108,15 @@ enum fail_act fail_service(const void *map, uint32_t i, int status, unsigned att
 	}
 }
 
-static uint32_t poison_spread(const void *map, uint8_t *state, uint32_t from)
+static int poison_take(const uint8_t *state, const uint8_t *up, const void *map, uint32_t d)
+{
+	if (state[d] == NG_ST_PENDING)
+		return 1;
+	return ng_svcs(map)[d].type == NG_TYPE_TARGET && state[d] == NG_ST_DONE && !up[d];
+}
+
+static uint32_t poison_spread(const void *map, uint8_t *state, const uint8_t *up,
+			      uint32_t from, uint32_t *undone)
 {
 	const uint32_t *roff = ng_rdep_off(map), *ridx = ng_rdep_idx(map);
 	uint32_t n = ((const struct ng_hdr *)map)->n_svc;
@@ -119,40 +127,51 @@ static uint32_t poison_spread(const void *map, uint8_t *state, uint32_t from)
 			continue;
 		for (k = roff[j]; k < roff[j + 1]; k++) {
 			uint32_t d = ridx[k];
-			if (state[d] == NG_ST_PENDING) {
-				state[d] = NG_ST_SKIPPED;
+
+			if (!poison_take(state, up, map, d))
+				continue;
+			if (state[d] == NG_ST_DONE)
+				(*undone)++;
+			else
 				count++;
-			}
+			state[d] = NG_ST_SKIPPED;
 		}
 	}
 
 	return count;
 }
 
-uint32_t fail_poison(const void *map, uint32_t i, uint8_t *state)
+uint32_t fail_poison(const void *map, uint32_t i, uint8_t *state, const uint8_t *up,
+		     uint32_t *undone)
 {
+	*undone = 0;
 	state[i] = NG_ST_FAILED;
 
-	return poison_spread(map, state, i);
+	return poison_spread(map, state, up, i, undone);
 }
 
-uint32_t fail_poison_deps(const void *map, uint32_t i, uint8_t *state)
+uint32_t fail_poison_deps(const void *map, uint32_t i, uint8_t *state, const uint8_t *up,
+			  uint32_t *undone)
 {
 	const uint32_t *roff = ng_rdep_off(map), *ridx = ng_rdep_idx(map);
 	uint32_t k, count = 0;
 
+	*undone = 0;
 	for (k = roff[i]; k < roff[i + 1]; k++) {
 		uint32_t d = ridx[k];
 
-		if (state[d] == NG_ST_PENDING) {
-			state[d] = NG_ST_SKIPPED;
+		if (!poison_take(state, up, map, d))
+			continue;
+		if (state[d] == NG_ST_DONE)
+			(*undone)++;
+		else
 			count++;
-		}
+		state[d] = NG_ST_SKIPPED;
 	}
-	if (!count)
+	if (!count && !*undone)
 		return 0;
 
-	return count + poison_spread(map, state, i + 1);
+	return count + poison_spread(map, state, up, i + 1, undone);
 }
 
 #define EMERG_FAST_MS	 1000
@@ -588,6 +607,8 @@ int fail_emergency_reaped(pid_t pid, int status)
 		return 0;
 
 	emerg_pid = -1;
+
+	fail_emergency_report();
 	emerg_bar_close();
 	ms = emerg_uptime_ms();
 	describe(status, how, sizeof(how));

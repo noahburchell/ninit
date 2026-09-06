@@ -1,4 +1,5 @@
 #include "ctl.h"
+#include "../src/nctl.h"
 #include "../src/ngraph.h"
 
 #include <errno.h>
@@ -7,6 +8,8 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+
+#define CTL_LINE 4096
 
 static int ctl_connect(void)
 {
@@ -21,7 +24,7 @@ static int ctl_connect(void)
 	if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
 		fprintf(stderr, "ninitctl: %s: %s\n", NINIT_CTL_SOCK, strerror(errno));
 		if (errno == ENOENT)
-			fprintf(stderr, "ninitctl: pid 1 is not ninit\n");
+			fprintf(stderr, "ninitctl: pid 1 is not ninit, or it is too old to listen\n");
 		else if (errno == EACCES)
 			fprintf(stderr, "ninitctl: only root may control services\n");
 		close(fd);
@@ -30,21 +33,37 @@ static int ctl_connect(void)
 	return fd;
 }
 
-int cmd_ctl(const char *verb, int argc, char **argv)
+static int write_all(int fd, const char *p, size_t n)
 {
-	char line[1024];
-	const char *name = NULL;
-	int fd, k, rc = 0;
-	ssize_t n;
-	size_t at = 0;
+	while (n) {
+		ssize_t k = write(fd, p, n);
 
-	for (k = 0; k < argc; k++) {
-		if (!strcmp(argv[k], "--")) {
-			if (++k < argc)
-				name = argv[k];
+		if (k > 0) {
+			p += k;
+			n -= (size_t)k;
 			continue;
 		}
-		if (argv[k][0] == '-' && argv[k][1]) {
+		if (k < 0 && errno == EINTR)
+			continue;
+		return -1;
+	}
+	return 0;
+}
+
+int cmd_ctl(const char *verb, int argc, char **argv)
+{
+	char buf[CTL_LINE * 2], line[CTL_LINE];
+	const char *name = NULL;
+	size_t held = 0, at;
+	int fd, k, endopts = 0, rc = NCTL_EXIT_USAGE, seen_end = 0;
+	ssize_t n;
+
+	for (k = 0; k < argc; k++) {
+		if (!endopts && !strcmp(argv[k], "--")) {
+			endopts = 1;
+			continue;
+		}
+		if (!endopts && argv[k][0] == '-' && argv[k][1]) {
 			fprintf(stderr, "ninitctl: %s: unknown option '%s'\n", verb, argv[k]);
 			return 2;
 		}
@@ -55,43 +74,74 @@ int cmd_ctl(const char *verb, int argc, char **argv)
 		name = argv[k];
 	}
 
-	if (!name && (!strcmp(verb, "start") || !strcmp(verb, "stop") ||
-		      !strcmp(verb, "restart"))) {
+	if (!name && strcmp(verb, "status") && strcmp(verb, "resume") &&
+	    strcmp(verb, "reload") && strcmp(verb, "log")) {
 		fprintf(stderr, "ninitctl: %s needs a service name\n", verb);
-		return 2;
+		return NCTL_EXIT_USAGE;
 	}
-	if (name && (!strcmp(verb, "resume") || !strcmp(verb, "reload"))) {
+	if (name && (!strcmp(verb, "resume") || !strcmp(verb, "reload") ||
+		     !strcmp(verb, "log"))) {
 		fprintf(stderr, "ninitctl: %s takes no arguments\n", verb);
-		return 2;
+		return NCTL_EXIT_USAGE;
 	}
-
-	fd = ctl_connect();
-	if (fd < 0)
-		return 1;
 
 	at = (size_t)snprintf(line, sizeof(line), "%s%s%s\n", verb, name ? " " : "",
 			      name ? name : "");
 	if (at >= sizeof(line)) {
 		fprintf(stderr, "ninitctl: %s: name is too long\n", verb);
-		close(fd);
-		return 2;
-	}
-	if (write(fd, line, at) != (ssize_t)at) {
-		fprintf(stderr, "ninitctl: write: %s\n", strerror(errno));
-		close(fd);
-		return 1;
+		return NCTL_EXIT_USAGE;
 	}
 
-	while ((n = read(fd, line, sizeof(line) - 1)) > 0) {
-		line[n] = '\0';
-		if (strstr(line, "err ") == line || strstr(line, "\nerr "))
-			rc = 1;
-		fputs(line, stdout);
+	fd = ctl_connect();
+	if (fd < 0)
+		return NCTL_EXIT_FAIL;
+	if (write_all(fd, line, at) < 0) {
+		fprintf(stderr, "ninitctl: write: %s\n", strerror(errno));
+		close(fd);
+		return NCTL_EXIT_FAIL;
+	}
+
+	while ((n = read(fd, buf + held, sizeof(buf) - held - 1)) > 0) {
+		char *p = buf, *nl;
+
+		held += (size_t)n;
+		buf[held] = '\0';
+		while ((nl = memchr(p, '\n', held - (size_t)(p - buf))) != NULL) {
+			*nl = '\0';
+			if (NCTL_IS_DATA(p)) {
+				printf("%s\n", p + NCTL_TAG_LEN);
+			} else if (NCTL_IS_OK(p)) {
+				printf("%s\n", p + NCTL_TAG_LEN);
+				rc = NCTL_EXIT_OK;
+				seen_end = 1;
+			} else if (NCTL_IS_ERR(p)) {
+				fprintf(stderr, "ninitctl: %s\n", p + NCTL_TAG_LEN);
+				rc = NCTL_EXIT_FAIL;
+				seen_end = 1;
+			} else if (*p) {
+				fprintf(stderr, "ninitctl: unframed reply: %s\n", p);
+			}
+			p = nl + 1;
+		}
+		held -= (size_t)(p - buf);
+		memmove(buf, p, held);
+		if (held >= sizeof(buf) - 1) {
+			fprintf(stderr, "ninitctl: reply record too long\n");
+			close(fd);
+			return 1;
+		}
 	}
 	if (n < 0) {
 		fprintf(stderr, "ninitctl: read: %s\n", strerror(errno));
-		rc = 1;
+		close(fd);
+		return 1;
 	}
 	close(fd);
+
+	if (!seen_end) {
+		fprintf(stderr, "ninitctl: %s: pid 1 closed the connection without a result; "
+			"the operation may still be in progress\n", verb);
+		return 1;
+	}
 	return rc;
 }

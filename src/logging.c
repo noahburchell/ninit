@@ -41,6 +41,34 @@ static const char *const tag_plain[] = {
 static_assert(sizeof(tag_color) / sizeof(*tag_color) == LOG_N, "tag_color must cover every level");
 static_assert(sizeof(tag_plain) / sizeof(*tag_plain) == LOG_N, "tag_plain must cover every level");
 
+static char keep_line[LOG_KEEP][LOG_KEEP_LEN];
+static unsigned keep_head, keep_n;
+
+static void log_keep(const char *buf, size_t len)
+{
+	if (len && buf[len - 1] == '\n')
+		len--;
+	if (len >= LOG_KEEP_LEN)
+		len = LOG_KEEP_LEN - 1;
+	memcpy(keep_line[keep_head], buf, len);
+	keep_line[keep_head][len] = '\0';
+	keep_head = (keep_head + 1) % LOG_KEEP;
+	if (keep_n < LOG_KEEP)
+		keep_n++;
+}
+
+unsigned log_kept(void)
+{
+	return keep_n;
+}
+
+const char *log_kept_line(unsigned i)
+{
+	if (i >= keep_n)
+		return NULL;
+	return keep_line[(keep_head + LOG_KEEP - keep_n + i) % LOG_KEEP];
+}
+
 static long long log_now_ms(void)
 {
 	struct timespec ts;
@@ -198,6 +226,9 @@ void ninit_log(int level, const char *fmt, ...)
 	if (n > (int)sizeof(buf) - 2)
 		n = (int)sizeof(buf) - 2;
 	buf[n++] = '\n';
+
+	if (level == LOG_FAIL || level == LOG_WARN)
+		log_keep(buf, (size_t)n);
 
 	log_write(buf, (size_t)n);
 }

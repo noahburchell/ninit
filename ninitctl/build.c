@@ -10,6 +10,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/file.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 
@@ -54,6 +55,20 @@ static void die(const char *fmt, ...)
 	va_end(ap);
 	fputc('\n', stderr);
 	exit(1);
+}
+
+static void usage_die(const char *fmt, ...) __attribute__((format(printf, 1, 2), noreturn));
+
+static void usage_die(const char *fmt, ...)
+{
+	va_list ap;
+
+	fputs("ninitctl: ", stderr);
+	va_start(ap, fmt);
+	vfprintf(stderr, fmt, ap);
+	va_end(ap);
+	fputc('\n', stderr);
+	exit(2);
 }
 
 static void *xmalloc(size_t n)
@@ -195,6 +210,36 @@ static int has_code(const char *buf)
 	return 0;
 }
 
+static int heredoc_tag(const char *line, char *tag, size_t cap)
+{
+	const char *p = strstr(line, "<<");
+	size_t n;
+
+	if (!p || p[2] == '<')
+		return 0;
+	p += 2;
+	if (*p == '-')
+		p++;
+	while (*p == ' ' || *p == '\t')
+		p++;
+	if (*p == '\'' || *p == '"') {
+		char q = *p++;
+		const char *e = strchr(p, q);
+
+		if (!e || (size_t)(e - p) >= cap || e == p)
+			return 0;
+		memcpy(tag, p, (size_t)(e - p));
+		tag[e - p] = '\0';
+		return 1;
+	}
+	n = strcspn(p, " \t;|&<>()");
+	if (!n || n >= cap)
+		return 0;
+	memcpy(tag, p, n);
+	tag[n] = '\0';
+	return 1;
+}
+
 // bash line numbers must match the file
 static void parse_src(struct src *s, const char *fname, const char *body, size_t len)
 {
@@ -214,13 +259,15 @@ static void parse_src(struct src *s, const char *fname, const char *body, size_t
 		char *colon, *key, *val;
 
 		if (nl)
-			*nl++ = '\0';
+			*nl = '\0';
 
 		key = trim(line);
-		line = nl;
-
-		if (*key && *key != '#')
+		if (*key && *key != '#') {
+			if (nl)
+				*nl = '\n';
 			break;
+		}
+		line = nl ? nl + 1 : NULL;
 		if (key[0] != '#' || key[1] != '%')
 			continue;
 		key = trim(key + 2);
@@ -320,17 +367,30 @@ static void parse_src(struct src *s, const char *fname, const char *body, size_t
 	if (strlen(body) != len)
 		die("%s/%s: contains a NUL byte", g_dir, fname);
 
-	while (line && *line) {
-		char *nl = strchr(line, '\n');
-		const char *key;
+	{
+		char tag[128] = "";
 
-		if (nl)
-			*nl++ = '\0';
-		key = trim(line);
-		line = nl;
-		if (key[0] == '#' && key[1] == '%')
-			die("%s/%s: directive '%s' comes after the first command; directives must lead the file",
-			    g_dir, fname, key);
+		while (line && *line) {
+			char *nl = strchr(line, '\n');
+			const char *key;
+
+			if (nl)
+				*nl++ = '\0';
+			key = trim(line);
+			line = nl;
+
+			if (*tag) {
+				if (!strcmp(key, tag))
+					tag[0] = '\0';
+				continue;
+			}
+			if (heredoc_tag(key, tag, sizeof(tag)))
+				continue;
+			if (key[0] == '#' && key[1] == '%')
+				fprintf(stderr, "ninitctl: warning: %s/%s: '%s' comes after the "
+					"first command, so it is a plain comment, not a directive\n",
+					g_dir, fname, key);
+		}
 	}
 
 	code = has_code(body);
@@ -384,17 +444,25 @@ static int is_artifact(const char *name, const char *base, size_t base_len)
 	       !strcmp(name + base_len, ".tmp");
 }
 
-static int graph_magic(const char *path)
+static int graph_image(const char *path)
 {
-	uint32_t m = 0;
+	struct ng_hdr h;
+	struct stat st;
 	ssize_t k;
 	int fd = open(path, O_RDONLY | O_CLOEXEC);
 
 	if (fd < 0)
 		return 0;
-	k = read(fd, &m, sizeof(m));
+	if (fstat(fd, &st) < 0 || (uint64_t)st.st_size < sizeof(h)) {
+		close(fd);
+		return 0;
+	}
+	k = read(fd, &h, sizeof(h));
 	close(fd);
-	return k == (ssize_t)sizeof(m) && m == NG_MAGIC;
+	if (k != (ssize_t)sizeof(h))
+		return 0;
+
+	return h.magic == NG_MAGIC && h.total_len == (uint32_t)st.st_size;
 }
 
 static int cmp_dirent(const struct dirent **a, const struct dirent **b)
@@ -598,10 +666,13 @@ static void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 	static char argv0[] = NG_SHELL_ARGV0, dashn[] = "-n";
 	static char path[] = NG_PATH;
 	static char *const envp[] = { path, NULL };
+	static char *const cargv[] = { argv0, dashn, NULL };
 	long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
 	uint32_t slots = ncpu > 1 ? (uint32_t)ncpu : 1;
 	uint32_t i, live = 0, bad = 0;
 	pid_t *pids;
+	int *errfd;
+	uint32_t *who;
 	int devnull;
 
 	if (access(NG_SHELL, X_OK) != 0) {
@@ -612,10 +683,13 @@ static void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 	if (slots > 32)
 		slots = 32;
 	pids = xmalloc(slots * sizeof(*pids));
+	errfd = xmalloc(slots * sizeof(*errfd));
+	who = xmalloc(slots * sizeof(*who));
 	devnull = open("/dev/null", O_WRONLY | O_CLOEXEC);
 
 	for (i = 0; i <= n; i++) {
-		char file[4096];
+		size_t len;
+		int sfd, efd;
 		pid_t pid;
 
 		while (live == slots || (i == n && live)) {
@@ -629,37 +703,86 @@ static void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 				break;
 			}
 			for (k = 0; k < live; k++)
-				if (pids[k] == got) {
-					pids[k] = pids[--live];
+				if (pids[k] == got)
 					break;
-				}
-			if (!WIFEXITED(st) || WEXITSTATUS(st))
+			if (k == live)
+				continue;
+			if (!WIFEXITED(st) || WEXITSTATUS(st)) {
+				char msg[4096];
+				ssize_t mn;
+
 				bad++;
+				lseek(errfd[k], 0, SEEK_SET);
+				mn = read(errfd[k], msg, sizeof(msg) - 1);
+				if (mn > 0) {
+					char *q = msg, *nl;
+
+					msg[mn] = '\0';
+					// bash saw a memfd so name the service here
+					while (q) {
+						nl = strchr(q, '\n');
+						if (nl)
+							*nl++ = '\0';
+						if (*q)
+							fprintf(stderr, "ninitctl: %s/%s: %s\n",
+								dir, srcs[who[k]].name, q);
+						q = nl;
+					}
+				}
+			}
+			close(errfd[k]);
+			live--;
+			pids[k] = pids[live];
+			errfd[k] = errfd[live];
+			who[k] = who[live];
 		}
 		if (i == n)
 			break;
 		if (!srcs[i].script)
 			continue;
 
-		if (snprintf(file, sizeof(file), "%s/%s", dir, srcs[i].name) >= (int)sizeof(file))
+		len = strlen(srcs[i].script);
+		sfd = memfd_create(srcs[i].name, 0);
+		efd = memfd_create("stderr", 0);
+		if (sfd < 0 || efd < 0) {
+			if (sfd >= 0)
+				close(sfd);
+			if (efd >= 0)
+				close(efd);
+			fprintf(stderr, "ninitctl: warning: memfd_create: %s, "
+				"skipping the rest of the syntax check\n", strerror(errno));
+			break;
+		}
+		if ((size_t)write(sfd, srcs[i].script, len) != len ||
+		    lseek(sfd, 0, SEEK_SET) != 0) {
+			close(sfd);
+			close(efd);
 			continue;
+		}
+
 		pid = fork();
 		if (pid < 0)
 			die("fork: %s", strerror(errno));
 		if (pid == 0) {
-			char *const a[] = { argv0, dashn, file, NULL };
-
+			dup2(sfd, 0);
 			if (devnull >= 0)
 				dup2(devnull, 1);
-			execve(NG_SHELL, a, envp);
+			dup2(efd, 2);
+			execve(NG_SHELL, cargv, envp);
 			_exit(127);
 		}
-		pids[live++] = pid;
+		close(sfd);
+		pids[live] = pid;
+		errfd[live] = efd;
+		who[live] = i;
+		live++;
 	}
 
 	if (devnull >= 0)
 		close(devnull);
 	free(pids);
+	free(errfd);
+	free(who);
 	if (bad)
 		die("%u service script%s did not parse as %s; fix %s and run init again",
 		    bad, bad == 1 ? "" : "s", NG_SHELL, bad == 1 ? "it" : "them");
@@ -804,19 +927,19 @@ int cmd_init(int argc, char **argv)
 	for (k = 0; k < argc; k++) {
 		if (!strcmp(argv[k], "-d") || !strcmp(argv[k], "--dir")) {
 			if (++k == argc)
-				die("init: %s needs a directory", argv[k - 1]);
+				usage_die("init: %s needs a directory", argv[k - 1]);
 			dir = argv[k];
 			custom_dir = 1;
 		} else if (!strcmp(argv[k], "-o") || !strcmp(argv[k], "--out")) {
 			if (++k == argc)
-				die("init: %s needs a file", argv[k - 1]);
+				usage_die("init: %s needs a file", argv[k - 1]);
 			out = argv[k];
 		} else if (!strcmp(argv[k], "-n") || !strcmp(argv[k], "--dry-run")) {
 			dry = 1;
 		} else if (!strcmp(argv[k], "--no-check")) {
 			nocheck = 1;
 		} else {
-			die("init: unexpected argument '%s'", argv[k]);
+			usage_die("init: unexpected argument '%s'", argv[k]);
 		}
 	}
 	g_dir = dir;
@@ -825,7 +948,7 @@ int cmd_init(int argc, char **argv)
 			out = NG_DEFAULT_FILE;
 		} else {
 			if (snprintf(outbuf, sizeof(outbuf), "%s/depgraph", dir) >= (int)sizeof(outbuf))
-				die("init: directory path is too long: %s", dir);
+				usage_die("init: directory path is too long: %s", dir);
 			out = outbuf;
 		}
 	}
@@ -835,7 +958,7 @@ int cmd_init(int argc, char **argv)
 		char *slash;
 
 		if (snprintf(outdir, sizeof(outdir), "%s", out) >= (int)sizeof(outdir))
-			die("init: output path is too long: %s", out);
+			usage_die("init: output path is too long: %s", out);
 		slash = strrchr(outdir, '/');
 		if (slash) {
 			out_base = out + (slash - outdir) + 1;
@@ -871,7 +994,8 @@ int cmd_init(int argc, char **argv)
 		mode_t sm;
 
 		int is_out = is_artifact(ents[k]->d_name, out_base, out_base_len);
-		int is_dg = is_artifact(ents[k]->d_name, "depgraph", 8);
+		int is_dg = is_artifact(ents[k]->d_name, "depgraph", 8) ||
+			    ng_reserved_name(ents[k]->d_name);
 
 		if (snprintf(path, sizeof(path), "%s/%s", dir, ents[k]->d_name) >= (int)sizeof(path))
 			die("%s/%s: path is too long", dir, ents[k]->d_name);
@@ -879,13 +1003,13 @@ int cmd_init(int argc, char **argv)
 			die("stat %s: %s", path, strerror(errno));
 
 		if (is_out || is_dg) {
-			if (!S_ISREG(st.st_mode) || !graph_magic(path)) {
+			if (!S_ISREG(st.st_mode) || !graph_image(path)) {
 				if (is_out)
 					die("%s/%s: the output would replace this, and it is not "
 					    "a depgraph; pick another -o name",
 					    dir, ents[k]->d_name);
-				fprintf(stderr, "ninitctl: warning: %s/%s is not a depgraph and "
-					"was not built; rename it if it is a service\n",
+				fprintf(stderr, "ninitctl: warning: %s/%s has a name ninitctl "
+					"reserves and was not built; rename it if it is a service\n",
 					dir, ents[k]->d_name);
 			}
 			continue;
@@ -903,7 +1027,7 @@ int cmd_init(int argc, char **argv)
 		if (!(sm & S_IROTH))
 			out_mode &= (mode_t)~(S_IROTH | S_IWOTH);
 
-		if ((uint64_t)st.st_size > NG_MAX_SRC && graph_magic(path)) {
+		if ((uint64_t)st.st_size > NG_MAX_SRC && graph_image(path)) {
 			fprintf(stderr, "ninitctl: warning: %s is a compiled depgraph, "
 				"not a service; skipping it\n", path);
 			continue;
@@ -912,7 +1036,9 @@ int cmd_init(int argc, char **argv)
 		buf = slurp(path, &len);
 
 		// a graph left in the services directory under any other name
-		if (len >= 4 && !memcmp(buf, &(uint32_t){ NG_MAGIC }, 4)) {
+		if (len >= sizeof(struct ng_hdr) &&
+		    ((const struct ng_hdr *)(const void *)buf)->magic == NG_MAGIC &&
+		    ((const struct ng_hdr *)(const void *)buf)->total_len == len) {
 			fprintf(stderr, "ninitctl: warning: %s is a compiled depgraph, "
 				"not a service; skipping it\n", path);
 			free(buf);
