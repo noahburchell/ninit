@@ -861,9 +861,16 @@ static void svc_release(uint32_t i)
 				queue[q_tail++] = d;
 				continue;
 			}
-			if (state[d] == NG_ST_PENDING ||
-			    (state[d] == NG_ST_DONE && !up[d] && ng_restart(map, d)))
+			if (state[d] == NG_ST_PENDING) {
 				svc_try_start(d);
+			} else if (state[d] == NG_ST_DONE && !up[d] && ng_restart(map, d)) {
+				// spawn() would reset it to a fresh startup and
+				// start-tries could then retire a supervised daemon
+				if (!live_has(d))
+					live_add(d);
+				if (!runs[d].restart_at)
+					runs[d].restart_at = now_ms();
+			}
 		}
 	}
 	draining = 0;
@@ -1233,7 +1240,10 @@ static void fire_restarts(void)
 	if (shutting_down)
 		return;
 
-	for (k = 0; k < n_live; k++) {
+	// descending: giving up on a service swaps the last one into its slot,
+	// and that one has already been seen
+	k = n_live;
+	while (k--) {
 		uint32_t i = live[k];
 		struct run *r = &runs[i];
 		const char *why;
@@ -2242,7 +2252,7 @@ static void ctl_tick(void)
 	if (!n_ops)
 		return;
 	now = now_ms();
-	for (k = 0; k < n_live; k++) {
+	for (k = 0; k < n_live; ) {
 		uint32_t i = live[k];
 		struct run *r = &runs[i];
 		int gone = svc_gone(i);
@@ -2292,6 +2302,9 @@ static void ctl_tick(void)
 		default:
 			break;
 		}
+		// finishing an operation swaps another service into this slot
+		if (k < n_live && live[k] == i)
+			k++;
 	}
 }
 
@@ -2425,8 +2438,16 @@ static void ctl_read(struct ctl *c)
 	char *nl;
 	ssize_t k;
 
-	if (c->done || c->listing || c->svc != UINT32_MAX)
+	// a connection with nothing to say still has to notice a hangup, or the
+	// dead socket stays ready and the loop spins until its operation ends
+	if (c->done || c->listing || c->svc != UINT32_MAX) {
+		char skip[256];
+
+		k = read(c->fd, skip, sizeof(skip));
+		if (k == 0 || (k < 0 && errno != EAGAIN && errno != EINTR))
+			ctl_drop(c);
 		return;
+	}
 
 	k = read(c->fd, c->in + c->in_len, sizeof(c->in) - c->in_len - 1);
 	if (k == 0) {
@@ -2776,7 +2797,7 @@ int main(int argc, char **argv)
 				if (pfds[k].revents & (POLLOUT | POLLERR | POLLHUP))
 					ctl_pump(&ctl_conn[i]);
 				if (i < (uint32_t)n_ctl && ctl_conn[i].fd == pfds[k].fd &&
-				    (pfds[k].revents & POLLIN))
+				    (pfds[k].revents & (POLLIN | POLLERR | POLLHUP)))
 					ctl_read(&ctl_conn[i]);
 				continue;
 			}
