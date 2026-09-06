@@ -1,10 +1,8 @@
 # ninit
 
-### small init
+### small init for any linux distro
 
-compiles '/etc/ninit.d' into a binary dependency graph. ninit mmaps it and runs the services in dependency order, as many in parallel as possible
-
-boot with 'init=/usr/sbin/ninit'. 'ninit_graph=/path' on the kernel command line picks another graph file. it mounts /proc /sys /dev (devtmpfs, and does the dev symlinks) /run /dev/pts and /dev/shm itself if they aren't mounted already
+faster than sysvinit! these are the docs below, so read through and youll be able to use this init on your system
 
 ### service files
 
@@ -45,7 +43,7 @@ own dependencies are. if something behind a target dies, the target goes down
 too and so does everything waiting on it. failure and shutdown ordering both
 cross targets the same way
 
-examples are in docs/ninit.d
+examples are in docs/ninit.d/
 
 types:
 - oneshot: complete when it exits 0
@@ -56,7 +54,7 @@ a daemon must run in the foreground: 'exec' the real binary with whatever flag s
 
 a readiness probe belongs in a background subshell of the same script, which writes the newline and exits while the main shell execs the daemon. docs/ninit.d/dbus and docs/ninit.d/udev do this
 
-a oneshot runs once and a daemon is tried twice, then 'onfail' decides; both are
+a oneshot runs once and a daemon is tried twice, then 'onfail' decides. both can be
 set per service with 'start-tries'. a oneshot is not repeated by default because
 repeating a script repeats its side effects. without 'onfail' the policy is
 'stop' when anything depends on the service and 'warn' when nothing does; it
@@ -94,7 +92,7 @@ or use a real getty
 
 ### building it
 
-warning: the makefile builds with -march=native so if you are going to distribute a binary remove it.
+warning: the makefile builds with -march=native so if you are going to distribute a binary remove it
 
 ```
 make
@@ -129,7 +127,7 @@ ninitctl status [NAME]   # what ninit is running
 ninitctl log             # failures ninit recorded
 ninitctl start NAME      # start it, or retry it after a failure
 ninitctl stop NAME       # stop it and keep it stopped
-ninitctl restart NAME    # stop it, then start it again
+ninitctl restart NAME    # restarts it
 ninitctl resume          # retry every failed and skipped service
 ```
 
@@ -148,7 +146,7 @@ once the service has actually gone. ninit reads its graph once, at boot: a
 rebuilt graph takes effect on the next boot, and 'resume' is how you retry
 services with the graph already loaded
 
-the depgraph format is version 7. ninit checks it exactly. re-run 'ninitctl init' after upgrading ninit and before rebooting. an older graph is refused with 'version mismatch' and the boot lands in the emergency shell
+the depgraph format is version (check ngraph.h line 8). ninit checks it exactly. re-run 'ninitctl init' after upgrading ninit and before rebooting. an older graph is refused with 'version mismatch' and the boot lands in the emergency shell
 
 ### shutting down
 
