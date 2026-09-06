@@ -48,12 +48,16 @@ static int relink(const char *path, const char *target, int enable)
 	if (!strcmp(fixed, target))
 		return 1;
 
-	n = snprintf(tmp, sizeof(tmp), "%s.ninitctl.tmp", path);
-	if (n < 0 || (size_t)n >= sizeof(tmp))
-		return 0;
-	unlink(tmp);
-	if (symlink(fixed, tmp) < 0)
-		return 0;
+	for (unsigned t = 0; ; t++) {
+		n = snprintf(tmp, sizeof(tmp), "%s.ninitctl.%d.%u.tmp", path,
+			     (int)getpid(), t);
+		if (n < 0 || (size_t)n >= sizeof(tmp))
+			return 0;
+		if (symlink(fixed, tmp) == 0)
+			break;
+		if (errno != EEXIST || t == 999)
+			return 0;
+	}
 	if (rename(tmp, path) < 0) {
 		unlink(tmp);
 		return 0;
@@ -204,9 +208,11 @@ int svc_move(int argc, char **argv, int enable)
 			bad++;
 			continue;
 		}
-		if (link_len && !relink(to, target, enable))
+		if (link_len && !relink(to, target, enable)) {
 			fprintf(stderr, "ninitctl: %s: moved, but its relative link "
 				"could not be repointed\n", name);
+			bad++;
+		}
 
 		printf("%s %s\n", enable ? "added" : "removed", name);
 		moved++;

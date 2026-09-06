@@ -763,6 +763,13 @@ static void svc_abandon(uint32_t i)
 	r->pid = 0;
 }
 
+static int svc_gone(uint32_t i)
+{
+	const struct run *r = &runs[i];
+
+	return r->pid <= 0 && !r->stale_pid && cgroup_populated(i) <= 0;
+}
+
 static int svc_can_start(uint32_t i, const char **why)
 {
 	const struct run *r = &runs[i];
@@ -1024,7 +1031,7 @@ static void service_failed(uint32_t i, int status)
 	r->starting = 0;
 
 	svc_abandon(i);
-	if (live_has(i) && !r->stale_pid)
+	if (live_has(i) && !r->stale_pid && r->op == SVC_OP_NONE)
 		live_del(i);
 
 	if (shutting_down)
@@ -1244,10 +1251,8 @@ static void fire_restarts(void)
 				give_up(i, FAIL_ST_TIMEOUT);
 				continue;
 			}
-			if (r->stale_pid || r->pid > 0) {
+			if (r->stale_pid || r->pid > 0 || state[i] == NG_ST_RUNNING)
 				r->restart_at = now + KILL_GRACE_MS;
-				continue;
-			}
 			continue;
 		}
 
@@ -1785,7 +1790,7 @@ static void stop_ordered(void)
 
 	for (i = 0; i < n_svc; i++) {
 		waitc[i] = roff[i + 1] - roff[i];
-		if (runs[i].pid > 0)
+		if (!svc_gone(i))
 			live_svc++;
 	}
 	if (!live_svc)
@@ -1805,7 +1810,7 @@ static void stop_ordered(void)
 			if (st[i] == 2 || waitc[i])
 				continue;
 			if (!st[i]) {
-				if (runs[i].pid <= 0)
+				if (svc_gone(i))
 					continue;	// settles below
 				signal_group(i, SIGTERM);
 				st[i] = 1;
@@ -1828,7 +1833,7 @@ static void stop_ordered(void)
 		drain_output();
 
 		for (i = 0; i < n_svc; i++) {
-			if (st[i] == 2 || waitc[i] || runs[i].pid > 0)
+			if (st[i] == 2 || waitc[i] || !svc_gone(i))
 				continue;
 			st[i] = 2;
 			left--;
@@ -1844,7 +1849,7 @@ static void stop_ordered(void)
 			uint32_t stuck = 0;
 
 			for (i = 0; i < n_svc; i++)
-				stuck += runs[i].pid > 0;
+				stuck += !svc_gone(i);
 			log_warn("shutdown: %u service%s would not stop in order", stuck,
 				 stuck == 1 ? "" : "s");
 			break;
@@ -2108,7 +2113,7 @@ static void ctl_fill(struct ctl *c)
 	}
 }
 
-// returns 0 while output is still pending
+// 0 while output is still pending, 1 once it is all written, -1 if the peer is gone
 static int ctl_flush(struct ctl *c)
 {
 	while (c->out_at < c->out_len) {
@@ -2123,7 +2128,7 @@ static int ctl_flush(struct ctl *c)
 			continue;
 		if (k < 0 && errno == EAGAIN)
 			return 0;
-		return 1; // the peer is gone
+		return -1;
 	}
 	c->out_at = c->out_len = 0;
 	return 1;
@@ -2131,10 +2136,13 @@ static int ctl_flush(struct ctl *c)
 
 static void ctl_pump(struct ctl *c)
 {
+	int rc;
+
 	ctl_fill(c);
-	if (!ctl_flush(c))
+	rc = ctl_flush(c);
+	if (!rc)
 		return;
-	if (c->done && c->out_at == c->out_len)
+	if (rc < 0 || c->done)
 		ctl_drop(c);
 }
 
@@ -2179,6 +2187,18 @@ static void svc_op_start(uint32_t i)
 	const char *why = "";
 
 	want[i] = 0;
+	if (!svc_can_start(i, &why)) {
+		if (!shutting_down && r->pid <= 0 && !r->stale_pid) {
+			r->attempt = 0;
+			r->burst = 0;
+			if (state[i] != NG_ST_PENDING) {
+				state[i] = NG_ST_PENDING;
+				n_pending++;
+			}
+		}
+		svc_op_done(i, 0, why);
+		return;
+	}
 	r->attempt = 0;
 	r->burst = 0;
 	r->op_restart = 0;
@@ -2186,12 +2206,10 @@ static void svc_op_start(uint32_t i)
 		state[i] = NG_ST_PENDING;
 		n_pending++;
 	}
-	if (!svc_try_start(i)) {
-		svc_can_start(i, &why);
-		svc_op_done(i, 0, why);
-		return;
-	}
+	if (!live_has(i))
+		live_add(i);
 	svc_op_set(i, SVC_OP_START, now_ms() + (long long)ng_start_ms(map, i) + KILL_GRACE_MS);
+	spawn(i);
 }
 
 static void svc_op_stop(uint32_t i, int restart)
@@ -2204,7 +2222,7 @@ static void svc_op_stop(uint32_t i, int restart)
 	if (!live_has(i))
 		live_add(i);
 
-	if (r->pid <= 0 && !r->stale_pid && cgroup_populated(i) <= 0) {
+	if (svc_gone(i)) {
 		if (restart) {
 			svc_op_start(i);
 			return;
@@ -2227,7 +2245,7 @@ static void ctl_tick(void)
 	for (k = 0; k < n_live; k++) {
 		uint32_t i = live[k];
 		struct run *r = &runs[i];
-		int gone = r->pid <= 0 && !r->stale_pid && cgroup_populated(i) <= 0;
+		int gone = svc_gone(i);
 
 		switch (r->op) {
 		case SVC_OP_TERM:
@@ -2651,7 +2669,7 @@ int main(int argc, char **argv)
 
 		pfds[0].fd = sfd;
 		pfds[0].events = POLLIN;
-		start = live_has(drain_rotor) ? runs[drain_rotor].live_pos : 0;
+		start = n_live && live_has(drain_rotor) ? runs[drain_rotor].live_pos : 0;
 		for (k = 0; !degraded && k < n_live; k++, start++) {
 			uint32_t i;
 

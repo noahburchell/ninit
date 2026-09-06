@@ -1,6 +1,5 @@
 #!/bin/bash
-#% depon: fsck
-#% onfail: shell
+#%onfail: shell
 
 mount -o remount,rw /
 mountpoint -q /usr/lib/modules || mount /usr/lib/modules

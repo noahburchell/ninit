@@ -1,4 +1,5 @@
 #!/bin/bash
+#%depon: modules-load
 
-sysctl --system || echo "sysctl: some keys were rejected" >&2
+sysctl --system >& /dev/null
 exit 0

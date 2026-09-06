@@ -1,6 +1,0 @@
-#!/bin/bash
-#% depon: mounts
-#% type: daemon
-#% restart: always
-
-exec agetty tty3 linux

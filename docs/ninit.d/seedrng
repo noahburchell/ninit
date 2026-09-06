@@ -1,8 +1,8 @@
 #!/bin/bash
-#% depon: fs
-#% onfail: warn
+#%depon: fs
+#%onfail: warn
 
-for p in /usr/local/sbin/seedrng /usr/sbin/seedrng /usr/libexec/rc/sbin/seedrng; do
+for p in /usr/libexec/rc/sbin/seedrng /usr/local/sbin/seedrng /usr/sbin/seedrng; do
 	[ -x "$p" ] && exec "$p"
 done
 

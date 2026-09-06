@@ -1,5 +1,5 @@
 #!/bin/bash
-#% onfail: warn
+#%onfail: warn
 
 mountpoint -q /proc/sys/fs/binfmt_misc ||
 	mount -t binfmt_misc -o nosuid,nodev,noexec binfmt_misc /proc/sys/fs/binfmt_misc

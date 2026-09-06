@@ -1,20 +1,20 @@
 #!/bin/bash
-#% depon: tmpfiles-dev
-#% type: daemon
-#% notify: 3
-#% restart: always
+#%depon: tmpfiles-dev
+#%type: daemon
+#%notify: 3
+#%restart: always
 
-for u in /sbin/udevd /lib/systemd/systemd-udevd /usr/lib/systemd/systemd-udevd; do
+for u in /usr/lib/systemd/systemd-udevd /lib/systemd/systemd-udevd /sbin/udevd; do
 	[ -x "$u" ] && udevd="$u" && break
 done
 [ -n "$udevd" ] || { echo "udev: no udevd binary found" >&2; exit 1; }
 
 {
-	for _ in $(seq 1 500); do
+	for ((n = 0; n < 500; n++)); do
 		[ -S /run/udev/control ] && break
 		sleep 0.02
 	done
-	if udevadm control --ping >/dev/null 2>&1; then
+	if udevadm control --ping --timeout=10 >/dev/null 2>&1; then
 		echo >&3
 	else
 		echo "udev: daemon did not answer a ping within 10s" >&2

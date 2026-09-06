@@ -1,4 +1,4 @@
 #!/bin/bash
-#% depon: kmod-static-nodes
+#%depon: kmod-static-nodes
 
 systemd-tmpfiles --prefix=/dev --create --boot

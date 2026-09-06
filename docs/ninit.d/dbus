@@ -1,13 +1,13 @@
 #!/bin/bash
-#% depon: fs
-#% type: daemon
-#% notify: 3
-#% restart: always
+#%depon: fs
+#%type: daemon
+#%notify: 3
+#%restart: always
 
 mkdir -p /run/dbus
 
 {
-	for _ in $(seq 1 500); do
+	for ((n = 0; n < 500; n++)); do
 		if [ -S /run/dbus/system_bus_socket ]; then
 			echo >&3
 			exit 0

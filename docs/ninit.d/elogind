@@ -1,6 +1,18 @@
 #!/bin/bash
-#% depon: dbus, cgroups, udev-trigger
-#% type: daemon
-#% restart: always
+#%depon: dbus, cgroups, udev-trigger
+#%type: daemon
+#%notify: 3
+#%restart: always
 
-exec /lib/elogind/elogind
+{
+	for ((n = 0; n < 400; n++)); do
+		if busctl --system status org.freedesktop.login1 &> /dev/null; then
+			echo >&3
+			exit 0
+		fi
+		sleep 0.025
+	done
+	echo "elogind: did not claim org.freedesktop.login1 within 10s" >&2
+} &
+
+exec 3>&- /lib/elogind/elogind

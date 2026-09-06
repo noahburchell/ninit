@@ -1,4 +1,4 @@
 #!/bin/bash
-#% onfail: warn
+#%onfail: warn
 
 hwclock --systz --utc

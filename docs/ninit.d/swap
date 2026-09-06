@@ -1,5 +1,6 @@
 #!/bin/bash
-#% depon: mounts
+#%depon: mounts
+#%onfail: warn
 
 swapon -a || true
 
