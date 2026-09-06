@@ -81,6 +81,15 @@ ifneq (,$(filter busybox,$(USE)))
 override CPPFLAGS += -DNINIT_BUSYBOX=\"$(BUSYBOX)\"
 endif
 
+ifneq (,$(filter authshell,$(USE)))
+override CPPFLAGS += -DNINIT_AUTHSHELL=1
+endif
+
+# the interpreter service scripts are written for
+ifneq ($(NINIT_SHELL),)
+override CPPFLAGS += -DNG_SHELL=\"$(NINIT_SHELL)\"
+endif
+
 ifneq (,$(filter debug,$(USE)))
 SANFLAGS := -fsanitize=address,undefined -fsanitize-address-use-after-scope \
 	-fno-sanitize-recover=all -fno-omit-frame-pointer -fno-common \
@@ -94,7 +103,7 @@ endif
 
 NINIT_SRC   := src/ninit.c src/logging.c src/ngraph.c src/fail.c
 NINITCTL_SRC := ninitctl/main.c ninitctl/build.c ninitctl/show.c \
-		ninitctl/add.c ninitctl/del.c src/ngraph.c
+		ninitctl/add.c ninitctl/del.c ninitctl/ctl.c src/ngraph.c
 
 TOOLS_SRC   := tools/shutdown.c
 

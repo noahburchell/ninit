@@ -1,5 +1,6 @@
 #include "ngraph.h"
 
+#include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
@@ -111,51 +112,167 @@ const char *ng_typename(uint8_t type)
 	}
 }
 
-// copies the LANG= value out of /etc/locale.conf
-int ng_locale_lang(char *buf, size_t cap)
+const char *ng_name_problem(const char *name)
 {
-	char raw[1024];
-	ssize_t n;
-	char *p;
-	int fd = open(NG_LOCALE_CONF, O_RDONLY | O_CLOEXEC | O_NOCTTY);
+	const unsigned char *p = (const unsigned char *)name;
+	size_t n = strlen(name);
 
+	if (!n)
+		return "is empty";
+	if (n > NG_MAX_NAME)
+		return "is longer than a filename may be";
+	if (name[0] == '.')
+		return "starts with a dot; ninit never builds those";
+	if (name[n - 1] == '~')
+		return "looks like an editor backup; delete it or move it to unused/";
+	if (n > 1 && name[0] == '#' && name[n - 1] == '#')
+		return "looks like an editor autosave; delete it or move it to unused/";
+	for (; *p; p++) {
+		if (*p == '/')
+			return "contains a slash; a service name is one filename";
+		if (*p == ',')
+			return "contains a comma; depon/depof could never name it";
+		if (*p <= ' ' || *p == 0x7f)
+			return "contains whitespace or a control character; depon/depof could never name it";
+	}
+	return NULL;
+}
+
+int ng_reserved_name(const char *name)
+{
+	if (!strcmp(name, "unused"))
+		return 1;
+	if (strncmp(name, "depgraph", 8))
+		return 0;
+	return !name[8] || !strcmp(name + 8, ".old") || !strcmp(name + 8, ".tmp");
+}
+
+static const char *const locale_vars[NG_LOCALE_MAX] = {
+	"LANG", "LC_ALL", "LC_CTYPE", "LC_NUMERIC", "LC_TIME", "LC_COLLATE",
+	"LC_MONETARY", "LC_MESSAGES", "LC_PAPER", "LC_NAME", "LC_ADDRESS",
+	"LC_TELEPHONE", "LC_MEASUREMENT", "LC_IDENTIFICATION",
+};
+
+static int locale_value_ok(const char *v)
+{
+	if (!*v)
+		return 0;
+	for (; *v; v++)
+		if (!((*v >= 'a' && *v <= 'z') || (*v >= 'A' && *v <= 'Z') ||
+		      (*v >= '0' && *v <= '9') || *v == '_' || *v == '.' ||
+		      *v == '-' || *v == '@'))
+			return 0;
+	return 1;
+}
+
+// parses /etc/locale.conf
+int ng_locale_env(char (*out)[NG_LOCALE_LEN], int max, const char **why)
+{
+	char raw[NG_LOCALE_FILE];
+	size_t len = 0;
+	int seen[NG_LOCALE_MAX] = { 0 };
+	int n = 0, fd;
+	char *p;
+
+	*why = NULL;
+	fd = open(NG_LOCALE_CONF, O_RDONLY | O_CLOEXEC | O_NOCTTY);
 	if (fd < 0)
 		return 0;
-	n = read(fd, raw, sizeof(raw) - 1);
+	for (;;) {
+		ssize_t k = read(fd, raw + len, sizeof(raw) - len - 1);
+
+		if (k < 0 && errno == EINTR)
+			continue;
+		if (k < 0) {
+			close(fd);
+			*why = "could not be read";
+			return 0;
+		}
+		if (!k)
+			break;
+		len += (size_t)k;
+		if (len + 1 >= sizeof(raw)) {
+			close(fd);
+			*why = "is larger than 8 KiB";
+			return 0;
+		}
+	}
 	close(fd);
-	if (n <= 0)
-		return 0;
-	raw[n] = '\0';
+	raw[len] = '\0';
 
 	for (p = raw; *p; ) {
-		char *nl = strchr(p, '\n'), *v = p;
-		size_t len;
+		char *nl = strchr(p, '\n'), *v, *name;
+		size_t nlen;
+		int k;
 
 		if (nl)
 			*nl = '\0';
+		name = p;
 		p = nl ? nl + 1 : p + strlen(p);
 
-		while (*v == ' ' || *v == '\t')
-			v++;
-		if (strncmp(v, "LANG=", 5))
+		while (*name == ' ' || *name == '\t')
+			name++;
+		if (!*name || *name == '#')
 			continue;
-		v += 5;
+
+		v = strchr(name, '=');
+		if (!v) {
+			*why = "has a line that is not name=value";
+			continue;
+		}
+		nlen = (size_t)(v - name);
+		v++;
+
+		for (k = 0; k < NG_LOCALE_MAX; k++)
+			if (!strncmp(name, locale_vars[k], nlen) &&
+			    locale_vars[k][nlen] == '\0')
+				break;
+		if (k == NG_LOCALE_MAX)
+			continue;
+
 		if (*v == '"' || *v == '\'') {
 			char q = *v++;
 			char *end = strchr(v, q);
 
-			if (end)
-				*end = '\0';
+			if (!end) {
+				*why = "has a value with no closing quote";
+				continue;
+			}
+			*end = '\0';
+		} else {
+			v[strcspn(v, " \t\r#")] = '\0';
 		}
-		v[strcspn(v, " \t\r")] = '\0';
-		len = strlen(v);
-		if (!len || len >= cap)
-			return 0;
-		memcpy(buf, v, len + 1);
-		return 1;
+
+		if (!locale_value_ok(v)) {
+			*why = "has a value that is not a locale name";
+			continue;
+		}
+
+		{
+			size_t kn = strlen(locale_vars[k]), vn = strlen(v);
+			char *dst;
+
+			if (kn + 1 + vn >= NG_LOCALE_LEN) {
+				*why = "has a value that is too long";
+				continue;
+			}
+			// a later line wins the way sourcing the file would
+			if (seen[k]) {
+				dst = out[seen[k] - 1];
+			} else if (n == max) {
+				*why = "sets more variables than ninit can carry";
+				continue;
+			} else {
+				dst = out[n];
+				seen[k] = ++n;
+			}
+			memcpy(dst, locale_vars[k], kn);
+			dst[kn] = '=';
+			memcpy(dst + kn + 1, v, vn + 1);
+		}
 	}
 
-	return 0;
+	return n;
 }
 
 const char *ng_onfailname(uint8_t policy)
@@ -173,6 +290,38 @@ static int range_ok(uint32_t off, uint64_t bytes, uint32_t total, uint32_t align
 	if (off & (align - 1))
 		return 0;
 	return (uint64_t)off + bytes <= total;
+}
+
+struct ng_span {
+	uint64_t lo, hi;
+};
+
+// a checksum only proves the bytes are intact
+static int spans_disjoint(const struct ng_span *v, unsigned n)
+{
+	unsigned i, j;
+
+	for (i = 0; i < n; i++) {
+		if (v[i].lo == v[i].hi)
+			continue;
+		for (j = i + 1; j < n; j++) {
+			if (v[j].lo == v[j].hi)
+				continue;
+			if (v[i].lo < v[j].hi && v[j].lo < v[i].hi)
+				return 0;
+		}
+	}
+	return 1;
+}
+
+// the blobs trailing nul stops the search even for a runaway offset
+static int str_fits(const char *blob, uint32_t blob_len, uint32_t off, uint32_t cap)
+{
+	uint32_t left = blob_len - off;
+
+	if (left > cap + 1u)
+		left = cap + 1u;
+	return memchr(blob + off, '\0', left) != NULL;
 }
 
 const char *ng_verify(const void *map, size_t len)
@@ -198,8 +347,8 @@ const char *ng_verify(const void *map, size_t len)
 		return "n_svc exceeds the supported maximum";
 	if (h->n_roots > n)
 		return "n_roots exceeds n_svc";
-	if (h->reserved[0] || h->reserved[1])
-		return "reserved header words are not zero";
+	if (h->reserved)
+		return "reserved header word is not zero";
 
 	if (!range_ok(h->off_svc, (uint64_t)n * sizeof(struct ng_svc), h->total_len, 8))
 		return "service table out of bounds";
@@ -209,6 +358,22 @@ const char *ng_verify(const void *map, size_t len)
 		return "rdep indices out of bounds";
 	if (!range_ok(h->off_blob, h->blob_len, h->total_len, 1))
 		return "blob out of bounds";
+	if (!range_ok(h->off_pol, (uint64_t)n * sizeof(struct ng_pol), h->total_len, 4))
+		return "policy table out of bounds";
+
+	{
+		const struct ng_span sp[] = {
+			{ 0, sizeof(*h) },
+			{ h->off_svc, (uint64_t)h->off_svc + (uint64_t)n * sizeof(struct ng_svc) },
+			{ h->off_rdep_off, (uint64_t)h->off_rdep_off + ((uint64_t)n + 1) * 4 },
+			{ h->off_rdep_idx, (uint64_t)h->off_rdep_idx + (uint64_t)m * 4 },
+			{ h->off_pol, (uint64_t)h->off_pol + (uint64_t)n * sizeof(struct ng_pol) },
+			{ h->off_blob, (uint64_t)h->off_blob + h->blob_len },
+		};
+
+		if (!spans_disjoint(sp, sizeof(sp) / sizeof(*sp)))
+			return "sections overlap";
+	}
 
 	if (ng_image_crc32c(map, len) != h->crc32)
 		return "crc mismatch (corrupt)";
@@ -260,6 +425,8 @@ const char *ng_verify(const void *map, size_t len)
 			return "only a daemon can be restarted";
 		if (s->name_off >= h->blob_len)
 			return "name offset out of range";
+		if (!str_fits(blob, h->blob_len, s->name_off, NG_MAX_NAME))
+			return "name longer than the supported maximum";
 		if (i < h->n_roots && s->unmet != 0)
 			return "root has nonzero unmet";
 		if (i >= h->n_roots && s->unmet == 0)
@@ -270,6 +437,19 @@ const char *ng_verify(const void *map, size_t len)
 				return "target has a script";
 		} else if (s->script_off >= h->blob_len) {
 			return "script offset out of range";
+		} else if (!str_fits(blob, h->blob_len, s->script_off, NG_MAX_SCRIPT)) {
+			return "script longer than execve can carry";
+		}
+
+		{
+			const struct ng_pol *p = ng_pol(map, i);
+
+			if (p->start_ms > NG_MAX_MS || p->stop_ms > NG_MAX_MS)
+				return "policy timeout out of range";
+			if (p->start_tries > NG_MAX_TRIES)
+				return "policy start_tries out of range";
+			if (p->pflags & ~NG_PF_MASK)
+				return "unknown policy flag bits are set";
 		}
 	}
 

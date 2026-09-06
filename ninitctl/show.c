@@ -32,11 +32,12 @@ int cmd_show(int argc, char **argv)
 	const struct ng_hdr *h;
 	const struct ng_svc *sv;
 	const uint32_t *roff, *ridx;
-	uint32_t *doff, *didx, *fill, *level;
+	uint32_t *doff = NULL, *didx = NULL, *fill = NULL, *level = NULL, *chain = NULL;
 	uint32_t n, m, i, j, wname = 7, maxlvl = 0, deepest = 0;
 	struct stat sb;
-	void *map;
-	int fd, k, verbose = 0;
+	size_t maplen = 0;
+	void *map = MAP_FAILED;
+	int fd, k, verbose = 0, rc = 1;
 
 	for (k = 0; k < argc; k++) {
 		if ((!strcmp(argv[k], "-f") || !strcmp(argv[k], "--file")) && k + 1 < argc)
@@ -58,19 +59,21 @@ int cmd_show(int argc, char **argv)
 	}
 	if (fstat(fd, &sb) < 0 || sb.st_size <= 0) {
 		fprintf(stderr, "ninitctl: %s: not a usable file\n", path);
+		close(fd);
 		return 1;
 	}
-	map = mmap(NULL, (size_t)sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+	maplen = (size_t)sb.st_size;
+	map = mmap(NULL, maplen, PROT_READ, MAP_PRIVATE, fd, 0);
 	close(fd);
 	if (map == MAP_FAILED) {
 		fprintf(stderr, "ninitctl: mmap %s: %s\n", path, strerror(errno));
 		return 1;
 	}
 
-	why = ng_verify(map, (size_t)sb.st_size);
+	why = ng_verify(map, maplen);
 	if (why) {
 		fprintf(stderr, "ninitctl: %s: %s\n", path, why);
-		return 1;
+		goto out;
 	}
 
 	st = isatty(STDOUT_FILENO) ? &style_tty : &style_plain;
@@ -88,7 +91,7 @@ int cmd_show(int argc, char **argv)
 	level = calloc(n, sizeof(*level));
 	if (!doff || !didx || !fill || !level) {
 		fprintf(stderr, "ninitctl: out of memory\n");
-		return 1;
+		goto out;
 	}
 	for (i = 0; i < m; i++)
 		doff[ridx[i] + 1]++;
@@ -179,12 +182,12 @@ int cmd_show(int argc, char **argv)
 	}
 
 	{
-		uint32_t *chain = calloc(maxlvl ? maxlvl : 1, sizeof(*chain));
 		uint32_t cur = deepest, c = maxlvl;
 
+		chain = calloc(maxlvl ? maxlvl : 1, sizeof(*chain));
 		if (!chain) {
 			fprintf(stderr, "ninitctl: out of memory\n");
-			return 1;
+			goto out;
 		}
 		while (c) {
 			chain[--c] = cur;
@@ -195,14 +198,23 @@ int cmd_show(int argc, char **argv)
 				}
 		}
 
-		printf("\n%s%scritical path%s %s(%u deep)%s\n  ",
+		printf("\n%s%sdeepest dependency chain%s %s(%u services; depth only, "
+		       "not measured time)%s\n  ",
 		       st->bold, st->yellow, st->reset, st->dim, maxlvl, st->reset);
 		for (i = 0; i < maxlvl; i++)
 			printf("%s%s%s%s", i ? " " : "", i ? st->arrow : "",
 			       i ? " " : "", ng_name(map, chain[i]));
 		putchar('\n');
-		free(chain);
 	}
 
-	return 0;
+	rc = 0;
+out:
+	free(chain);
+	free(level);
+	free(fill);
+	free(didx);
+	free(doff);
+	if (map != MAP_FAILED)
+		munmap(map, maplen);
+	return rc;
 }
