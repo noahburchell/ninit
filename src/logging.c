@@ -244,7 +244,7 @@ void log_raw(int level, const char *buf, size_t len)
 		size_t n = nl ? (size_t)(nl - p) : (size_t)(end - p);
 
 		if (n)
-			ninit_log(level, LOG_CONT "%.*s", (int)n, p);
+			ninit_log(level, "%.*s", (int)n, p);
 		if (!nl)
 			break;
 		p = nl + 1;
