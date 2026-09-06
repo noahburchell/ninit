@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <sys/file.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 struct strv {
 	char **v;
@@ -26,6 +27,11 @@ struct src {
 	int have_onfail;
 	uint8_t restart;
 	uint16_t notify;
+	uint32_t start_ms;
+	uint32_t stop_ms;
+	uint16_t retry_ms;
+	uint8_t start_tries;
+	uint8_t pflags;
 	struct strv depon;
 	struct strv depof;
 };
@@ -89,6 +95,9 @@ static char *slurp(const char *path, size_t *len)
 		die("open %s: %s", path, strerror(errno));
 	if (fstat(fd, &st) < 0)
 		die("stat %s: %s", path, strerror(errno));
+	if ((uint64_t)st.st_size > NG_MAX_SRC)
+		die("%s: is %llu bytes; a service file may not exceed %u",
+		    path, (unsigned long long)st.st_size, NG_MAX_SRC);
 
 	buf = xmalloc((size_t)st.st_size + 1);
 	while (pos < st.st_size) {
@@ -136,6 +145,37 @@ static void split_into(struct strv *out, char *val, int comma)
 			*p++ = '\0';
 		strv_push(out, start);
 	}
+}
+
+static uint32_t parse_ms(const char *val, const char *fname, const char *key)
+{
+	char *end;
+	unsigned long long v, mul = 1;
+
+	errno = 0;
+	v = strtoull(val, &end, 10);
+	if (*val == '-' || errno || end == val)
+		die("%s/%s: %s:%s is not a duration", g_dir, fname, key, val);
+	if (!strcmp(end, "ms") || !*end)
+		mul = 1;
+	else if (!strcmp(end, "s"))
+		mul = 1000;
+	else if (!strcmp(end, "m"))
+		mul = 60000;
+	else if (!strcmp(end, "h"))
+		mul = 3600000;
+	else
+		die("%s/%s: %s:%s has an unknown unit '%s' (want ms, s, m or h)",
+		    g_dir, fname, key, val, end);
+
+	if (v > NG_MAX_MS / mul)
+		die("%s/%s: %s:%s is longer than the %u ms maximum",
+		    g_dir, fname, key, val, NG_MAX_MS);
+	v *= mul;
+	if (!v)
+		die("%s/%s: %s:%s must not be zero", g_dir, fname, key, val);
+
+	return (uint32_t)v;
 }
 
 static int has_code(const char *buf)
@@ -232,6 +272,36 @@ static void parse_src(struct src *s, const char *fname, const char *body, size_t
 				die("%s/%s: notify:%s must be a descriptor between %u and %u",
 				    g_dir, fname, val, NG_NOTIFY_MIN, NG_NOTIFY_MAX);
 			s->notify = (uint16_t)fd;
+		} else if (!strcmp(key, "start-timeout")) {
+			s->start_ms = parse_ms(val, fname, key);
+		} else if (!strcmp(key, "stop-timeout")) {
+			s->stop_ms = parse_ms(val, fname, key);
+		} else if (!strcmp(key, "start-delay")) {
+			uint32_t d = parse_ms(val, fname, key);
+
+			if (d > UINT16_MAX)
+				die("%s/%s: start-delay:%s is longer than the %u ms maximum",
+				    g_dir, fname, val, UINT16_MAX);
+			s->retry_ms = (uint16_t)d;
+		} else if (!strcmp(key, "start-tries")) {
+			char *end;
+			unsigned long t;
+
+			errno = 0;
+			t = strtoul(val, &end, 10);
+			if (*val == '-' || errno || end == val || *end ||
+			    t < 1 || t > NG_MAX_TRIES)
+				die("%s/%s: start-tries:%s must be between 1 and %u",
+				    g_dir, fname, val, NG_MAX_TRIES);
+			s->start_tries = (uint8_t)t;
+		} else if (!strcmp(key, "deps")) {
+			if (!strcmp(val, "uptime"))
+				s->pflags &= (uint8_t)~NG_PF_ORDER_ONLY;
+			else if (!strcmp(val, "order"))
+				s->pflags |= NG_PF_ORDER_ONLY;
+			else
+				die("%s/%s: unknown deps:%s (want uptime or order)",
+				    g_dir, fname, val);
 		} else if (!strcmp(key, "type")) {
 			if (!strcmp(val, "oneshot"))
 				s->type = NG_TYPE_ONESHOT;
@@ -314,27 +384,22 @@ static int is_artifact(const char *name, const char *base, size_t base_len)
 	       !strcmp(name + base_len, ".tmp");
 }
 
+static int graph_magic(const char *path)
+{
+	uint32_t m = 0;
+	ssize_t k;
+	int fd = open(path, O_RDONLY | O_CLOEXEC);
+
+	if (fd < 0)
+		return 0;
+	k = read(fd, &m, sizeof(m));
+	close(fd);
+	return k == (ssize_t)sizeof(m) && m == NG_MAGIC;
+}
+
 static int cmp_dirent(const struct dirent **a, const struct dirent **b)
 {
 	return strcmp((*a)->d_name, (*b)->d_name);
-}
-
-static const char *name_problem(const char *s)
-{
-	const unsigned char *p = (const unsigned char *)s;
-	size_t n = strlen(s);
-
-	if (n && s[n - 1] == '~')
-		return "looks like an editor backup; delete it or move it to unused/";
-	if (n > 1 && s[0] == '#' && s[n - 1] == '#')
-		return "looks like an editor autosave; delete it or move it to unused/";
-	for (; *p; p++) {
-		if (*p == ',')
-			return "contains a comma; depon/depof could never name it";
-		if (*p <= ' ' || *p == 0x7f)
-			return "contains whitespace or a control character; depon/depof could never name it";
-	}
-	return NULL;
 }
 
 static int cmp_edge(const void *x, const void *y)
@@ -348,13 +413,30 @@ static int cmp_edge(const void *x, const void *y)
 	return 0;
 }
 
-static uint32_t lookup(struct src *s, uint32_t n, const char *name)
+static int cmp_name_idx(const void *x, const void *y, void *ctx)
 {
-	uint32_t i;
+	const struct src *s = ctx;
 
-	for (i = 0; i < n; i++)
-		if (!strcmp(s[i].name, name))
-			return i;
+	return strcmp(s[*(const uint32_t *)x].name, s[*(const uint32_t *)y].name);
+}
+
+// scanning every service per dependency reference is O(edges * services)
+static uint32_t lookup(const struct src *s, const uint32_t *byname, uint32_t n,
+		       const char *name)
+{
+	uint32_t lo = 0, hi = n;
+
+	while (lo < hi) {
+		uint32_t mid = lo + (hi - lo) / 2;
+		int c = strcmp(s[byname[mid]].name, name);
+
+		if (!c)
+			return byname[mid];
+		if (c < 0)
+			lo = mid + 1;
+		else
+			hi = mid;
+	}
 	return UINT32_MAX;
 }
 
@@ -428,46 +510,159 @@ static void visit(struct graph *g, struct src *s, uint32_t root)
 	}
 }
 
+struct ready {
+	uint32_t *v;
+	uint32_t n;
+};
+
+static int ready_before(const struct graph *g, uint32_t a, uint32_t b)
+{
+	int ra = !g->indeg[a], rb = !g->indeg[b];
+
+	if (ra != rb)
+		return ra;
+	if (g->height[a] != g->height[b])
+		return g->height[a] > g->height[b];
+	return a < b;
+}
+
+static void ready_push(struct ready *q, const struct graph *g, uint32_t x)
+{
+	uint32_t i = q->n++;
+
+	q->v[i] = x;
+	while (i) {
+		uint32_t p = (i - 1) / 2, t;
+
+		if (!ready_before(g, q->v[i], q->v[p]))
+			break;
+		t = q->v[i];
+		q->v[i] = q->v[p];
+		q->v[p] = t;
+		i = p;
+	}
+}
+
+static uint32_t ready_pop(struct ready *q, const struct graph *g)
+{
+	uint32_t top = q->v[0], i = 0;
+
+	q->v[0] = q->v[--q->n];
+	for (;;) {
+		uint32_t l = 2 * i + 1, r = l + 1, b = i, t;
+
+		if (l < q->n && ready_before(g, q->v[l], q->v[b]))
+			b = l;
+		if (r < q->n && ready_before(g, q->v[r], q->v[b]))
+			b = r;
+		if (b == i)
+			break;
+		t = q->v[i];
+		q->v[i] = q->v[b];
+		q->v[b] = t;
+		i = b;
+	}
+	return top;
+}
+
 static uint32_t *schedule(struct graph *g)
 {
 	uint32_t *order = xmalloc(g->n * sizeof(*order));
 	uint32_t *left = xmalloc(g->n * sizeof(*left));
+	struct ready q = { .v = xmalloc(g->n * sizeof(*q.v)), .n = 0 };
 	uint32_t done = 0, i;
 
 	memcpy(left, g->indeg, g->n * sizeof(*left));
+	for (i = 0; i < g->n; i++)
+		if (!left[i])
+			ready_push(&q, g, i);
 
-	while (done < g->n) {
-		uint32_t best = UINT32_MAX;
-
-		for (i = 0; i < g->n; i++) {
-			int ri, rb;
-
-			if (left[i] != 0)
-				continue;
-			if (best == UINT32_MAX) {
-				best = i;
-				continue;
-			}
-			ri = !g->indeg[i];
-			rb = !g->indeg[best];
-			if (ri != rb) {
-				if (ri)
-					best = i;
-			} else if (g->height[i] > g->height[best]) {
-				best = i;
-			}
-		}
-		if (best == UINT32_MAX)
-			die("internal: no ready node but %u remain", g->n - done);
+	while (q.n) {
+		uint32_t best = ready_pop(&q, g);
 
 		order[done++] = best;
-		left[best] = UINT32_MAX;
 		for (i = g->off[best]; i < g->off[best + 1]; i++)
-			left[g->idx[i]]--;
+			if (!--left[g->idx[i]])
+				ready_push(&q, g, g->idx[i]);
 	}
+	if (done != g->n)
+		die("internal: no ready node but %u remain", g->n - done);
 
 	free(left);
+	free(q.v);
 	return order;
+}
+
+static void check_syntax(struct src *srcs, uint32_t n, const char *dir)
+{
+	static char argv0[] = NG_SHELL_ARGV0, dashn[] = "-n";
+	static char path[] = NG_PATH;
+	static char *const envp[] = { path, NULL };
+	long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+	uint32_t slots = ncpu > 1 ? (uint32_t)ncpu : 1;
+	uint32_t i, live = 0, bad = 0;
+	pid_t *pids;
+	int devnull;
+
+	if (access(NG_SHELL, X_OK) != 0) {
+		fprintf(stderr, "ninitctl: warning: %s is not executable here, "
+			"skipping the script syntax check\n", NG_SHELL);
+		return;
+	}
+	if (slots > 32)
+		slots = 32;
+	pids = xmalloc(slots * sizeof(*pids));
+	devnull = open("/dev/null", O_WRONLY | O_CLOEXEC);
+
+	for (i = 0; i <= n; i++) {
+		char file[4096];
+		pid_t pid;
+
+		while (live == slots || (i == n && live)) {
+			int st;
+			pid_t got = wait(&st);
+			uint32_t k;
+
+			if (got < 0) {
+				if (errno == EINTR)
+					continue;
+				break;
+			}
+			for (k = 0; k < live; k++)
+				if (pids[k] == got) {
+					pids[k] = pids[--live];
+					break;
+				}
+			if (!WIFEXITED(st) || WEXITSTATUS(st))
+				bad++;
+		}
+		if (i == n)
+			break;
+		if (!srcs[i].script)
+			continue;
+
+		if (snprintf(file, sizeof(file), "%s/%s", dir, srcs[i].name) >= (int)sizeof(file))
+			continue;
+		pid = fork();
+		if (pid < 0)
+			die("fork: %s", strerror(errno));
+		if (pid == 0) {
+			char *const a[] = { argv0, dashn, file, NULL };
+
+			if (devnull >= 0)
+				dup2(devnull, 1);
+			execve(NG_SHELL, a, envp);
+			_exit(127);
+		}
+		pids[live++] = pid;
+	}
+
+	if (devnull >= 0)
+		close(devnull);
+	free(pids);
+	if (bad)
+		die("%u service script%s did not parse as %s; fix %s and run init again",
+		    bad, bad == 1 ? "" : "s", NG_SHELL, bad == 1 ? "it" : "them");
 }
 
 struct blob {
@@ -489,14 +684,33 @@ static uint32_t blob_add(struct blob *b, const char *s)
 	return at;
 }
 
-static void write_atomic(const char *path, const void *buf, size_t len)
+static int lock_dir(const char *path)
+{
+	int fd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+
+	if (fd < 0)
+		die("open %s: %s", path, strerror(errno));
+	if (flock(fd, LOCK_EX) < 0)
+		die("lock %s: %s", path, strerror(errno));
+	return fd;
+}
+
+static int same_fd_dir(int fd, const char *path)
+{
+	struct stat a, b;
+
+	return fstat(fd, &a) == 0 && stat(path, &b) == 0 &&
+	       a.st_dev == b.st_dev && a.st_ino == b.st_ino;
+}
+
+static void write_atomic(const char *path, const void *buf, size_t len, mode_t mode, int held)
 {
 	char tmp[8224], old[4104], parent[4104], *slash;
 	const char *dir, *base;
 	const char *p = buf;
 	size_t left = len;
 	mode_t um;
-	int fd, dfd;
+	int fd, dfd, owned = 0;
 
 	if (snprintf(parent, sizeof(parent), "%s", path) >= (int)sizeof(parent))
 		die("output path is too long: %s", path);
@@ -515,11 +729,13 @@ static void write_atomic(const char *path, const void *buf, size_t len)
 	    snprintf(old, sizeof(old), "%s.old", path) >= (int)sizeof(old))
 		die("output path is too long: %s", path);
 
-	dfd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-	if (dfd < 0)
-		die("open %s: %s", dir, strerror(errno));
-	if (flock(dfd, LOCK_EX) < 0)
-		die("lock %s: %s", dir, strerror(errno));
+	// re-locking a directory this process already holds would deadlock
+	if (held >= 0 && same_fd_dir(held, dir)) {
+		dfd = held;
+	} else {
+		dfd = lock_dir(dir);
+		owned = 1;
+	}
 
 	um = umask(0);
 	umask(um);
@@ -527,7 +743,7 @@ static void write_atomic(const char *path, const void *buf, size_t len)
 	fd = mkostemp(tmp, O_CLOEXEC);
 	if (fd < 0)
 		die("mkstemp %s: %s", tmp, strerror(errno));
-	if (fchmod(fd, 0644 & ~um) < 0) {
+	if (fchmod(fd, mode & ~um) < 0) {
 		unlink(tmp);
 		die("fchmod %s: %s", tmp, strerror(errno));
 	}
@@ -564,7 +780,8 @@ static void write_atomic(const char *path, const void *buf, size_t len)
 	if (fsync(dfd) < 0)
 		die("%s: published, but syncing %s failed: %s; it may not survive a crash",
 		    path, dir, strerror(errno));
-	close(dfd);
+	if (owned)
+		close(dfd);
 }
 
 int cmd_init(int argc, char **argv)
@@ -576,11 +793,12 @@ int cmd_init(int argc, char **argv)
 	struct edge *edges = NULL;
 	struct graph g = { 0 };
 	uint32_t n, m = 0, cap = 0, i, j, nroots = 0;
-	uint32_t *order, *inv;
+	uint32_t *order, *inv, *byname;
 	uint64_t hash = 0xcbf29ce484222325ull;
 	const char *why, *out_base;
 	size_t out_base_len;
-	int ne, k, custom_dir = 0;
+	mode_t out_mode = 0644;
+	int ne, k, custom_dir = 0, dry = 0, nocheck = 0, srclock;
 
 	// argv is already past argv[0] and the subcommand
 	for (k = 0; k < argc; k++) {
@@ -593,6 +811,10 @@ int cmd_init(int argc, char **argv)
 			if (++k == argc)
 				die("init: %s needs a file", argv[k - 1]);
 			out = argv[k];
+		} else if (!strcmp(argv[k], "-n") || !strcmp(argv[k], "--dry-run")) {
+			dry = 1;
+		} else if (!strcmp(argv[k], "--no-check")) {
+			nocheck = 1;
 		} else {
 			die("init: unexpected argument '%s'", argv[k]);
 		}
@@ -631,9 +853,13 @@ int cmd_init(int argc, char **argv)
 		out_base_len = out_base ? strlen(out_base) : 0;
 	}
 
+	srclock = lock_dir(dir);
+
 	ne = scandir(dir, &ents, keep, cmp_dirent);
 	if (ne < 0)
 		die("scandir %s: %s", dir, strerror(errno));
+	if ((uint32_t)ne > NG_MAX_SVC + 4)
+		die("%d entries in %s; the tested maximum is %u services", ne, dir, NG_MAX_SVC);
 
 	srcs = xmalloc((size_t)ne * sizeof(*srcs));
 	n = 0;
@@ -642,23 +868,56 @@ int cmd_init(int argc, char **argv)
 		struct stat st;
 		char *buf;
 		size_t len;
+		mode_t sm;
 
-		if (is_artifact(ents[k]->d_name, "depgraph", 8) ||
-		    is_artifact(ents[k]->d_name, out_base, out_base_len))
-			continue;
+		int is_out = is_artifact(ents[k]->d_name, out_base, out_base_len);
+		int is_dg = is_artifact(ents[k]->d_name, "depgraph", 8);
 
 		if (snprintf(path, sizeof(path), "%s/%s", dir, ents[k]->d_name) >= (int)sizeof(path))
 			die("%s/%s: path is too long", dir, ents[k]->d_name);
 		if (stat(path, &st) < 0)
 			die("stat %s: %s", path, strerror(errno));
+
+		if (is_out || is_dg) {
+			if (!S_ISREG(st.st_mode) || !graph_magic(path)) {
+				if (is_out)
+					die("%s/%s: the output would replace this, and it is not "
+					    "a depgraph; pick another -o name",
+					    dir, ents[k]->d_name);
+				fprintf(stderr, "ninitctl: warning: %s/%s is not a depgraph and "
+					"was not built; rename it if it is a service\n",
+					dir, ents[k]->d_name);
+			}
+			continue;
+		}
 		if (!S_ISREG(st.st_mode))
 			continue;
 
-		why = name_problem(ents[k]->d_name);
+		why = ng_name_problem(ents[k]->d_name);
 		if (why)
 			die("%s/%s: filename %s", dir, ents[k]->d_name, why);
 
+		sm = st.st_mode;
+		if (!(sm & S_IRGRP))
+			out_mode &= (mode_t)~(S_IRGRP | S_IWGRP);
+		if (!(sm & S_IROTH))
+			out_mode &= (mode_t)~(S_IROTH | S_IWOTH);
+
+		if ((uint64_t)st.st_size > NG_MAX_SRC && graph_magic(path)) {
+			fprintf(stderr, "ninitctl: warning: %s is a compiled depgraph, "
+				"not a service; skipping it\n", path);
+			continue;
+		}
+
 		buf = slurp(path, &len);
+
+		// a graph left in the services directory under any other name
+		if (len >= 4 && !memcmp(buf, &(uint32_t){ NG_MAGIC }, 4)) {
+			fprintf(stderr, "ninitctl: warning: %s is a compiled depgraph, "
+				"not a service; skipping it\n", path);
+			free(buf);
+			continue;
+		}
 
 		for (const char *p = ents[k]->d_name; *p; p++)
 			hash = (hash ^ (unsigned char)*p) * 0x100000001b3ull;
@@ -674,12 +933,20 @@ int cmd_init(int argc, char **argv)
 	if (n > NG_MAX_SVC)
 		die("%u services in %s; the tested maximum is %u", n, dir, NG_MAX_SVC);
 
+	if (!nocheck)
+		check_syntax(srcs, n, dir);
+
+	byname = xmalloc(n * sizeof(*byname));
+	for (i = 0; i < n; i++)
+		byname[i] = i;
+	qsort_r(byname, n, sizeof(*byname), cmp_name_idx, srcs);
+
 	for (i = 0; i < n; i++) {
 		for (j = 0; j < srcs[i].depon.n + srcs[i].depof.n; j++) {
 			int rev = j >= srcs[i].depon.n;
 			const char *name = rev ? srcs[i].depof.v[j - srcs[i].depon.n]
 					       : srcs[i].depon.v[j];
-			uint32_t o = lookup(srcs, n, name);
+			uint32_t o = lookup(srcs, byname, n, name);
 
 			if (o == UINT32_MAX)
 				die("%s/%s: %s:%s names no service in %s",
@@ -750,9 +1017,10 @@ int cmd_init(int argc, char **argv)
 		struct blob blob = { 0 };
 		uint32_t *roff = xmalloc((n + 1) * sizeof(*roff));
 		uint32_t *ridx = xmalloc((m ? m : 1) * sizeof(*ridx));
-		uint32_t nw;
+		uint32_t nw, vague = 0;
 		uint64_t *desc;
 		struct ng_svc *sv = xmalloc(n * sizeof(*sv));
+		struct ng_pol *pl = xmalloc(n * sizeof(*pl));
 		struct ng_hdr *h;
 		char *buf;
 		size_t off, total;
@@ -785,6 +1053,7 @@ int cmd_init(int argc, char **argv)
 			uint32_t nd = 0, w;
 			uint8_t pol;
 
+
 			for (w = 0; w < nw; w++)
 				nd += (uint32_t)__builtin_popcountll(desc[(size_t)i * nw + w]);
 
@@ -794,12 +1063,13 @@ int cmd_init(int argc, char **argv)
 					    g_dir, s->name, nd, nd == 1 ? "" : "s",
 					    nd == 1 ? "s" : "");
 				pol = s->onfail;
-			} else if (!nd)
-				pol = NG_ONFAIL_WARN;
-			else if (nd >= 2 && nd * 2 >= n)
-				pol = NG_ONFAIL_SHELL;
-			else
-				pol = NG_ONFAIL_STOP;
+			} else {
+				// only this service decides; adding unrelated ones must not move it
+				pol = nd ? NG_ONFAIL_STOP : NG_ONFAIL_WARN;
+			}
+
+			if (s->type == NG_TYPE_DAEMON && !s->notify && roff[i] != roff[i + 1])
+				vague++;
 
 			sv[i].unmet = (uint16_t)g.indeg[order[i]];
 			sv[i].type = s->type;
@@ -809,6 +1079,12 @@ int cmd_init(int argc, char **argv)
 			sv[i].name_off = blob_add(&blob, s->name);
 			sv[i].script_off = s->script ? blob_add(&blob, s->script)
 						     : NG_NO_SCRIPT;
+
+			pl[i].start_ms = s->start_ms;
+			pl[i].stop_ms = s->stop_ms;
+			pl[i].retry_ms = s->retry_ms;
+			pl[i].start_tries = s->start_tries;
+			pl[i].pflags = s->pflags;
 		}
 
 		off = sizeof(struct ng_hdr);
@@ -816,6 +1092,7 @@ int cmd_init(int argc, char **argv)
 		total += (size_t)n * sizeof(struct ng_svc);
 		total += ((size_t)n + 1) * 4;
 		total += (size_t)m * 4;
+		total += (size_t)n * sizeof(struct ng_pol);
 		total += blob.n;
 
 		buf = xmalloc(total);
@@ -841,6 +1118,10 @@ int cmd_init(int argc, char **argv)
 		memcpy(buf + off, ridx, (size_t)m * 4);
 		off += (size_t)m * 4;
 
+		h->off_pol = (uint32_t)off;
+		memcpy(buf + off, pl, (size_t)n * sizeof(*pl));
+		off += (size_t)n * sizeof(*pl);
+
 		h->off_blob = (uint32_t)off;
 		memcpy(buf + off, blob.p, blob.n);
 
@@ -850,21 +1131,46 @@ int cmd_init(int argc, char **argv)
 		if (why)
 			die("internal: built a graph that fails verify: %s", why);
 
-		write_atomic(out, buf, total);
-		printf("%s: %u services, %u edges, %u roots, %zu bytes\n",
-		       out, n, m, nroots, total);
+		if (dry) {
+			printf("%s: would write %u services, %u edges, %u roots, %zu bytes, "
+			       "mode %04o\n", out, n, m, nroots, total, (unsigned)out_mode);
+		} else {
+			write_atomic(out, buf, total, out_mode, srclock);
+			printf("%s: %u services, %u edges, %u roots, %zu bytes\n",
+			       out, n, m, nroots, total);
+		}
+
+		if (vague) {
+			fflush(stdout);
+			fprintf(stderr,
+				"ninitctl: warning: %u daemon%s with dependents %s no notify:, so those\n"
+				"ninitctl: dependents start once the shell execs, not once the daemon is ready\n",
+				vague, vague == 1 ? "" : "s", vague == 1 ? "has" : "have");
+			for (i = 0; i < n; i++) {
+				const struct src *s = &srcs[order[i]];
+
+				if (s->type == NG_TYPE_DAEMON && !s->notify &&
+				    roff[i] != roff[i + 1])
+					fprintf(stderr, "ninitctl:   %s\n", s->name);
+			}
+		}
 	}
 
 	{
-		char lang[96];
+		char loc[NG_LOCALE_MAX][NG_LOCALE_LEN];
+		const char *bad;
+		int nl = ng_locale_env(loc, NG_LOCALE_MAX, &bad);
 
 		fflush(stdout);
-		if (!ng_locale_lang(lang, sizeof(lang)))
+		if (bad)
+			fprintf(stderr, "ninitctl: warning: %s %s\n", NG_LOCALE_CONF, bad);
+		if (nl <= 0)
 			fprintf(stderr,
 				"ninitctl: %s %s, so services will run with LANG=%s\n"
 				"ninitctl: create it, e.g. printf 'LANG=en_US.UTF-8\\n' > %s\n",
 				NG_LOCALE_CONF,
-				access(NG_LOCALE_CONF, R_OK) ? "is missing" : "sets no LANG",
+				access(NG_LOCALE_CONF, R_OK) ? "is missing"
+							     : "sets no locale variable",
 				NG_FALLBACK_LANG, NG_LOCALE_CONF);
 	}
 

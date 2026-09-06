@@ -71,7 +71,7 @@ void fail_describe(int status, char *buf, size_t cap)
 }
 
 enum fail_act fail_service(const void *map, uint32_t i, int status, unsigned attempt,
-			   const char *tail, size_t tail_len)
+			   unsigned tries, const char *tail, size_t tail_len)
 {
 	const struct ng_svc *s = &ng_svcs(map)[i];
 	const char *name = ng_name(map, i);
@@ -79,14 +79,19 @@ enum fail_act fail_service(const void *map, uint32_t i, int status, unsigned att
 
 	describe(status, how, sizeof(how));
 
-	if (attempt < 2) {
-		log_warn("%s: failed (%s), retrying", name, how);
+	if (attempt < tries) {
+		log_warn("%s: failed (%s), retrying (%u of %u)", name, how, attempt, tries);
 		return FAIL_RETRY;
 	}
 
-	log_err("%s: failed twice (%s)", name, how);
+	log_err("%s: failed %u time%s (%s)", name, attempt, plural_s(attempt), how);
 	if (tail_len)
 		log_raw(LOG_FAIL, tail, tail_len);
+
+	// restart: covers supervision after readines
+	if (ng_restart(map, i))
+		log_warn("%s: restart: only supervises it once it has reported ready; "
+			 "startup attempts come from start-tries (%u)", name, tries);
 
 	switch (ng_onfail(map, i)) {
 	case NG_ONFAIL_WARN:
@@ -103,15 +108,13 @@ enum fail_act fail_service(const void *map, uint32_t i, int status, unsigned att
 	}
 }
 
-uint32_t fail_poison(const void *map, uint32_t i, uint8_t *state)
+static uint32_t poison_spread(const void *map, uint8_t *state, uint32_t from)
 {
 	const uint32_t *roff = ng_rdep_off(map), *ridx = ng_rdep_idx(map);
 	uint32_t n = ((const struct ng_hdr *)map)->n_svc;
 	uint32_t j, k, count = 0;
 
-	state[i] = NG_ST_FAILED;
-
-	for (j = i; j < n; j++) {
+	for (j = from; j < n; j++) {
 		if (state[j] != NG_ST_FAILED && state[j] != NG_ST_SKIPPED)
 			continue;
 		for (k = roff[j]; k < roff[j + 1]; k++) {
@@ -124,6 +127,32 @@ uint32_t fail_poison(const void *map, uint32_t i, uint8_t *state)
 	}
 
 	return count;
+}
+
+uint32_t fail_poison(const void *map, uint32_t i, uint8_t *state)
+{
+	state[i] = NG_ST_FAILED;
+
+	return poison_spread(map, state, i);
+}
+
+uint32_t fail_poison_deps(const void *map, uint32_t i, uint8_t *state)
+{
+	const uint32_t *roff = ng_rdep_off(map), *ridx = ng_rdep_idx(map);
+	uint32_t k, count = 0;
+
+	for (k = roff[i]; k < roff[i + 1]; k++) {
+		uint32_t d = ridx[k];
+
+		if (state[d] == NG_ST_PENDING) {
+			state[d] = NG_ST_SKIPPED;
+			count++;
+		}
+	}
+	if (!count)
+		return 0;
+
+	return count + poison_spread(map, state, i + 1);
 }
 
 #define EMERG_FAST_MS	 1000
@@ -183,6 +212,8 @@ enum emerg_state {
 };
 
 static pid_t emerg_pid = -1;
+static int emerg_bar = -1;
+static long long emerg_conf_at;
 static struct timespec emerg_at;
 static unsigned emerg_fast;
 static unsigned emerg_fail;
@@ -272,8 +303,33 @@ static int emerg_console_reset(int con)
 	return vt;
 }
 
-static pid_t emerg_spawn(int con, int vt, int barrier)
+#ifdef NINIT_AUTHSHELL
+static int root_hash_usable(void)
 {
+	FILE *f = fopen("/etc/shadow", "re");
+	char line[512];
+	int ok = 0;
+
+	if (!f)
+		return 0;
+	while (fgets(line, sizeof(line), f)) {
+		const char *p;
+
+		if (strncmp(line, "root:", 5))
+			continue;
+		p = line + 5;
+		ok = *p && *p != ':' && *p != '!' && *p != '*';
+		break;
+	}
+	fclose(f);
+	return ok;
+}
+#endif
+
+static pid_t emerg_spawn(int con, int vt, int barrier, int auth)
+{
+	static char sul0[] = "sulogin";
+	static char *const sulv[] = { sul0, NULL };
 	static char arg0[] = "-sh", path[] = NG_PATH, home[] = "HOME=/";
 	static char term_vt[] = "TERM=linux", term_serial[] = "TERM=vt220";
 	static char *const argv[] = { arg0, NULL };
@@ -310,6 +366,11 @@ static pid_t emerg_spawn(int con, int vt, int barrier)
 	(void)!chdir("/");
 	umask(022);
 
+	if (auth) {
+		execve("/sbin/sulogin", sulv, envp);
+		execve("/usr/sbin/sulogin", sulv, envp);
+	}
+
 #ifdef NINIT_BUSYBOX
 	execve(NINIT_BUSYBOX, argv, envp);
 	errs[0] = errno;
@@ -320,48 +381,96 @@ static pid_t emerg_spawn(int con, int vt, int barrier)
 	_exit(EMERG_NOEXEC);
 }
 
-static enum emerg_state emerg_confirm(int fd, int *err)
+static void emerg_greet(void)
 {
-	struct pollfd pfd = { .fd = fd, .events = POLLIN };
-	int errs[2] = { 0, 0 }, n;
+	if (emerg_greeted)
+		return;
+	emerg_greeted = 1;
+	ninit_log(LOG_DONE, "shell: running on the console, use reboot or poweroff to exit");
+	// rebuilding the graph does not reload it: pid 1 read it once, at boot
+	log_note("shell: 'ninitctl resume' retries failed services with the graph already loaded");
+	log_note("shell: 'ninitctl init' only affects the next boot, so reboot after rebuilding");
+	log_note("shell: you're on your own now, good luck");
+}
 
-	do
-		n = poll(&pfd, 1, EMERG_EXEC_MS);
-	while (n < 0 && errno == EINTR);
-	if (n < 0) {
-		log_warn("shell: poll: %s, cannot tell whether it started", strerror(errno));
-		return EMERG_EXEC_UNKNOWN;
+static void emerg_settle(enum emerg_state st, int err)
+{
+	emerg_conf = st;
+
+	if (st == EMERG_EXEC_FAILED) {
+		log_err("shell: no working shell on this machine: %s", strerror(err));
+		if (++emerg_noexec >= EMERG_NOEXEC_MAX) {
+			emerg_gone = 1;
+			log_err("shell: none can be started here, reboot with sysrq or power-cycle");
+		}
+		return;
 	}
+
+	emerg_fail = 0;
+	if (st != EMERG_EXEC_OK)
+		return;
+	emerg_noexec = 0;
+	emerg_greet();
+}
+
+static void emerg_bar_close(void)
+{
+	if (emerg_bar >= 0)
+		close(emerg_bar);
+	emerg_bar = -1;
+	emerg_conf_at = 0;
+}
+
+int fail_emergency_fd(void)
+{
+	return emerg_bar;
+}
+
+void fail_emergency_report(void)
+{
+	int errs[2] = { 0, 0 };
+	ssize_t n;
+
+	if (emerg_bar < 0)
+		return;
+	do
+		n = read(emerg_bar, errs, sizeof(errs));
+	while (n < 0 && errno == EINTR);
+	if (n < 0)
+		return;
+
+	emerg_bar_close();
+
 	if (n == 0) {
-		log_warn("shell: nothing from it after %d s, cannot tell whether it started",
-			 EMERG_EXEC_MS / 1000);
-		return EMERG_EXEC_UNKNOWN;
+		emerg_settle(EMERG_EXEC_OK, 0);
+		return;
 	}
-
-	do
-		n = (int)read(fd, errs, sizeof(errs));
-	while (n < 0 && errno == EINTR);
-	if (n == 0)
-		return EMERG_EXEC_OK;
-	if (n != (int)sizeof(errs)) {
+	if (n != (ssize_t)sizeof(errs)) {
 		log_warn("shell: short exec report, cannot tell whether it started");
-		return EMERG_EXEC_UNKNOWN;
+		emerg_settle(EMERG_EXEC_UNKNOWN, 0);
+		return;
 	}
 
 #ifdef NINIT_BUSYBOX
 	log_warn("shell: exec %s: %s", NINIT_BUSYBOX, strerror(errs[0]));
 #endif
 	log_err("shell: exec /bin/sh: %s", strerror(errs[1]));
-	*err = errs[1];
-	return EMERG_EXEC_FAILED;
+	emerg_settle(EMERG_EXEC_FAILED, errs[1]);
 }
 
 static int emerg_start(void)
 {
-	int bar[2], con, err, vt;
+	int bar[2], con, err, vt, auth = 0;
 	pid_t pid;
 
 	emerg_pid = -1;
+
+#ifdef NINIT_AUTHSHELL
+	auth = root_hash_usable();
+	if (!emerg_greeted)
+		log_warn(auth ? "shell: recovery asks for the root password"
+			      : "shell: root has no usable password, recovery is unauthenticated");
+#endif
 
 	con = emerg_console();
 	if (con < 0) {
@@ -375,7 +484,7 @@ static int emerg_start(void)
 	}
 
 	vt = emerg_console_reset(con);
-	pid = emerg_spawn(con, vt, bar[1]);
+	pid = emerg_spawn(con, vt, bar[1], auth);
 	err = errno;
 	close(con);
 	close(bar[1]);
@@ -388,12 +497,10 @@ static int emerg_start(void)
 	clock_gettime(CLOCK_MONOTONIC, &emerg_at);
 
 	emerg_pid = pid;
-
-	err = 0;
-	emerg_conf = emerg_confirm(bar[0], &err);
-	close(bar[0]);
-	if (emerg_conf == EMERG_EXEC_FAILED)
-		log_err("shell: no working shell on this machine: %s", strerror(err));
+	emerg_conf = EMERG_EXEC_UNKNOWN;
+	fcntl(bar[0], F_SETFL, O_NONBLOCK);
+	emerg_bar = bar[0];
+	emerg_conf_at = emerg_now_ms() + EMERG_EXEC_MS;
 
 	return 0;
 }
@@ -409,25 +516,8 @@ static long long emerg_uptime_ms(void)
 
 static void emerg_restart(void)
 {
-	if (emerg_start() == 0) {
-		if (emerg_conf == EMERG_EXEC_FAILED) {
-			if (++emerg_noexec >= EMERG_NOEXEC_MAX) {
-				emerg_gone = 1;
-				log_err("shell: none can be started here, reboot with sysrq or power-cycle");
-			}
-			return;
-		}
-		emerg_fail = 0;
-		if (emerg_conf != EMERG_EXEC_OK)
-			return;
-		emerg_noexec = 0;
-		if (!emerg_greeted) {
-			emerg_greeted = 1;
-			ninit_log(LOG_DONE, "shell: running on the console, use reboot or poweroff to exit");
-			log_note("shell: you're on your own now, good luck");
-		}
+	if (emerg_start() == 0)
 		return;
-	}
 	if (++emerg_fail >= EMERG_FAIL_MAX) {
 		emerg_gone = 1;
 		log_err("shell: gave up after %u attempts, the console is unattended", emerg_fail);
@@ -439,16 +529,32 @@ static void emerg_restart(void)
 
 long long fail_emergency_due(void)
 {
-	long long d;
+	long long now = emerg_now_ms(), best = -1, d;
 
-	if (!emerg_retry_at || emerg_gone)
-		return -1;
-	d = emerg_retry_at - emerg_now_ms();
-	return d < 0 ? 0 : d;
+	if (emerg_conf_at) {
+		best = emerg_conf_at - now;
+		if (best < 0)
+			best = 0;
+	}
+	if (emerg_retry_at && !emerg_gone) {
+		d = emerg_retry_at - now;
+		if (d < 0)
+			d = 0;
+		if (best < 0 || d < best)
+			best = d;
+	}
+	return best;
 }
 
 void fail_emergency_tick(void)
 {
+	if (emerg_conf_at && emerg_now_ms() >= emerg_conf_at) {
+		emerg_conf_at = 0;
+		log_warn("shell: nothing from it after %d s, cannot tell whether it started",
+			 EMERG_EXEC_MS / 1000);
+		emerg_settle(EMERG_EXEC_UNKNOWN, 0);
+	}
+
 	if (!emerg_retry_at || emerg_gone)
 		return;
 	if (emerg_now_ms() < emerg_retry_at)
@@ -482,6 +588,7 @@ int fail_emergency_reaped(pid_t pid, int status)
 		return 0;
 
 	emerg_pid = -1;
+	emerg_bar_close();
 	ms = emerg_uptime_ms();
 	describe(status, how, sizeof(how));
 

@@ -5,7 +5,7 @@
 #include <assert.h>
 
 #define NG_MAGIC	0x4744494eu // 'NIDG'
-#define NG_VERSION	6u
+#define NG_VERSION	7u
 
 #define NG_TYPE_ONESHOT	0
 #define NG_TYPE_DAEMON	1
@@ -20,14 +20,22 @@
 #define NG_FLAG_RESTART	0x04
 #define NG_FLAG_MASK	(NG_ONFAIL_MASK | NG_FLAG_RESTART)
 
-// a target is a sync point with no script
+#define NG_PF_ORDER_ONLY 0x01
+#define NG_PF_MASK	0x01
+
 #define NG_NO_SCRIPT	UINT32_MAX
 
 #define NG_NOTIFY_NONE	0
 #define NG_NOTIFY_MIN	3
 #define NG_NOTIFY_MAX	255
 
+#ifndef NG_SHELL
 #define NG_SHELL	"/bin/bash"
+#define NG_SHELL_ARGV0	"bash"
+#endif
+#ifndef NG_SHELL_ARGV0
+#define NG_SHELL_ARGV0	NG_SHELL
+#endif
 
 // kernel doesnt give path, bash does this for us but maybe better to hardcode
 #define NG_PATH	"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -36,9 +44,26 @@ static_assert(__builtin_strncmp(NG_PATH, "PATH=", 5) == 0, "NG_PATH must be a pu
 
 #define NG_MAX_SCRIPT	131071u
 
+#define NG_MAX_SRC	(NG_MAX_SCRIPT + 4096u)
+
 #define NG_MAX_SVC	8192u
 
+#define NG_MAX_NAME	255u
+
+#define NG_DEF_START_MS	90000u
+#define NG_DEF_STOP_MS	5000u
+
+#define NG_DEF_TRIES_ONESHOT	1u
+#define NG_DEF_TRIES_DAEMON	2u
+
+#define NG_MAX_MS	86400000u
+#define NG_MAX_TRIES	250u
+
 static_assert(NG_MAX_SVC <= UINT16_MAX, "service counts must fit the 16-bit fields");
+
+// ninits control socket
+#define NINIT_CTL_DIR	"/run/ninit"
+#define NINIT_CTL_SOCK	NINIT_CTL_DIR "/control"
 
 #define NG_DEFAULT_DIR	"/etc/ninit.d"
 #define NG_DEFAULT_FILE	"/etc/ninit.d/depgraph"
@@ -46,6 +71,10 @@ static_assert(NG_MAX_SVC <= UINT16_MAX, "service counts must fit the 16-bit fiel
 // services get no login shell, so pid 1 has to carry the system locale
 #define NG_LOCALE_CONF	"/etc/locale.conf"
 #define NG_FALLBACK_LANG "C.UTF-8"
+
+#define NG_LOCALE_MAX	14
+#define NG_LOCALE_LEN	128
+#define NG_LOCALE_FILE	8192u
 
 struct ng_hdr {
 	uint32_t magic;
@@ -60,8 +89,17 @@ struct ng_hdr {
 	uint32_t off_rdep_off;
 	uint32_t off_rdep_idx;
 	uint32_t off_blob;
-	uint32_t reserved[2];
+	uint32_t off_pol;
+	uint32_t reserved;
 	uint64_t srcs_hash;
+};
+
+struct ng_pol {
+	uint32_t start_ms;
+	uint32_t stop_ms;
+	uint16_t retry_ms;
+	uint8_t start_tries;
+	uint8_t pflags;
 };
 
 struct ng_svc {
@@ -76,6 +114,8 @@ struct ng_svc {
 
 static_assert(sizeof(struct ng_hdr) == 64, "header must be one cache line");
 static_assert(sizeof(struct ng_svc) == 16, "four services per cache line");
+static_assert(sizeof(struct ng_pol) == 12, "policy records must stay compact");
+static_assert(sizeof(struct ng_pol) % 4 == 0, "policy table must not misalign the blob");
 static_assert(sizeof(struct ng_hdr) % 8 == 0, "header must not misalign what follows");
 static_assert(sizeof(struct ng_svc) % 4 == 0, "service table must not misalign the rdep arrays");
 
@@ -97,6 +137,42 @@ static inline const uint32_t *ng_rdep_idx(const void *m)
 static inline const char *ng_blob(const void *m)
 {
 	return (const char *)m + ((const struct ng_hdr *)m)->off_blob;
+}
+
+static inline const struct ng_pol *ng_pol(const void *m, uint32_t i)
+{
+	const void *p = (const char *)m + ((const struct ng_hdr *)m)->off_pol;
+
+	return (const struct ng_pol *)p + i;
+}
+
+static inline uint32_t ng_start_ms(const void *m, uint32_t i)
+{
+	uint32_t v = ng_pol(m, i)->start_ms;
+
+	return v ? v : NG_DEF_START_MS;
+}
+
+static inline uint32_t ng_stop_ms(const void *m, uint32_t i)
+{
+	uint32_t v = ng_pol(m, i)->stop_ms;
+
+	return v ? v : NG_DEF_STOP_MS;
+}
+
+static inline unsigned ng_start_tries(const void *m, uint32_t i)
+{
+	unsigned v = ng_pol(m, i)->start_tries;
+
+	if (v)
+		return v;
+	return ng_svcs(m)[i].type == NG_TYPE_DAEMON ? NG_DEF_TRIES_DAEMON
+						    : NG_DEF_TRIES_ONESHOT;
+}
+
+static inline int ng_order_only(const void *m, uint32_t i)
+{
+	return ng_pol(m, i)->pflags & NG_PF_ORDER_ONLY;
 }
 
 static inline const char *ng_name(const void *m, uint32_t i)
@@ -131,6 +207,10 @@ uint32_t ng_image_crc32c(const void *map, size_t len);
 const char *ng_verify(const void *map, size_t len);
 
 const char *ng_typename(uint8_t type);
+
+const char *ng_name_problem(const char *name);
+int ng_reserved_name(const char *name);
+
 const char *ng_onfailname(uint8_t policy);
 
-int ng_locale_lang(char *buf, size_t cap);
+int ng_locale_env(char (*out)[NG_LOCALE_LEN], int max, const char **why);

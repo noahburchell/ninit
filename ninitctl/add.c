@@ -2,17 +2,32 @@
 #include "../src/ngraph.h"
 
 #include <errno.h>
+#include <sys/file.h>
 #include <fcntl.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #define SVC_UNUSED	"unused"
 
-static int bad_name(const char *n)
+static void print_rebuild_hint(const char *dir, int custom)
 {
-	return !*n || n[0] == '.' || strchr(n, '/') != NULL;
+	const char *p;
+
+	if (!custom) {
+		printf("rebuild the depgraph with:  ninitctl init\n");
+		return;
+	}
+	fputs("rebuild the depgraph with:  ninitctl init -d '", stdout);
+	for (p = dir; *p; p++) {
+		if (*p == '\'')
+			fputs("'\\''", stdout);
+		else
+			putchar(*p);
+	}
+	fputs("'\n", stdout);
 }
 
 static int join(char *out, size_t cap, const char *dir, const char *name)
@@ -32,20 +47,26 @@ int svc_move(int argc, char **argv, int enable)
 	const char *dir = NG_DEFAULT_DIR;
 	const char *verb = enable ? "add" : "del";
 	char unused[4096], from[4096], to[4096];
-	int k, names = 0, moved = 0, bad = 0;
+	int k, names = 0, moved = 0, bad = 0, dfd, endopts = 0, custom_dir = 0;
 
 	setvbuf(stdout, NULL, _IOLBF, 0);
 
 	for (k = 0; k < argc; k++) {
-		if (!strcmp(argv[k], "-d") || !strcmp(argv[k], "--dir")) {
+		if (endopts) {
+			names++;
+		} else if (!strcmp(argv[k], "--")) {
+			endopts = k + 1;
+		} else if (!strcmp(argv[k], "-d") || !strcmp(argv[k], "--dir")) {
 			if (++k == argc) {
 				fprintf(stderr, "ninitctl: %s: %s needs a directory\n",
 					verb, argv[k - 1]);
 				return 2;
 			}
 			dir = argv[k];
+			custom_dir = 1;
 		} else if (argv[k][0] == '-') {
-			fprintf(stderr, "ninitctl: %s: unknown option '%s'\n", verb, argv[k]);
+			fprintf(stderr, "ninitctl: %s: unknown option '%s' "
+				"(use -- before a name that starts with '-')\n", verb, argv[k]);
 			return 2;
 		} else {
 			names++;
@@ -65,21 +86,59 @@ int svc_move(int argc, char **argv, int enable)
 		return 1;
 	}
 
-	for (k = 0; k < argc; k++) {
-		const char *name = argv[k];
+	dfd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (dfd < 0) {
+		fprintf(stderr, "ninitctl: open %s: %s\n", dir, strerror(errno));
+		return 1;
+	}
+	if (flock(dfd, LOCK_EX) < 0) {
+		fprintf(stderr, "ninitctl: lock %s: %s\n", dir, strerror(errno));
+		close(dfd);
+		return 1;
+	}
 
-		if (!strcmp(name, "-d") || !strcmp(name, "--dir")) {
-			k++;
+	for (k = 0; k < argc; k++) {
+		const char *name = argv[k], *why;
+		struct stat st;
+
+		if (!endopts || k < endopts) {
+			if (!strcmp(name, "--"))
+				continue;
+			if (!strcmp(name, "-d") || !strcmp(name, "--dir")) {
+				k++;
+				continue;
+			}
+		}
+
+		why = ng_name_problem(name);
+		if (why) {
+			fprintf(stderr, "ninitctl: '%s' %s\n", name, why);
+			bad++;
 			continue;
 		}
-		if (bad_name(name)) {
-			fprintf(stderr, "ninitctl: '%s' is not a service name\n", name);
+		if (ng_reserved_name(name)) {
+			fprintf(stderr, "ninitctl: '%s' is a ninitctl artifact, not a service\n",
+				name);
 			bad++;
 			continue;
 		}
 		if (!join(from, sizeof(from), enable ? unused : dir, name) ||
 		    !join(to, sizeof(to), enable ? dir : unused, name)) {
 			fprintf(stderr, "ninitctl: %s: path is too long\n", name);
+			bad++;
+			continue;
+		}
+
+		// symlinks are followed
+		if (stat(from, &st) < 0) {
+			fprintf(stderr, "ninitctl: %s: not in %s\n", name,
+				enable ? unused : dir);
+			bad++;
+			continue;
+		}
+		if (!S_ISREG(st.st_mode)) {
+			fprintf(stderr, "ninitctl: %s: is a %s, not a service\n", name,
+				S_ISDIR(st.st_mode) ? "directory" : "special file");
 			bad++;
 			continue;
 		}
@@ -101,8 +160,10 @@ int svc_move(int argc, char **argv, int enable)
 		moved++;
 	}
 
+	close(dfd);
+
 	if (moved)
-		printf("run 'ninitctl init' to rebuild the depgraph\n");
+		print_rebuild_hint(dir, custom_dir);
 
 	return bad ? 1 : 0;
 }

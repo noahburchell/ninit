@@ -23,9 +23,11 @@ enum fail_act {
 void fail_describe(int status, char *buf, size_t cap);
 
 enum fail_act fail_service(const void *map, uint32_t i, int status, unsigned attempt,
-			   const char *tail, size_t tail_len);
+			   unsigned tries, const char *tail, size_t tail_len);
 
 uint32_t fail_poison(const void *map, uint32_t i, uint8_t *state);
+
+uint32_t fail_poison_deps(const void *map, uint32_t i, uint8_t *state);
 
 void ninit_cloexec_except(int keep);
 
@@ -38,5 +40,9 @@ int fail_emergency_reaped(pid_t pid, int status);
 long long fail_emergency_due(void);
 
 void fail_emergency_tick(void);
+
+int fail_emergency_fd(void);
+
+void fail_emergency_report(void);
 
 void fail_summary(const void *map, const uint8_t *state);
