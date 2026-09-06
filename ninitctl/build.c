@@ -669,7 +669,8 @@ static void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 	static char *const cargv[] = { argv0, dashn, NULL };
 	long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
 	uint32_t slots = ncpu > 1 ? (uint32_t)ncpu : 1;
-	uint32_t i, live = 0, bad = 0;
+	uint32_t i, live = 0, bad = 0, unchecked = 0;
+	int giveup = 0;
 	pid_t *pids;
 	int *errfd;
 	uint32_t *who;
@@ -692,7 +693,7 @@ static void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 		int sfd, efd;
 		pid_t pid;
 
-		while (live == slots || (i == n && live)) {
+		while (live == slots || ((i == n || giveup) && live)) {
 			int st;
 			pid_t got = wait(&st);
 			uint32_t k;
@@ -700,6 +701,13 @@ static void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 			if (got < 0) {
 				if (errno == EINTR)
 					continue;
+				fprintf(stderr, "ninitctl: warning: wait: %s\n",
+					strerror(errno));
+				for (k = 0; k < live; k++)
+					close(errfd[k]);
+				unchecked += live;
+				live = 0;
+				giveup = 1;
 				break;
 			}
 			for (k = 0; k < live; k++)
@@ -740,6 +748,10 @@ static void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 			break;
 		if (!srcs[i].script)
 			continue;
+		if (giveup) {
+			unchecked++;
+			continue;
+		}
 
 		len = strlen(srcs[i].script);
 		sfd = memfd_create(srcs[i].name, 0);
@@ -750,13 +762,19 @@ static void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 			if (efd >= 0)
 				close(efd);
 			fprintf(stderr, "ninitctl: warning: memfd_create: %s, "
-				"skipping the rest of the syntax check\n", strerror(errno));
-			break;
+				"the syntax check cannot continue\n", strerror(errno));
+			giveup = 1;
+			unchecked++;
+			continue;
 		}
 		if ((size_t)write(sfd, srcs[i].script, len) != len ||
 		    lseek(sfd, 0, SEEK_SET) != 0) {
+			fprintf(stderr, "ninitctl: warning: %s/%s: could not stage the "
+				"script for the syntax check: %s\n", dir, srcs[i].name,
+				strerror(errno));
 			close(sfd);
 			close(efd);
+			unchecked++;
 			continue;
 		}
 
@@ -786,6 +804,10 @@ static void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 	if (bad)
 		die("%u service script%s did not parse as %s; fix %s and run init again",
 		    bad, bad == 1 ? "" : "s", NG_SHELL, bad == 1 ? "it" : "them");
+	if (unchecked)
+		die("%u service script%s could not be syntax checked; fix that, "
+		    "or pass --no-check to publish without checking",
+		    unchecked, unchecked == 1 ? "" : "s");
 }
 
 struct blob {
@@ -1008,9 +1030,10 @@ int cmd_init(int argc, char **argv)
 					die("%s/%s: the output would replace this, and it is not "
 					    "a depgraph; pick another -o name",
 					    dir, ents[k]->d_name);
-				fprintf(stderr, "ninitctl: warning: %s/%s has a name ninitctl "
-					"reserves and was not built; rename it if it is a service\n",
-					dir, ents[k]->d_name);
+				if (!S_ISDIR(st.st_mode))
+					fprintf(stderr, "ninitctl: warning: %s/%s has a name ninitctl "
+						"reserves and was not built; rename it if it is a service\n",
+						dir, ents[k]->d_name);
 			}
 			continue;
 		}

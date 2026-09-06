@@ -1,7 +1,0 @@
-#!/bin/bash
-#% depon: basic
-#% type: daemon
-#% restart: always
-#% onfail: warn
-
-exec crond -n

@@ -1,5 +1,5 @@
 #!/bin/bash
-#% onfail: shell
+#%onfail: shell
 
 mkdir -p /sys/fs/cgroup
 

@@ -1,6 +1,5 @@
 #!/bin/bash
-#% depon: udev, modules-load
+#%depon: udev, modules-load
 
 udevadm trigger --type=subsystems --action=add
 udevadm trigger --type=devices --action=add
-udevadm settle

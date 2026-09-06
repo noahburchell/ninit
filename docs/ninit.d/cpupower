@@ -1,5 +1,4 @@
 #!/bin/bash
-#% depon: fs
-#% onfail: warn
+#%onfail: warn
 
-cpupower frequency-set --governor performance
+cpupower frequency-set --governor performance &> /dev/null

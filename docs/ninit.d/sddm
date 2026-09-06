@@ -1,6 +1,6 @@
 #!/bin/bash
-#% depon: basic, elogind
-#% type: daemon
-#% restart: always
+#%depon: basic, elogind
+#%type: daemon
+#%restart: always
 
 exec sddm
