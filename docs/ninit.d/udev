@@ -10,15 +10,16 @@ done
 [ -n "$udevd" ] || { echo "udev: no udevd binary found" >&2; exit 1; }
 
 {
-	for ((n = 0; n < 500; n++)); do
-		[ -S /run/udev/control ] && break
-		sleep 0.02
+	SECONDS=0
+	while ((SECONDS < 15)); do
+		if udevadm control --ping --timeout=1 >/dev/null 2>&1; then
+			echo >&3
+			exit 0
+		fi
+		sleep 0.05
 	done
-	if udevadm control --ping --timeout=10 >/dev/null 2>&1; then
-		echo >&3
-	else
-		echo "udev: daemon did not answer a ping within 10s" >&2
-	fi
+	echo "udev: no ping reply in 15s, reporting it up unverified" >&2
+	echo >&3
 } &
 
 exec 3>&- "$udevd"
