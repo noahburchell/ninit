@@ -43,7 +43,7 @@ own dependencies are. if something behind a target dies, the target goes down
 too and so does everything waiting on it. failure and shutdown ordering both
 cross targets the same way
 
-examples are in docs/ninit.d/
+examples are in docs/ninit.d/ (warning, they are made for my computer, so i run udev after fs mount becasue my fs=y, you may need to check them) 
 
 types:
 - oneshot: complete when it exits 0
