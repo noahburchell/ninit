@@ -4,6 +4,8 @@
 
 faster than sysvinit! these are the docs below, so read through and youll be able to use this init on your system
 
+### i really want to use it: [go here](#i-really-want-it)
+
 ### service files
 
 one file per service in '/etc/ninit.d' named after the service. it is a bash script. directives are '#%key: value' comments and must come before the first command. a directive after code is an error
@@ -97,7 +99,7 @@ warning: the makefile builds with -march=native so if you are going to distribut
 ```
 make
 make USE="quiet busybox"
-sudo make install
+(doas/sudo) make install
 ```
 USE= quiet: only WARN/FAIL on the console, busybox: try /bin/busybox first for
 the emergency shell, authshell: run sulogin for recovery when root has a usable
@@ -198,6 +200,64 @@ ninit does not block while the shell starts, and 'ninitctl' still works from it
 ### contact
 
 if you have any questions contact me: ninit@nburch.org
+
+### i really want it
+
+this will repeat a lot of whats described above, but will make a good step by step.
+
+1. build it
+
+```sh
+# clone the repo;
+git clone --depth 1 https://github.com/noahburchell/ninit.git
+cd ninit
+make
+```
+
+2. create your services
+
+they go in `/etc/ninit.d`
+
+this is a small project, therefore there is very little support and youll have to write your own services.
+you can see an example of how mine are written in `docs/ninit.d/`. one thing i want to note from here is
+that my udev runs after filesystem mount (specifically `/usr/lib/modules` mount),
+this is becasue my filesystem drivers are `=y` and i need to have the modules dir mounted
+before udev runs. this is to warn not to use my config verbatim and to **show the flexibly of ninit** 
+
+(tldr: ninit is flexible because it does **exactly** what you tell it to do
+and you have to be careful)
+
+3. install
+
+```sh
+(doas/sudo) make install
+(doas/sudo) ninitctl init -n
+```
+
+if that reports an error, fix it first.
+
+then compile the graph:
+```sh
+(doas/sudo) ninitctl init
+```
+you need to do this again after changing your service files.
+
+### boot with ninit:
+
+for the first boot, do not remove your existing init.
+tell your bootloader to start ninit as pid 1 by adding:
+
+```
+init=/sbin/ninit # or /usr/sbin/init (/usr/* may be a symlink to /*)
+```
+
+to your cmd line. this is mine:
+```
+title     Gentoo Linux (ninit)
+version   7.1.6-lychee
+linux     /vmlinuz-7.1.6-lychee
+options   root=PARTUUID=168ebf8f-0d2d-4ca0-be3a-8216307cb6ba init=/sbin/ninit rootfstype=btrfs rootflags=subvol=@ rw fbcon=nodefer iommu=pt amdgpu.ppfeaturemask=0xfff7ffff
+```
 
 ### license
 
