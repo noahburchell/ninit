@@ -222,10 +222,7 @@ this is a small project, therefore there is very little support and youll have t
 you can see an example of how mine are written in `docs/ninit.d/`. one thing i want to note from here is
 that my udev runs after filesystem mount (specifically `/usr/lib/modules` mount),
 this is becasue my filesystem drivers are `=y` and i need to have the modules dir mounted
-before udev runs. this is to warn not to use my config verbatim and to **show the flexibly of ninit** 
-
-(tldr: ninit is flexible because it does **exactly** what you tell it to do
-and you have to be careful)
+before udev runs. this is to warn not to use my services verbatim
 
 3. install
 
