@@ -49,7 +49,8 @@
 #define CTL_MAX		8
 #define CTL_BUF		NCTL_REQ_MAX
 #define CTL_OUT		8192
-#define CTL_ACK_MS	30000
+#define CHILD_NOFILE_CUR	1024
+#define CHILD_NOFILE_MAX	524288
 
 #define EXIT_NOEXEC	(127 << 8)
 
@@ -161,7 +162,8 @@ static int is_mountpoint(const char *path)
 
 	if (stat(path, &a) < 0)
 		return 0;
-	snprintf(parent, sizeof(parent), "%s/..", path);
+	if (snprintf(parent, sizeof(parent), "%s/..", path) >= (int)sizeof(parent))
+		return 0;
 	if (stat(parent, &b) < 0)
 		return 0;
 	return a.st_dev != b.st_dev;
@@ -274,7 +276,7 @@ static void cgroup_drop(uint32_t i)
 
 	if (!cg_ok || !cg_path(i, "", dir, sizeof(dir)))
 		return;
-	if (rmdir(dir) == 0 || errno == ENOENT)
+	if (rmdir(dir) == 0 || errno == ENOENT || errno == EBUSY)
 		return;
 	log_warn("%s: rmdir %s: %s", ng_name(map, i), dir, strerror(errno));
 }
@@ -352,6 +354,11 @@ static void setup_signals(void)
 	sigset_t all;
 
 	sigfillset(&all);
+
+	sigdelset(&all, SIGSEGV);
+	sigdelset(&all, SIGBUS);
+	sigdelset(&all, SIGILL);
+	sigdelset(&all, SIGFPE);
 	sigprocmask(SIG_SETMASK, &all, NULL);
 
 	sigemptyset(&sig_want);
@@ -369,23 +376,39 @@ static void setup_signals(void)
 
 static void raise_nofile(void)
 {
-	struct rlimit rl;
 	rlim_t need = 2 * (rlim_t)NG_MAX_SVC + 256;
+	rlim_t ask[3];
+	struct rlimit rl, orig;
+	int k;
 
-	if (getrlimit(RLIMIT_NOFILE, &child_nofile) < 0) {
-		child_nofile.rlim_cur = 1024;
-		child_nofile.rlim_max = 4096;
+	if (getrlimit(RLIMIT_NOFILE, &orig) < 0) {
+		orig.rlim_cur = 1024;
+		orig.rlim_max = 4096;
 	}
-	rl = child_nofile;
-	if (rl.rlim_max != RLIM_INFINITY && rl.rlim_max < need)
-		rl.rlim_max = need;
-	rl.rlim_cur = rl.rlim_max;
-	if (setrlimit(RLIMIT_NOFILE, &rl) == 0)
-		return;
-	rl.rlim_max = child_nofile.rlim_max;
-	rl.rlim_cur = rl.rlim_max;
-	if (setrlimit(RLIMIT_NOFILE, &rl) < 0)
+	ask[0] = CHILD_NOFILE_MAX;
+	ask[1] = need;
+	ask[2] = orig.rlim_max;
+
+	rl = orig;
+	if (rl.rlim_cur < need)
+		rl.rlim_cur = need;
+	// fs.nr_open can refuse the first ask
+	for (k = 0; k < 3; k++) {
+		rl.rlim_max = orig.rlim_max == RLIM_INFINITY || ask[k] < orig.rlim_max ?
+			      orig.rlim_max : ask[k];
+		if (rl.rlim_cur > rl.rlim_max)
+			rl.rlim_cur = rl.rlim_max;
+		if (setrlimit(RLIMIT_NOFILE, &rl) == 0)
+			break;
+	}
+	if (k == 3) {
 		log_warn("setrlimit(RLIMIT_NOFILE): %s", strerror(errno));
+		rl = orig;
+	}
+
+	child_nofile.rlim_max = rl.rlim_max > CHILD_NOFILE_MAX ? CHILD_NOFILE_MAX : rl.rlim_max;
+	child_nofile.rlim_cur = child_nofile.rlim_max < CHILD_NOFILE_CUR ?
+				child_nofile.rlim_max : CHILD_NOFILE_CUR;
 }
 
 static const void *load_graph(const char *path, const char **why)
@@ -820,6 +843,18 @@ static void svc_mark_done(uint32_t i)
 	}
 }
 
+static void svc_mark_pending(uint32_t i)
+{
+	if (state[i] == NG_ST_PENDING)
+		return;
+	if (state[i] == NG_ST_RUNNING)
+		n_active--;
+	else if (state[i] == NG_ST_DONE)
+		n_done--;
+	state[i] = NG_ST_PENDING;
+	n_pending++;
+}
+
 static void svc_set_up(uint32_t i, int v)
 {
 	if (!up[i] == !v)
@@ -1048,16 +1083,12 @@ static void service_failed(uint32_t i, int status)
 			   r->tail, r->tail_len);
 
 	switch (act) {
-	case FAIL_RETRY: {
-		unsigned d = ng_pol(map, i)->retry_ms;
-
-		if (!d && svc_try_start(i))
-			return;
+	case FAIL_RETRY:
 		if (!live_has(i))
 			live_add(i);
-		r->restart_at = now_ms() + (r->stale_pid ? KILL_GRACE_MS : d);
+		r->restart_at = now_ms() + (r->stale_pid ? KILL_GRACE_MS :
+					    ng_pol(map, i)->retry_ms);
 		return;
-	}
 	case FAIL_SHELL:
 		poison(i);
 		snprintf(why, sizeof(why), "boot: cannot continue without %s", ng_name(map, i));
@@ -1163,9 +1194,9 @@ static void drain_output(void)
 
 static void drain_all(void)
 {
-	uint32_t k = n_live;
+	uint32_t k;
 
-	while (k--) {
+	for (k = 0; k < n_live; ) {
 		uint32_t i = live[k];
 
 		if (runs[i].out_fd >= 0)
@@ -1178,6 +1209,9 @@ static void drain_all(void)
 		}
 		if (live_has(i))
 			maybe_free(i);
+		// dropping a service swaps another one into this slot
+		if (k < n_live && live[k] == i)
+			k++;
 	}
 }
 
@@ -1230,6 +1264,39 @@ static void start_failed(uint32_t i, int status)
 	maybe_free(i);
 }
 
+static void fire_restart(uint32_t i, long long now)
+{
+	struct run *r = &runs[i];
+	const char *why;
+
+	if (!r->restart_at || now < r->restart_at)
+		return;
+	r->restart_at = 0;
+	if (want[i])
+		return;
+
+	if (!svc_can_start(i, &why)) {
+		if (r->stale_pid && state[i] == NG_ST_RUNNING) {
+			log_err("%s: the killed instance (pid %d) has not exited, not starting another",
+				ng_name(map, i), (int)r->stale_pid);
+			give_up(i, FAIL_ST_TIMEOUT);
+			return;
+		}
+		if (r->stale_pid || r->pid > 0 || state[i] == NG_ST_RUNNING)
+			r->restart_at = now + KILL_GRACE_MS;
+		return;
+	}
+
+	// launch() sets it too but a failure here still has to date the backoff from now
+	r->started = now;
+	if (launch(i) < 0) {
+		if (state[i] == NG_ST_RUNNING)
+			service_failed(i, EXIT_NOEXEC);
+		else
+			restart_schedule(i, EXIT_NOEXEC);
+	}
+}
+
 static void fire_restarts(void)
 {
 	long long now = now_ms();
@@ -1238,37 +1305,13 @@ static void fire_restarts(void)
 	if (shutting_down)
 		return;
 
-	k = n_live;
-	while (k--) {
+	for (k = 0; k < n_live; ) {
 		uint32_t i = live[k];
-		struct run *r = &runs[i];
-		const char *why;
 
-		if (!r->restart_at || now < r->restart_at)
-			continue;
-		r->restart_at = 0;
-		if (want[i])
-			continue;
-
-		if (!svc_can_start(i, &why)) {
-			if (r->stale_pid && state[i] == NG_ST_RUNNING) {
-				log_err("%s: the killed instance (pid %d) has not exited, not starting another",
-					ng_name(map, i), (int)r->stale_pid);
-				give_up(i, FAIL_ST_TIMEOUT);
-				continue;
-			}
-			if (r->stale_pid || r->pid > 0 || state[i] == NG_ST_RUNNING)
-				r->restart_at = now + KILL_GRACE_MS;
-			continue;
-		}
-
-		r->started = now;
-		if (launch(i) < 0) {
-			if (state[i] == NG_ST_RUNNING)
-				service_failed(i, EXIT_NOEXEC);
-			else
-				restart_schedule(i, EXIT_NOEXEC);
-		}
+		fire_restart(i, now);
+		// dropping a service swaps another one into this slot
+		if (k < n_live && live[k] == i)
+			k++;
 	}
 }
 
@@ -1314,6 +1357,12 @@ static long long starts_due(void)
 	return best;
 }
 
+// only the sigkill drain_notify() sent says less than the hup itself
+static int hup_status(int status)
+{
+	return WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL ? FAIL_ST_NOTIFY_HUP : status;
+}
+
 static void child_exited(uint32_t i, int status)
 {
 	struct run *r = &runs[i];
@@ -1348,7 +1397,7 @@ static void child_exited(uint32_t i, int status)
 			if (r->timedout)
 				status = FAIL_ST_TIMEOUT;
 			else if (r->hup)
-				status = FAIL_ST_NOTIFY_HUP;
+				status = hup_status(status);
 			go_down(i);
 			if (ng_restart(map, i)) {
 				restart_schedule(i, status);
@@ -1377,7 +1426,7 @@ static void child_exited(uint32_t i, int status)
 		return;
 	}
 	if (r->hup) {
-		service_failed(i, FAIL_ST_NOTIFY_HUP);
+		service_failed(i, hup_status(status));
 		return;
 	}
 
@@ -1571,8 +1620,10 @@ static void remount_ro(void)
 			if (len + 4096 > cap) {
 				char *nb = realloc(buf, cap = cap ? cap * 2 : 16384);
 
-				if (!nb)
+				if (!nb) {
+					log_warn("shutdown: out of memory reading the mount table, some filesystems may stay writable");
 					break;
+				}
 				buf = nb;
 			}
 			k = read(fd, buf + len, cap - len - 1);
@@ -1601,8 +1652,10 @@ static void remount_ro(void)
 				if (n == mcap) {
 					char **nm = realloc(mps, (mcap = mcap ? mcap * 2 : 64) * sizeof(*mps));
 
-					if (!nm)
+					if (!nm) {
+						log_warn("shutdown: out of memory listing mounts, some filesystems may stay writable");
 						break;
+					}
 					mps = nm;
 				}
 				mps[n++] = mp;
@@ -1766,6 +1819,13 @@ static int build_prereqs(uint32_t **poff, uint32_t **pidx)
 	}
 	for (i = 0; i < n_svc; i++)
 		off[i + 1] = off[i] + ng_svcs(map)[i].unmet;
+	// ng_verify() proved this, but the graph is a live mapping
+	if (off[n_svc] != m) {
+		free(off);
+		free(idx);
+		free(fill);
+		return -1;
+	}
 	for (i = 0; i < n_svc; i++)
 		for (k = roff[i]; k < roff[i + 1]; k++) {
 			uint32_t d = ridx[k];
@@ -1786,13 +1846,19 @@ static void stop_ordered(void)
 	uint8_t *st = NULL;
 	uint32_t i, k, left = 0, live_svc = 0;
 
-	if (!n_svc || build_prereqs(&off, &idx) < 0)
+	if (!n_svc)
 		goto out;
+	if (build_prereqs(&off, &idx) < 0) {
+		log_warn("shutdown: out of memory, stopping every service at once instead");
+		goto out;
+	}
 	waitc = calloc(n_svc, sizeof(*waitc));
 	stop_at = calloc(n_svc, sizeof(*stop_at));
 	st = calloc(n_svc, sizeof(*st));
-	if (!waitc || !stop_at || !st)
+	if (!waitc || !stop_at || !st) {
+		log_warn("shutdown: out of memory, stopping every service at once instead");
 		goto out;
+	}
 
 	for (i = 0; i < n_svc; i++) {
 		waitc[i] = roff[i + 1] - roff[i];
@@ -2022,6 +2088,9 @@ static void ctl_init(void)
 	struct sockaddr_un sa = { .sun_family = AF_UNIX };
 	int fd;
 
+	static_assert(sizeof(NINIT_CTL_SOCK) <= sizeof(sa.sun_path),
+		      "the control socket path does not fit in sockaddr_un");
+
 	if (mkdir(NINIT_CTL_DIR, 0700) < 0 && errno != EEXIST) {
 		log_warn("control: mkdir %s: %s", NINIT_CTL_DIR, strerror(errno));
 		return;
@@ -2197,10 +2266,7 @@ static void svc_op_start(uint32_t i)
 		if (!shutting_down && r->pid <= 0 && !r->stale_pid) {
 			r->attempt = 0;
 			r->burst = 0;
-			if (state[i] != NG_ST_PENDING) {
-				state[i] = NG_ST_PENDING;
-				n_pending++;
-			}
+			svc_mark_pending(i);
 		}
 		svc_op_done(i, 0, why);
 		return;
@@ -2208,10 +2274,7 @@ static void svc_op_start(uint32_t i)
 	r->attempt = 0;
 	r->burst = 0;
 	r->op_restart = 0;
-	if (state[i] != NG_ST_PENDING) {
-		state[i] = NG_ST_PENDING;
-		n_pending++;
-	}
+	svc_mark_pending(i);
 	if (!live_has(i))
 		live_add(i);
 	svc_op_set(i, SVC_OP_START, now_ms() + (long long)ng_start_ms(map, i) + KILL_GRACE_MS);
@@ -2233,6 +2296,8 @@ static void svc_op_stop(uint32_t i, int restart)
 			svc_op_start(i);
 			return;
 		}
+		// it exited on its own so nothing else will hand its dependents back
+		go_down(i);
 		svc_op_done(i, 1, "already stopped");
 		return;
 	}
@@ -2474,6 +2539,8 @@ static void ctl_read(struct ctl *c)
 
 static void ctl_accept(void)
 {
+	static const char busy[] = NCTL_ERR "too many control connections\n";
+
 	for (;;) {
 		int fd = accept4(ctl_lfd, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
 		struct ctl *c;
@@ -2481,7 +2548,7 @@ static void ctl_accept(void)
 		if (fd < 0)
 			return;
 		if (n_ctl == CTL_MAX) {
-			(void)!write(fd, NCTL_ERR "too many control connections\n", 32);
+			(void)!write(fd, busy, sizeof(busy) - 1);
 			close(fd);
 			continue;
 		}
