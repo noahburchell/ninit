@@ -32,6 +32,7 @@
 #define STALL_MS	10000
 #define TERM_GRACE_MS	5000
 #define KILL_GRACE_MS	2000
+#define RETRY_MIN_MS	10
 #define DEGRADED_POLL_MS 200
 #define DRAIN_POLL_CHUNKS 16
 #define DRAIN_BUDGET	262144u
@@ -377,31 +378,34 @@ static void setup_signals(void)
 static void raise_nofile(void)
 {
 	rlim_t need = 2 * (rlim_t)NG_MAX_SVC + 256;
+	rlim_t hi = CHILD_NOFILE_MAX > need ? CHILD_NOFILE_MAX : need;
+	rlim_t lo = CHILD_NOFILE_MAX > need ? need : CHILD_NOFILE_MAX;
 	rlim_t ask[3];
 	struct rlimit rl, orig;
-	int k;
+	int n = 0, k;
 
 	if (getrlimit(RLIMIT_NOFILE, &orig) < 0) {
 		orig.rlim_cur = 1024;
 		orig.rlim_max = 4096;
 	}
-	ask[0] = CHILD_NOFILE_MAX;
-	ask[1] = need;
-	ask[2] = orig.rlim_max;
+	// strictly descending
+	if (hi > orig.rlim_max)
+		ask[n++] = hi;
+	if (lo < hi && lo > orig.rlim_max)
+		ask[n++] = lo;
+	ask[n++] = orig.rlim_max;
 
 	rl = orig;
 	if (rl.rlim_cur < need)
 		rl.rlim_cur = need;
-	// fs.nr_open can refuse the first ask
-	for (k = 0; k < 3; k++) {
-		rl.rlim_max = orig.rlim_max == RLIM_INFINITY || ask[k] < orig.rlim_max ?
-			      orig.rlim_max : ask[k];
+	for (k = 0; k < n; k++) {
+		rl.rlim_max = ask[k];
 		if (rl.rlim_cur > rl.rlim_max)
 			rl.rlim_cur = rl.rlim_max;
 		if (setrlimit(RLIMIT_NOFILE, &rl) == 0)
 			break;
 	}
-	if (k == 3) {
+	if (k == n) {
 		log_warn("setrlimit(RLIMIT_NOFILE): %s", strerror(errno));
 		rl = orig;
 	}
@@ -564,7 +568,12 @@ static void child_exec(uint32_t i, int out_w, int ntf_w, const char *cg)
 			dup2(ntf_w, nfd);
 	}
 	ninit_cloexec_except(nfd ? nfd : -1);
-	setrlimit(RLIMIT_NOFILE, &child_nofile);
+	if (setrlimit(RLIMIT_NOFILE, &child_nofile) < 0) {
+		at = put_str(msg, 0, "ninit: could not set its descriptor limit: errno ");
+		at = put_num(msg, at, (unsigned)errno);
+		at = put_str(msg, at, ", it runs with pid 1's\n");
+		(void)!write(2, msg, at);
+	}
 
 	// oom_score_adj is inherited, and only pid 1 may be exempt
 	ninit_oom_score_adj("0\n", 2);
@@ -1059,6 +1068,13 @@ static void poison_deps(uint32_t i)
 			 skipped, skipped == 1 ? "" : "s");
 }
 
+static unsigned retry_delay_ms(uint32_t i)
+{
+	unsigned d = ng_pol(map, i)->retry_ms;
+
+	return d < RETRY_MIN_MS ? RETRY_MIN_MS : d;
+}
+
 static void service_failed(uint32_t i, int status)
 {
 	struct run *r = &runs[i];
@@ -1086,8 +1102,7 @@ static void service_failed(uint32_t i, int status)
 	case FAIL_RETRY:
 		if (!live_has(i))
 			live_add(i);
-		r->restart_at = now_ms() + (r->stale_pid ? KILL_GRACE_MS :
-					    ng_pol(map, i)->retry_ms);
+		r->restart_at = now_ms() + (r->stale_pid ? KILL_GRACE_MS : retry_delay_ms(i));
 		return;
 	case FAIL_SHELL:
 		poison(i);
@@ -1481,7 +1496,7 @@ static void stale_reaped(uint32_t i, pid_t pid)
 	if (r->stale_pid == pid)
 		r->stale_pid = 0;
 	if (r->restart_at)
-		r->restart_at = now_ms() + ng_pol(map, i)->retry_ms;
+		r->restart_at = now_ms() + retry_delay_ms(i);
 	maybe_free(i);
 }
 
