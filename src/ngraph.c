@@ -90,11 +90,15 @@ uint32_t ng_crc32c(const void *data, size_t len)
 	return ~(uint32_t)crc32c_feed(~0u, data, len);
 }
 
+// a buffer too short to hold the header has no image to checksum
 uint32_t ng_image_crc32c(const void *map, size_t len)
 {
-	struct ng_hdr h = *(const struct ng_hdr *)map;
+	struct ng_hdr h;
 	uint64_t crc;
 
+	if (len < sizeof(h))
+		return 0;
+	memcpy(&h, map, sizeof(h));
 	h.crc32 = 0;
 	crc = crc32c_feed(~0u, &h, sizeof(h));
 	crc = crc32c_feed(crc, (const char *)map + sizeof(h), len - sizeof(h));
@@ -165,6 +169,12 @@ static int locale_value_ok(const char *v)
 	return 1;
 }
 
+static void note(const char **why, const char *msg)
+{
+	if (!*why)
+		*why = msg;
+}
+
 // parses /etc/locale.conf
 int ng_locale_env(char (*out)[NG_LOCALE_LEN], int max, const char **why)
 {
@@ -175,11 +185,13 @@ int ng_locale_env(char (*out)[NG_LOCALE_LEN], int max, const char **why)
 	char *p;
 
 	*why = NULL;
+	if (max <= 0)
+		return 0;
 	fd = open(NG_LOCALE_CONF, O_RDONLY | O_CLOEXEC | O_NOCTTY);
 	if (fd < 0)
 		return 0;
 	for (;;) {
-		ssize_t k = read(fd, raw + len, sizeof(raw) - len - 1);
+		ssize_t k = read(fd, raw + len, sizeof(raw) - 1 - len);
 
 		if (k < 0 && errno == EINTR)
 			continue;
@@ -191,10 +203,20 @@ int ng_locale_env(char (*out)[NG_LOCALE_LEN], int max, const char **why)
 		if (!k)
 			break;
 		len += (size_t)k;
-		if (len + 1 >= sizeof(raw)) {
-			close(fd);
-			*why = "is larger than 8 KiB";
-			return 0;
+		// the buffer is full
+		if (len == sizeof(raw) - 1) {
+			char extra;
+			ssize_t e;
+
+			do
+				e = read(fd, &extra, 1);
+			while (e < 0 && errno == EINTR);
+			if (e > 0) {
+				close(fd);
+				*why = "is larger than 8 KiB";
+				return 0;
+			}
+			break;
 		}
 	}
 	close(fd);
@@ -217,11 +239,16 @@ int ng_locale_env(char (*out)[NG_LOCALE_LEN], int max, const char **why)
 
 		v = strchr(name, '=');
 		if (!v) {
-			*why = "has a line that is not name=value";
+			note(why, "has a line that is not name=value");
 			continue;
 		}
 		nlen = (size_t)(v - name);
+		// tolerate spaces around the =
+		while (nlen && (name[nlen - 1] == ' ' || name[nlen - 1] == '\t'))
+			nlen--;
 		v++;
+		while (*v == ' ' || *v == '\t')
+			v++;
 
 		for (k = 0; k < NG_LOCALE_MAX; k++)
 			if (!strncmp(name, locale_vars[k], nlen) &&
@@ -235,7 +262,7 @@ int ng_locale_env(char (*out)[NG_LOCALE_LEN], int max, const char **why)
 			char *end = strchr(v, q), *rest;
 
 			if (!end) {
-				*why = "has a value with no closing quote";
+				note(why, "has a value with no closing quote");
 				continue;
 			}
 			*end = '\0';
@@ -243,7 +270,7 @@ int ng_locale_env(char (*out)[NG_LOCALE_LEN], int max, const char **why)
 			while (*rest == ' ' || *rest == '\t' || *rest == '\r')
 				rest++;
 			if (*rest && *rest != '#') {
-				*why = "has trailing text after a quoted value";
+				note(why, "has trailing text after a quoted value");
 				continue;
 			}
 		} else {
@@ -251,7 +278,7 @@ int ng_locale_env(char (*out)[NG_LOCALE_LEN], int max, const char **why)
 		}
 
 		if (!locale_value_ok(v)) {
-			*why = "has a value that is not a locale name";
+			note(why, "has a value that is not a locale name");
 			continue;
 		}
 
@@ -260,14 +287,14 @@ int ng_locale_env(char (*out)[NG_LOCALE_LEN], int max, const char **why)
 			char *dst;
 
 			if (kn + 1 + vn >= NG_LOCALE_LEN) {
-				*why = "has a value that is too long";
+				note(why, "has a value that is too long");
 				continue;
 			}
 			// a later line wins the way sourcing the file would
 			if (seen[k]) {
 				dst = out[seen[k] - 1];
 			} else if (n == max) {
-				*why = "sets more variables than ninit can carry";
+				note(why, "sets more variables than ninit can carry");
 				continue;
 			} else {
 				dst = out[n];
@@ -324,22 +351,27 @@ static int spans_disjoint(const struct ng_span *v, unsigned n)
 // the blobs trailing nul stops the search even for a runaway offset
 static int str_fits(const char *blob, uint32_t blob_len, uint32_t off, uint32_t cap)
 {
-	uint32_t left = blob_len - off;
+	uint32_t left;
 
+	if (off >= blob_len)
+		return 0;
+	left = blob_len - off;
 	if (left > cap + 1u)
 		left = cap + 1u;
 	return memchr(blob + off, '\0', left) != NULL;
 }
 
-static const char *g_sort_blob;
-static const struct ng_svc *g_sort_svc;
+struct name_ctx {
+	const char *blob;
+	const struct ng_svc *sv;
+};
 
-static int cmp_name_off(const void *a, const void *b)
+static int cmp_name_off(const void *a, const void *b, void *ctx)
 {
+	const struct name_ctx *c = ctx;
 	uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
 
-	return strcmp(g_sort_blob + g_sort_svc[x].name_off,
-		      g_sort_blob + g_sort_svc[y].name_off);
+	return strcmp(c->blob + c->sv[x].name_off, c->blob + c->sv[y].name_off);
 }
 
 const char *ng_verify(const void *map, size_t len)
@@ -352,6 +384,9 @@ const char *ng_verify(const void *map, size_t len)
 
 	if (len < sizeof(*h))
 		return "shorter than header";
+	// every accessor loads words straight out of the image
+	if ((uintptr_t)map & (_Alignof(struct ng_hdr) - 1))
+		return "image is not aligned for the header";
 	if (h->magic != NG_MAGIC)
 		return "bad magic";
 	if (h->version != NG_VERSION)
@@ -367,6 +402,10 @@ const char *ng_verify(const void *map, size_t len)
 		return "n_roots exceeds n_svc";
 	if (h->reserved)
 		return "reserved header word is not zero";
+	if (!n && m)
+		return "edges without services";
+	if ((uint64_t)m > (uint64_t)n * (n - 1) / 2)
+		return "n_edges exceeds what a forward-ordered graph can hold";
 
 	if (!range_ok(h->off_svc, (uint64_t)n * sizeof(struct ng_svc), h->total_len, 8))
 		return "service table out of bounds";
@@ -420,12 +459,19 @@ const char *ng_verify(const void *map, size_t len)
 				return "rdep index out of range";
 			if (ridx[j] <= i)
 				return "edge runs backwards (cycle, or not topologically ordered)";
+			if (j > roff[i] && ridx[j] <= ridx[j - 1])
+				return "rdep indices are not sorted and unique";
+			if ((uint32_t)sv[ridx[j]].n_desc + 1u > s->n_desc)
+				return "n_desc is smaller than a dependent's descendant count";
 		}
 
-		if (s->unmet > n)
-			return "unmet exceeds n_svc";
-		if (s->n_desc >= n)
-			return "n_desc exceeds n_svc";
+		// an in-degree counts other services, so it cannot reach n_svc
+		if (s->unmet >= n)
+			return "unmet exceeds the in-degree a service can have";
+		if (s->n_desc > n - 1 - i)
+			return "n_desc exceeds the services that follow it";
+		if (s->n_desc < roff[i + 1] - roff[i])
+			return "n_desc is smaller than the number of direct dependents";
 		if (s->notify_fd &&
 		    (s->notify_fd < NG_NOTIFY_MIN || s->notify_fd > NG_NOTIFY_MAX))
 			return "notify fd out of range";
@@ -445,6 +491,8 @@ const char *ng_verify(const void *map, size_t len)
 			return "name offset out of range";
 		if (!str_fits(blob, h->blob_len, s->name_off, NG_MAX_NAME))
 			return "name longer than the supported maximum";
+		if (ng_name_problem(blob + s->name_off))
+			return "a service name is not a usable name";
 		if (i < h->n_roots && s->unmet != 0)
 			return "root has nonzero unmet";
 		if (i >= h->n_roots && s->unmet == 0)
@@ -472,42 +520,33 @@ const char *ng_verify(const void *map, size_t len)
 	}
 
 	if (n) {
-		uint32_t *indeg = calloc(n, sizeof(*indeg));
+		struct name_ctx ctx = { blob, sv };
+		uint32_t *scratch = calloc(n, sizeof(*scratch));
+		const char *bad = NULL;
 
-		if (!indeg)
-			return "out of memory verifying in-degrees";
+		if (!scratch)
+			return "out of memory verifying the graph";
+
 		for (i = 0; i < m; i++)
-			indeg[ridx[i]]++;
-		for (i = 0; i < n; i++)
-			if (sv[i].unmet != indeg[i]) {
-				free(indeg);
-				return "unmet does not match the in-degree of the edge list";
-			}
-		free(indeg);
-	}
+			scratch[ridx[i]]++;
+		for (i = 0; i < n && !bad; i++)
+			if (sv[i].unmet != scratch[i])
+				bad = "unmet does not match the in-degree of the edge list";
 
-	if (n) {
-		uint32_t *order = malloc((size_t)n * sizeof(*order));
-
-		if (!order)
-			return "out of memory verifying names";
-		for (i = 0; i < n; i++) {
-			if (ng_name_problem(blob + sv[i].name_off)) {
-				free(order);
-				return "a service name is not a usable name";
-			}
-			order[i] = i;
+		if (!bad) {
+			for (i = 0; i < n; i++)
+				scratch[i] = i;
+			qsort_r(scratch, n, sizeof(*scratch), cmp_name_off, &ctx);
+			for (i = 1; i < n; i++)
+				if (!strcmp(blob + sv[scratch[i - 1]].name_off,
+					    blob + sv[scratch[i]].name_off)) {
+					bad = "two services share a name";
+					break;
+				}
 		}
-		g_sort_blob = blob;
-		g_sort_svc = sv;
-		qsort(order, n, sizeof(*order), cmp_name_off);
-		for (i = 1; i < n; i++)
-			if (!strcmp(blob + sv[order[i - 1]].name_off,
-				    blob + sv[order[i]].name_off)) {
-				free(order);
-				return "two services share a name";
-			}
-		free(order);
+		free(scratch);
+		if (bad)
+			return bad;
 	}
 
 	return NULL;
