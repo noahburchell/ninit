@@ -2643,7 +2643,7 @@ static void start_graph(void)
 	}
 
 	if (!state || !up || !want || !released || !rqueue || !unmet || !runs ||
-	    !live || !queue) {
+	    !live  || !queue) {
 		n_svc = 0;
 		n_pending = 0;
 		fail_emergency_shell("boot: out of memory before starting any service");
