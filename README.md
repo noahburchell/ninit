@@ -181,7 +181,8 @@ don't use github's own "source code" tarball off the tags page
 then the usual lines:
 
 ```sh
-./configure # whatever options, i use --enable-o3 --enable-lto --enable-native
+# 99% of you should use prefix usr, and if you shoudlnt they youd know
+./configure --prefix=/usr # whatever options, i use --enable-o3 --enable-lto --enable-native
 make -j"$(nproc)"
 sudo make install
 sudo make tools-install   # optional, see shutting down
