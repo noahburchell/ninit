@@ -73,12 +73,16 @@ static uint64_t crc32c_feed_sw(uint64_t crc, const void *data, size_t len)
 static uint64_t crc32c_feed(uint64_t crc, const void *data, size_t len)
 {
 #if NG_CRC_X86
+#ifdef __SSE4_2__
+	static const int have_hw = 1;
+#else
 	static int have_hw = -1;
 
 	if (have_hw < 0) {
 		__builtin_cpu_init();
 		have_hw = __builtin_cpu_supports("sse4.2");
 	}
+#endif
 	if (have_hw)
 		return crc32c_feed_hw(crc, data, len);
 #endif
@@ -124,20 +128,20 @@ const char *ng_name_problem(const char *name)
 	if (!n)
 		return "is empty";
 	if (n > NG_MAX_NAME)
-		return "is longer than a filename may be";
+		return "is too long";
 	if (name[0] == '.')
-		return "starts with a dot; ninit never builds those";
+		return "starts with a dot";
 	if (name[n - 1] == '~')
-		return "looks like an editor backup; delete it or move it to unused/";
+		return "is an editor backup file";
 	if (n > 1 && name[0] == '#' && name[n - 1] == '#')
-		return "looks like an editor autosave; delete it or move it to unused/";
+		return "is an editor autosave file";
 	for (; *p; p++) {
 		if (*p == '/')
-			return "contains a slash; a service name is one filename";
+			return "contains a slash";
 		if (*p == ',')
-			return "contains a comma; depon/depof could never name it";
+			return "contains a comma";
 		if (*p <= ' ' || *p == 0x7f)
-			return "contains whitespace or a control character; depon/depof could never name it";
+			return "contains whitespace or a control character";
 	}
 	return NULL;
 }
@@ -361,17 +365,13 @@ static int str_fits(const char *blob, uint32_t blob_len, uint32_t off, uint32_t 
 	return memchr(blob + off, '\0', left) != NULL;
 }
 
-struct name_ctx {
-	const char *blob;
-	const struct ng_svc *sv;
-};
-
-static int cmp_name_off(const void *a, const void *b, void *ctx)
+static uint32_t name_hash(const char *s)
 {
-	const struct name_ctx *c = ctx;
-	uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+	uint32_t h = 2166136261u;
 
-	return strcmp(c->blob + c->sv[x].name_off, c->blob + c->sv[y].name_off);
+	while (*s)
+		h = (h ^ (unsigned char)*s++) * 16777619u;
+	return h;
 }
 
 const char *ng_verify(const void *map, size_t len)
@@ -433,7 +433,7 @@ const char *ng_verify(const void *map, size_t len)
 	}
 
 	if (ng_image_crc32c(map, len) != h->crc32)
-		return "crc mismatch (corrupt)";
+		return "crc mismatch";
 
 	blob = ng_blob(map);
 	if (h->blob_len && blob[h->blob_len - 1] != '\0')
@@ -458,7 +458,7 @@ const char *ng_verify(const void *map, size_t len)
 			if (ridx[j] >= n)
 				return "rdep index out of range";
 			if (ridx[j] <= i)
-				return "edge runs backwards (cycle, or not topologically ordered)";
+				return "edge runs backwards";
 			if (j > roff[i] && ridx[j] <= ridx[j - 1])
 				return "rdep indices are not sorted and unique";
 			if ((uint32_t)sv[ridx[j]].n_desc + 1u > s->n_desc)
@@ -520,12 +520,15 @@ const char *ng_verify(const void *map, size_t len)
 	}
 
 	if (n) {
-		struct name_ctx ctx = { blob, sv };
-		uint32_t *scratch = calloc(n, sizeof(*scratch));
+		uint32_t hsize = 64, *scratch, *tab;
 		const char *bad = NULL;
 
+		while (hsize < 2 * n)
+			hsize *= 2;
+		scratch = calloc((size_t)n + hsize, sizeof(*scratch));
 		if (!scratch)
 			return "out of memory verifying the graph";
+		tab = scratch + n;
 
 		for (i = 0; i < m; i++)
 			scratch[ridx[i]]++;
@@ -533,16 +536,23 @@ const char *ng_verify(const void *map, size_t len)
 			if (sv[i].unmet != scratch[i])
 				bad = "unmet does not match the in-degree of the edge list";
 
-		if (!bad) {
-			for (i = 0; i < n; i++)
-				scratch[i] = i;
-			qsort_r(scratch, n, sizeof(*scratch), cmp_name_off, &ctx);
-			for (i = 1; i < n; i++)
-				if (!strcmp(blob + sv[scratch[i - 1]].name_off,
-					    blob + sv[scratch[i]].name_off)) {
+		for (i = 0; i < n && !bad; i++) {
+			const char *nm = blob + sv[i].name_off;
+			uint32_t at = name_hash(nm) & (hsize - 1);
+
+			for (;;) {
+				uint32_t slot = tab[at];
+
+				if (!slot) {
+					tab[at] = i + 1;
+					break;
+				}
+				if (!strcmp(blob + sv[slot - 1].name_off, nm)) {
 					bad = "two services share a name";
 					break;
 				}
+				at = (at + 1) & (hsize - 1);
+			}
 		}
 		free(scratch);
 		if (bad)

@@ -4,7 +4,6 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <linux/kd.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
@@ -18,6 +17,15 @@
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+
+#define NG_KDGKBTYPE	0x4B33
+#define NG_KDSETMODE	0x4B3A
+#define NG_KDGETMODE	0x4B3B
+#define NG_KDGKBMODE	0x4B44
+#define NG_KDSKBMODE	0x4B45
+#define NG_KD_TEXT	0x00
+#define NG_K_XLATE	0x01
+#define NG_K_UNICODE	0x03
 
 static const char *plural_s(unsigned n)
 {
@@ -90,15 +98,14 @@ enum fail_act fail_service(const void *map, uint32_t i, int status, unsigned att
 
 	// restart: covers supervision after readines
 	if (ng_restart(map, i))
-		log_warn("%s: restart: only supervises it once it has reported ready; "
-			 "startup attempts come from start-tries (%u)", name, tries);
+		log_warn("%s: restart applies after readiness, start-tries is %u", name, tries);
 
 	switch (ng_onfail(map, i)) {
 	case NG_ONFAIL_WARN:
-		log_warn("%s: nothing depends on it, continuing without it", name);
+		log_warn("%s: no dependent services, continuing", name);
 		return FAIL_WARN;
 	case NG_ONFAIL_SHELL:
-		log_err("%s: %u of %u services depend%s on it, dropping to a shell", name,
+		log_err("%s: %u of %u services depend%s on it, starting emergency shell", name,
 			s->n_desc, ((const struct ng_hdr *)map)->n_svc, verb_s(s->n_desc));
 		return FAIL_SHELL;
 	default:
@@ -280,16 +287,17 @@ static int emerg_console_reset(int con)
 {
 	struct termios t;
 	char kbtype;
-	int mode, vt = ioctl(con, KDGKBTYPE, &kbtype) == 0;
+	int mode, vt = ioctl(con, NG_KDGKBTYPE, &kbtype) == 0;
 
 	if (vt) {
-		if (ioctl(con, KDGETMODE, &mode) == 0 && mode != KD_TEXT) {
+		if (ioctl(con, NG_KDGETMODE, &mode) == 0 && mode != NG_KD_TEXT) {
 			log_warn("console: in graphics mode, restoring text");
-			ioctl(con, KDSETMODE, KD_TEXT);
+			ioctl(con, NG_KDSETMODE, NG_KD_TEXT);
 		}
-		if (ioctl(con, KDGKBMODE, &mode) == 0 && mode != K_XLATE && mode != K_UNICODE) {
+		if (ioctl(con, NG_KDGKBMODE, &mode) == 0 && mode != NG_K_XLATE &&
+		    mode != NG_K_UNICODE) {
 			log_warn("console: keyboard in raw mode, restoring");
-			ioctl(con, KDSKBMODE, K_UNICODE);
+			ioctl(con, NG_KDSKBMODE, NG_K_UNICODE);
 		}
 	}
 
@@ -358,7 +366,7 @@ static pid_t emerg_spawn(int con, int vt, int barrier, int auth)
 	struct sigaction dfl = { .sa_handler = SIG_DFL };
 	sigset_t none;
 	pid_t pid;
-	int sig, errs[2] = { 0, 0 };
+	int sig, fd, errs[2] = { 0, 0 };
 
 	pid = fork();
 	if (pid != 0)
@@ -375,6 +383,8 @@ static pid_t emerg_spawn(int con, int vt, int barrier, int auth)
 	dup2(con, 0);
 	dup2(con, 1);
 	dup2(con, 2);
+	for (fd = 0; fd < 3; fd++)
+		fcntl(fd, F_SETFD, 0);
 
 	ninit_cloexec_except(-1);
 
@@ -405,11 +415,10 @@ static void emerg_greet(void)
 	if (emerg_greeted)
 		return;
 	emerg_greeted = 1;
-	ninit_log(LOG_DONE, "shell: running on the console, use reboot or poweroff to exit");
+	ninit_log(LOG_DONE, "shell: started on the console, exit with reboot or poweroff");
 	// rebuilding the graph does not reload it: pid 1 read it once, at boot
-	log_note("shell: 'ninitctl resume' retries failed services with the graph already loaded");
-	log_note("shell: 'ninitctl init' only affects the next boot, so reboot after rebuilding");
-	log_note("shell: you're on your own now, good luck");
+	log_note("shell: 'ninitctl resume' retries failed services");
+	log_note("shell: 'ninitctl init' takes effect on the next boot");
 }
 
 static void emerg_settle(enum emerg_state st, int err)
@@ -417,10 +426,10 @@ static void emerg_settle(enum emerg_state st, int err)
 	emerg_conf = st;
 
 	if (st == EMERG_EXEC_FAILED) {
-		log_err("shell: no working shell on this machine: %s", strerror(err));
+		log_err("shell: cannot exec a shell: %s", strerror(err));
 		if (++emerg_noexec >= EMERG_NOEXEC_MAX) {
 			emerg_gone = 1;
-			log_err("shell: none can be started here, reboot with sysrq or power-cycle");
+			log_err("shell: giving up, no shell can be started");
 		}
 		return;
 	}
@@ -465,7 +474,7 @@ void fail_emergency_report(void)
 		return;
 	}
 	if (n != (ssize_t)sizeof(errs)) {
-		log_warn("shell: short exec report, cannot tell whether it started");
+		log_warn("shell: truncated exec status, state unknown");
 		emerg_settle(EMERG_EXEC_UNKNOWN, 0);
 		return;
 	}
@@ -487,8 +496,8 @@ static int emerg_start(void)
 #ifdef NINIT_AUTHSHELL
 	auth = root_hash_usable();
 	if (!emerg_greeted)
-		log_warn(auth ? "shell: recovery asks for the root password"
-			      : "shell: root has no usable password, recovery is unauthenticated");
+		log_warn(auth ? "shell: the root password is required"
+			      : "shell: root has no usable password, no authentication");
 #endif
 
 	con = emerg_console();
@@ -539,7 +548,7 @@ static void emerg_restart(void)
 		return;
 	if (++emerg_fail >= EMERG_FAIL_MAX) {
 		emerg_gone = 1;
-		log_err("shell: gave up after %u attempts, the console is unattended", emerg_fail);
+		log_err("shell: giving up after %u attempts", emerg_fail);
 		return;
 	}
 	emerg_retry_at = emerg_now_ms() + EMERG_RETRY_MS;
@@ -569,7 +578,7 @@ void fail_emergency_tick(void)
 {
 	if (emerg_conf_at && emerg_now_ms() >= emerg_conf_at) {
 		emerg_conf_at = 0;
-		log_warn("shell: nothing from it after %d s, cannot tell whether it started",
+		log_warn("shell: no exec status after %d s, state unknown",
 			 EMERG_EXEC_MS / 1000);
 		emerg_settle(EMERG_EXEC_UNKNOWN, 0);
 	}
@@ -617,9 +626,9 @@ int fail_emergency_reaped(pid_t pid, int status)
 		emerg_fast = 0;
 	} else if (++emerg_fast >= EMERG_FAST_MAX) {
 		emerg_gone = 1;
-		log_err("shell: died immediately %u times (%s), not restarting",
+		log_err("shell: exited immediately %u times (%s), not restarting",
 			emerg_fast, how);
-		log_err("shell: none can be started here, reboot with sysrq or power-cycle");
+		log_err("shell: giving up, no shell can be started");
 		return 1;
 	}
 

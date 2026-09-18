@@ -111,8 +111,8 @@ static char *slurp(const char *path, size_t *len)
 	if (fstat(fd, &st) < 0)
 		die("stat %s: %s", path, strerror(errno));
 	if ((uint64_t)st.st_size > NG_MAX_SRC)
-		die("%s: is %llu bytes; a service file may not exceed %u",
-		    path, (unsigned long long)st.st_size, NG_MAX_SRC);
+		die("%s: is %llu bytes, the maximum is %u", path,
+		    (unsigned long long)st.st_size, NG_MAX_SRC);
 
 	buf = xmalloc((size_t)st.st_size + 1);
 	while (pos < st.st_size) {
@@ -180,11 +180,11 @@ static uint32_t parse_ms(const char *val, const char *fname, const char *key)
 	else if (!strcmp(end, "h"))
 		mul = 3600000;
 	else
-		die("%s/%s: %s:%s has an unknown unit '%s' (want ms, s, m or h)",
+		die("%s/%s: %s:%s has an unknown unit '%s', expected ms, s, m or h",
 		    g_dir, fname, key, val, end);
 
 	if (v > NG_MAX_MS / mul)
-		die("%s/%s: %s:%s is longer than the %u ms maximum",
+		die("%s/%s: %s:%s exceeds the %u ms maximum",
 		    g_dir, fname, key, val, NG_MAX_MS);
 	v *= mul;
 	if (!v)
@@ -283,7 +283,7 @@ static void parse_src(struct src *s, const char *fname, const char *body, size_t
 
 		if (!strcmp(key, "name")) {
 			if (strcmp(val, fname))
-				die("%s/%s: name:%s does not match its filename; service identity is the filename",
+				die("%s/%s: name:%s does not match its filename",
 				    g_dir, fname, val);
 		} else if (!strcmp(key, "depon")) {
 			split_into(&s->depon, val, 1);
@@ -297,7 +297,7 @@ static void parse_src(struct src *s, const char *fname, const char *body, size_t
 			else if (!strcmp(val, "shell"))
 				s->onfail = NG_ONFAIL_SHELL;
 			else
-				die("%s/%s: unknown onfail:%s (want warn, stop or shell)",
+				die("%s/%s: unknown onfail:%s, expected warn, stop or shell",
 				    g_dir, fname, val);
 			s->have_onfail = 1;
 		} else if (!strcmp(key, "restart")) {
@@ -306,7 +306,7 @@ static void parse_src(struct src *s, const char *fname, const char *body, size_t
 			else if (!strcmp(val, "no") || !strcmp(val, "never"))
 				s->restart = 0;
 			else
-				die("%s/%s: unknown restart:%s (want always or no)",
+				die("%s/%s: unknown restart:%s, expected always or no",
 				    g_dir, fname, val);
 		} else if (!strcmp(key, "notify")) {
 			char *end;
@@ -316,7 +316,7 @@ static void parse_src(struct src *s, const char *fname, const char *body, size_t
 			fd = strtoul(val, &end, 10);
 			if (*val == '-' || errno || end == val || *end ||
 			    fd < NG_NOTIFY_MIN || fd > NG_NOTIFY_MAX)
-				die("%s/%s: notify:%s must be a descriptor between %u and %u",
+				die("%s/%s: notify:%s must be between %u and %u",
 				    g_dir, fname, val, NG_NOTIFY_MIN, NG_NOTIFY_MAX);
 			s->notify = (uint16_t)fd;
 		} else if (!strcmp(key, "start-timeout")) {
@@ -327,7 +327,7 @@ static void parse_src(struct src *s, const char *fname, const char *body, size_t
 			uint32_t d = parse_ms(val, fname, key);
 
 			if (d > UINT16_MAX)
-				die("%s/%s: start-delay:%s is longer than the %u ms maximum",
+				die("%s/%s: start-delay:%s exceeds the %u ms maximum",
 				    g_dir, fname, val, UINT16_MAX);
 			s->retry_ms = (uint16_t)d;
 		} else if (!strcmp(key, "start-tries")) {
@@ -347,7 +347,7 @@ static void parse_src(struct src *s, const char *fname, const char *body, size_t
 			else if (!strcmp(val, "order"))
 				s->pflags |= NG_PF_ORDER_ONLY;
 			else
-				die("%s/%s: unknown deps:%s (want uptime or order)",
+				die("%s/%s: unknown deps:%s, expected uptime or order",
 				    g_dir, fname, val);
 		} else if (!strcmp(key, "type")) {
 			if (!strcmp(val, "oneshot"))
@@ -387,9 +387,8 @@ static void parse_src(struct src *s, const char *fname, const char *body, size_t
 			if (heredoc_tag(key, tag, sizeof(tag)))
 				continue;
 			if (key[0] == '#' && key[1] == '%')
-				fprintf(stderr, "ninitctl: warning: %s/%s: '%s' comes after the "
-					"first command, so it is a plain comment, not a directive\n",
-					g_dir, fname, key);
+				fprintf(stderr, "ninitctl: warning: %s/%s: '%s' follows a command, "
+					"treating it as a comment\n", g_dir, fname, key);
 		}
 	}
 
@@ -398,16 +397,12 @@ static void parse_src(struct src *s, const char *fname, const char *body, size_t
 		s->type = code ? NG_TYPE_ONESHOT : NG_TYPE_TARGET;
 
 	if (s->notify && s->type != NG_TYPE_DAEMON)
-		die("%s/%s: notify: is only meaningful for type:daemon; a %s %s",
-		    g_dir, fname, ng_typename(s->type),
-		    s->type == NG_TYPE_TARGET ? "has no process"
-					      : "is complete when it exits");
+		die("%s/%s: notify: requires type:daemon, not type:%s",
+		    g_dir, fname, ng_typename(s->type));
 
 	if (s->restart && s->type != NG_TYPE_DAEMON)
-		die("%s/%s: restart: is only meaningful for type:daemon; a %s %s",
-		    g_dir, fname, ng_typename(s->type),
-		    s->type == NG_TYPE_TARGET ? "has no process"
-					      : "is meant to run once and exit");
+		die("%s/%s: restart: requires type:daemon, not type:%s",
+		    g_dir, fname, ng_typename(s->type));
 
 	if (s->type == NG_TYPE_TARGET) {
 		if (code)
@@ -417,7 +412,7 @@ static void parse_src(struct src *s, const char *fname, const char *body, size_t
 			die("%s/%s: type:%s has no commands to run",
 			    g_dir, fname, ng_typename(s->type));
 		if (len > NG_MAX_SCRIPT)
-			die("%s/%s: script is %zu bytes; execve caps one argument at %u",
+			die("%s/%s: script is %zu bytes, the maximum is %u",
 			    g_dir, fname, len, NG_MAX_SCRIPT);
 		s->script = body;
 	}
@@ -481,11 +476,12 @@ static int cmp_edge(const void *x, const void *y)
 	return 0;
 }
 
-static int cmp_name_idx(const void *x, const void *y, void *ctx)
-{
-	const struct src *s = ctx;
+static const struct src *cmp_srcs;
 
-	return strcmp(s[*(const uint32_t *)x].name, s[*(const uint32_t *)y].name);
+static int cmp_name_idx(const void *x, const void *y)
+{
+	return strcmp(cmp_srcs[*(const uint32_t *)x].name,
+		      cmp_srcs[*(const uint32_t *)y].name);
 }
 
 // scanning every service per dependency reference is O(edges * services)
@@ -654,7 +650,7 @@ static uint32_t *schedule(struct graph *g)
 				ready_push(&q, g, g->idx[i]);
 	}
 	if (done != g->n)
-		die("internal: no ready node but %u remain", g->n - done);
+		die("internal error: no ready node with %u remaining", g->n - done);
 
 	free(left);
 	free(q.v);
@@ -677,8 +673,8 @@ static void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 	int devnull;
 
 	if (access(NG_SHELL, X_OK) != 0) {
-		fprintf(stderr, "ninitctl: warning: %s is not executable here, "
-			"skipping the script syntax check\n", NG_SHELL);
+		fprintf(stderr, "ninitctl: warning: %s is not executable, "
+			"skipping the syntax check\n", NG_SHELL);
 		return;
 	}
 	if (slots > 32)
@@ -754,23 +750,23 @@ static void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 		}
 
 		len = strlen(srcs[i].script);
-		sfd = memfd_create(srcs[i].name, 0);
-		efd = memfd_create("stderr", 0);
+		sfd = memfd_create(srcs[i].name, MFD_CLOEXEC);
+		efd = memfd_create("stderr", MFD_CLOEXEC);
 		if (sfd < 0 || efd < 0) {
 			if (sfd >= 0)
 				close(sfd);
 			if (efd >= 0)
 				close(efd);
 			fprintf(stderr, "ninitctl: warning: memfd_create: %s, "
-				"the syntax check cannot continue\n", strerror(errno));
+				"skipping the syntax check\n", strerror(errno));
 			giveup = 1;
 			unchecked++;
 			continue;
 		}
 		if ((size_t)write(sfd, srcs[i].script, len) != len ||
 		    lseek(sfd, 0, SEEK_SET) != 0) {
-			fprintf(stderr, "ninitctl: warning: %s/%s: could not stage the "
-				"script for the syntax check: %s\n", dir, srcs[i].name,
+			fprintf(stderr, "ninitctl: warning: %s/%s: cannot stage the script "
+				"for the syntax check: %s\n", dir, srcs[i].name,
 				strerror(errno));
 			close(sfd);
 			close(efd);
@@ -802,12 +798,11 @@ static void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 	free(errfd);
 	free(who);
 	if (bad)
-		die("%u service script%s did not parse as %s; fix %s and run init again",
-		    bad, bad == 1 ? "" : "s", NG_SHELL, bad == 1 ? "it" : "them");
+		die("%u service script%s failed the %s syntax check",
+		    bad, bad == 1 ? "" : "s", NG_SHELL);
 	if (unchecked)
-		die("%u service script%s could not be syntax checked; fix that, "
-		    "or pass --no-check to publish without checking",
-		    unchecked, unchecked == 1 ? "" : "s");
+		die("%u service script%s could not be checked, use --no-check to skip", unchecked,
+		    unchecked == 1 ? "" : "s");
 }
 
 struct blob {
@@ -923,8 +918,7 @@ static void write_atomic(const char *path, const void *buf, size_t len, mode_t m
 	}
 
 	if (fsync(dfd) < 0)
-		die("%s: published, but syncing %s failed: %s; it may not survive a crash",
-		    path, dir, strerror(errno));
+		die("%s: written, but fsync %s failed: %s", path, dir, strerror(errno));
 	if (owned)
 		close(dfd);
 }
@@ -1004,7 +998,7 @@ int cmd_init(int argc, char **argv)
 	if (ne < 0)
 		die("scandir %s: %s", dir, strerror(errno));
 	if ((uint32_t)ne > NG_MAX_SVC + 4)
-		die("%d entries in %s; the tested maximum is %u services", ne, dir, NG_MAX_SVC);
+		die("%d entries in %s, the maximum is %u", ne, dir, NG_MAX_SVC);
 
 	srcs = xmalloc((size_t)ne * sizeof(*srcs));
 	n = 0;
@@ -1028,12 +1022,10 @@ int cmd_init(int argc, char **argv)
 			if (!S_ISREG(st.st_mode) || !graph_image(path)) {
 				if (is_out)
 					die("%s/%s: the output would replace this, and it is not "
-					    "a depgraph; pick another -o name",
-					    dir, ents[k]->d_name);
+					    "a depgraph", dir, ents[k]->d_name);
 				if (!S_ISDIR(st.st_mode))
-					fprintf(stderr, "ninitctl: warning: %s/%s has a name ninitctl "
-						"reserves and was not built; rename it if it is a service\n",
-						dir, ents[k]->d_name);
+					fprintf(stderr, "ninitctl: warning: %s/%s has a reserved name, "
+						"skipping it\n", dir, ents[k]->d_name);
 			}
 			continue;
 		}
@@ -1052,7 +1044,7 @@ int cmd_init(int argc, char **argv)
 
 		if ((uint64_t)st.st_size > NG_MAX_SRC && graph_image(path)) {
 			fprintf(stderr, "ninitctl: warning: %s is a compiled depgraph, "
-				"not a service; skipping it\n", path);
+				"skipping it\n", path);
 			continue;
 		}
 
@@ -1063,7 +1055,7 @@ int cmd_init(int argc, char **argv)
 		    ((const struct ng_hdr *)(const void *)buf)->magic == NG_MAGIC &&
 		    ((const struct ng_hdr *)(const void *)buf)->total_len == len) {
 			fprintf(stderr, "ninitctl: warning: %s is a compiled depgraph, "
-				"not a service; skipping it\n", path);
+				"skipping it\n", path);
 			free(buf);
 			continue;
 		}
@@ -1080,7 +1072,7 @@ int cmd_init(int argc, char **argv)
 	if (!n)
 		die("no services in %s", dir);
 	if (n > NG_MAX_SVC)
-		die("%u services in %s; the tested maximum is %u", n, dir, NG_MAX_SVC);
+		die("%u services in %s, the maximum is %u", n, dir, NG_MAX_SVC);
 
 	if (!nocheck)
 		check_syntax(srcs, n, dir);
@@ -1088,7 +1080,8 @@ int cmd_init(int argc, char **argv)
 	byname = xmalloc(n * sizeof(*byname));
 	for (i = 0; i < n; i++)
 		byname[i] = i;
-	qsort_r(byname, n, sizeof(*byname), cmp_name_idx, srcs);
+	cmp_srcs = srcs;
+	qsort(byname, n, sizeof(*byname), cmp_name_idx);
 
 	for (i = 0; i < n; i++) {
 		for (j = 0; j < srcs[i].depon.n + srcs[i].depof.n; j++) {
@@ -1278,7 +1271,7 @@ int cmd_init(int argc, char **argv)
 
 		why = ng_verify(buf, total);
 		if (why)
-			die("internal: built a graph that fails verify: %s", why);
+			die("internal error: the built graph failed verification: %s", why);
 
 		if (dry) {
 			printf("%s: would write %u services, %u edges, %u roots, %zu bytes, "
@@ -1292,8 +1285,8 @@ int cmd_init(int argc, char **argv)
 		if (vague) {
 			fflush(stdout);
 			fprintf(stderr,
-				"ninitctl: warning: %u daemon%s with dependents %s no notify:, so those\n"
-				"ninitctl: dependents start once the shell execs, not once the daemon is ready\n",
+				"ninitctl: warning: %u daemon%s with dependents %s no notify:, "
+				"their dependents start on exec, not on readiness\n",
 				vague, vague == 1 ? "" : "s", vague == 1 ? "has" : "have");
 			for (i = 0; i < n; i++) {
 				const struct src *s = &srcs[order[i]];
@@ -1315,8 +1308,8 @@ int cmd_init(int argc, char **argv)
 			fprintf(stderr, "ninitctl: warning: %s %s\n", NG_LOCALE_CONF, bad);
 		if (nl <= 0)
 			fprintf(stderr,
-				"ninitctl: %s %s, so services will run with LANG=%s\n"
-				"ninitctl: create it, e.g. printf 'LANG=en_US.UTF-8\\n' > %s\n",
+				"ninitctl: %s %s, services will run with LANG=%s\n"
+				"ninitctl: for example: printf 'LANG=en_US.UTF-8\\n' > %s\n",
 				NG_LOCALE_CONF,
 				access(NG_LOCALE_CONF, R_OK) ? "is missing"
 							     : "sets no locale variable",

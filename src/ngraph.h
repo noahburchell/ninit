@@ -65,8 +65,12 @@ static_assert(NG_MAX_SVC <= UINT16_MAX, "service counts must fit the 16-bit fiel
 #define NINIT_CTL_DIR	"/run/ninit"
 #define NINIT_CTL_SOCK	NINIT_CTL_DIR "/control"
 
+#ifndef NG_DEFAULT_DIR
 #define NG_DEFAULT_DIR	"/etc/ninit.d"
+#endif
+#ifndef NG_DEFAULT_FILE
 #define NG_DEFAULT_FILE	"/etc/ninit.d/depgraph"
+#endif
 
 // services get no login shell, so pid 1 has to carry the system locale
 #define NG_LOCALE_CONF	"/etc/locale.conf"
