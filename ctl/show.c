@@ -58,7 +58,7 @@ int cmd_show(int argc, char **argv)
 		return 1;
 	}
 	if (fstat(fd, &sb) < 0 || sb.st_size <= 0) {
-		fprintf(stderr, "ninitctl: %s: not a usable file\n", path);
+		fprintf(stderr, "ninitctl: %s: not a regular file\n", path);
 		close(fd);
 		return 1;
 	}
@@ -175,7 +175,7 @@ int cmd_show(int argc, char **argv)
 			       ng_start_tries(map, i), pl->retry_ms,
 			       ng_order_only(map, i) ? "order" : "uptime",
 			       pl->start_ms || pl->stop_ms || pl->start_tries ||
-			       pl->retry_ms || pl->pflags ? " (set)" : " (all default)",
+			       pl->retry_ms || pl->pflags ? " (set)" : " (default)",
 			       st->reset);
 
 			if (sv[i].type == NG_TYPE_TARGET)
@@ -212,8 +212,7 @@ int cmd_show(int argc, char **argv)
 				}
 		}
 
-		printf("\n%s%sdeepest dependency chain%s %s(%u services; depth only, "
-		       "not measured time)%s\n  ",
+		printf("\n%s%sdeepest dependency chain%s %s(%u services)%s\n  ",
 		       st->bold, st->yellow, st->reset, st->dim, maxlvl, st->reset);
 		for (i = 0; i < maxlvl; i++)
 			printf("%s%s%s%s", i ? " " : "", i ? st->arrow : "",

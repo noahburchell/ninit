@@ -8,19 +8,34 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 #define SVC_UNUSED	"unused"
+
+#ifndef RENAME_NOREPLACE
+#define RENAME_NOREPLACE (1u << 0)
+#endif
+
+static int rename_noreplace(const char *from, const char *to)
+{
+#ifdef HAVE_RENAMEAT2
+	return renameat2(AT_FDCWD, from, AT_FDCWD, to, RENAME_NOREPLACE);
+#else
+	return (int)syscall(SYS_renameat2, AT_FDCWD, from, AT_FDCWD, to,
+			    (unsigned)RENAME_NOREPLACE);
+#endif
+}
 
 static void print_rebuild_hint(const char *dir, int custom)
 {
 	const char *p;
 
 	if (!custom) {
-		printf("rebuild the depgraph with:  ninitctl init\n");
+		printf("run: ninitctl init\n");
 		return;
 	}
-	fputs("rebuild the depgraph with:  ninitctl init -d '", stdout);
+	fputs("run: ninitctl init -d '", stdout);
 	for (p = dir; *p; p++) {
 		if (*p == '\'')
 			fputs("'\\''", stdout);
@@ -100,8 +115,7 @@ int svc_move(int argc, char **argv, int enable)
 			dir = argv[k];
 			custom_dir = 1;
 		} else if (argv[k][0] == '-') {
-			fprintf(stderr, "ninitctl: %s: unknown option '%s' "
-				"(use -- before a name that starts with '-')\n", verb, argv[k]);
+			fprintf(stderr, "ninitctl: %s: unknown option '%s'\n", verb, argv[k]);
 			return 2;
 		} else {
 			names++;
@@ -154,8 +168,7 @@ int svc_move(int argc, char **argv, int enable)
 			continue;
 		}
 		if (ng_reserved_name(name)) {
-			fprintf(stderr, "ninitctl: '%s' is a ninitctl artifact, not a service\n",
-				name);
+			fprintf(stderr, "ninitctl: '%s' is a reserved name\n", name);
 			bad++;
 			continue;
 		}
@@ -174,7 +187,7 @@ int svc_move(int argc, char **argv, int enable)
 			continue;
 		}
 		if (!S_ISREG(st.st_mode)) {
-			fprintf(stderr, "ninitctl: %s: is a %s, not a service\n", name,
+			fprintf(stderr, "ninitctl: %s: is a %s\n", name,
 				S_ISDIR(st.st_mode) ? "directory" : "special file");
 			bad++;
 			continue;
@@ -195,7 +208,7 @@ int svc_move(int argc, char **argv, int enable)
 				link_len = (size_t)ln;
 		}
 
-		if (renameat2(AT_FDCWD, from, AT_FDCWD, to, RENAME_NOREPLACE) < 0) {
+		if (rename_noreplace(from, to) < 0) {
 			if (errno == ENOENT)
 				fprintf(stderr, "ninitctl: %s: not in %s\n", name,
 					enable ? unused : dir);
@@ -209,8 +222,8 @@ int svc_move(int argc, char **argv, int enable)
 			continue;
 		}
 		if (link_len && !relink(to, target, enable)) {
-			fprintf(stderr, "ninitctl: %s: moved, but its relative link "
-				"could not be repointed\n", name);
+			fprintf(stderr, "ninitctl: %s: moved, but its symlink was not updated\n",
+				name);
 			bad++;
 		}
 
@@ -222,12 +235,11 @@ int svc_move(int argc, char **argv, int enable)
 		int ufd = open(unused, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
 
 		if (fsync(dfd) < 0)
-			fprintf(stderr, "ninitctl: sync %s: %s; the move may not "
-				"survive a crash\n", dir, strerror(errno));
+			fprintf(stderr, "ninitctl: sync %s: %s\n", dir, strerror(errno));
 		if (ufd >= 0) {
 			if (fsync(ufd) < 0)
-				fprintf(stderr, "ninitctl: sync %s: %s; the move may not "
-					"survive a crash\n", unused, strerror(errno));
+				fprintf(stderr, "ninitctl: sync %s: %s\n", unused,
+					strerror(errno));
 			close(ufd);
 		}
 	}

@@ -159,10 +159,22 @@ static int log_write(const char *buf, size_t len)
 	return 1;
 }
 
-static int stamp(char *buf, size_t cap)
+#define LOG_PREFIX_MAX	64
+
+static int fitted(int ret, int at, size_t cap)
+{
+	if (ret < 0)
+		return at;
+	if ((size_t)ret >= cap - (size_t)at)
+		return (int)cap - 1;
+	return at + ret;
+}
+
+static int prefix(char *buf, size_t cap, const char *tag)
 {
 	struct timespec now;
 	long long ms;
+	int n;
 
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	ms = (long long)(now.tv_sec - log_start.tv_sec) * 1000 +
@@ -170,7 +182,9 @@ static int stamp(char *buf, size_t cap)
 	if (ms < 0)
 		ms = 0;
 
-	return snprintf(buf, cap, "[%03lld.%03lld] ", ms / 1000, ms % 1000);
+	n = fitted(snprintf(buf, cap, "[%03lld.%03lld] %s > ", ms / 1000, ms % 1000, tag),
+		   0, cap);
+	return n > LOG_PREFIX_MAX ? LOG_PREFIX_MAX : n;
 }
 
 static int log_report_dropped(unsigned long lost)
@@ -179,13 +193,10 @@ static int log_report_dropped(unsigned long lost)
 	char buf[160];
 	int n, ret;
 
-	n = stamp(buf, sizeof(buf));
-	n += snprintf(buf + n, sizeof(buf) - n, "%s > ", tags[LOG_WARN]);
-	ret = snprintf(buf + n, sizeof(buf) - n,
-		       "console: dropped %lu message%s, it is not keeping up",
+	n = prefix(buf, sizeof(buf), tags[LOG_WARN]);
+	ret = snprintf(buf + n, sizeof(buf) - n, "console: dropped %lu message%s",
 		       lost, lost == 1 ? "" : "s");
-	if (ret > 0)
-		n += ret;
+	n = fitted(ret, n, sizeof(buf));
 	if (n > (int)sizeof(buf) - 2)
 		n = (int)sizeof(buf) - 2;
 	buf[n++] = '\n';
@@ -210,19 +221,13 @@ void ninit_log(int level, const char *fmt, ...)
 			log_dropped -= lost;
 	}
 
-	if (level == LOG_INFO) {
-		n = 0;
-	} else {
-		n = stamp(buf, sizeof(buf));
-		n += snprintf(buf + n, sizeof(buf) - n, "%s > ", tags[level]);
-	}
+	n = level == LOG_INFO ? 0 : prefix(buf, sizeof(buf), tags[level]);
 
 	va_start(ap, fmt);
 	ret = vsnprintf(buf + n, sizeof(buf) - n, fmt, ap);
 	va_end(ap);
 
-	if (ret > 0)
-		n += ret;
+	n = fitted(ret, n, sizeof(buf));
 	if (n > (int)sizeof(buf) - 2)
 		n = (int)sizeof(buf) - 2;
 	buf[n++] = '\n';

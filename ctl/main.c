@@ -10,25 +10,24 @@
 
 static void usage(FILE *f)
 {
-	fputs("usage: ninitctl <command> [options]\n"
+	fputs("Usage: ninitctl COMMAND [OPTION]...\n"
 	      "\n"
-	      "configuration\n"
+	      "Configuration commands:\n"
 	      "  init [-d DIR] [-o FILE] [-n] [--no-check]\n"
-	      "                            compile DIR into a depgraph\n"
-	      "  show [-f FILE] [-v]       print the compiled depgraph\n"
-	      "  add  [-d DIR] [--] NAME...  move services out of DIR/unused\n"
-	      "  del  [-d DIR] [--] NAME...  move services into DIR/unused\n"
+	      "                              compile DIR into a depgraph\n"
+	      "  show [-f FILE] [-v]         print the compiled depgraph\n"
+	      "  add [-d DIR] [--] NAME...   move services out of DIR/unused\n"
+	      "  del [-d DIR] [--] NAME...   move services into DIR/unused\n"
 	      "\n"
-	      "running system (talks to ninit over " NINIT_CTL_SOCK ", root only)\n"
-	      "  status [NAME]             report what ninit is running\n"
-	      "  start NAME                start it, or retry it after a failure\n"
-	      "  stop NAME                 stop it and keep it stopped\n"
-	      "  restart NAME              stop it, then start it again\n"
-	      "  resume                    retry every failed and skipped service\n"
+	      "Runtime commands (via " NINIT_CTL_SOCK ", root only):\n"
+	      "  status [NAME]               report service state\n"
+	      "  start NAME                  start a service\n"
+	      "  stop NAME                   stop a service\n"
+	      "  restart NAME                stop, then start a service\n"
+	      "  resume                      retry failed and skipped services\n"
 	      "\n"
-	      "DIR defaults to " NG_DEFAULT_DIR ",\n"
-	      "FILE to " NG_DEFAULT_FILE ".\n"
-	      "a rebuilt depgraph only takes effect on the next boot.\n",
+	      "DIR defaults to " NG_DEFAULT_DIR ", FILE to " NG_DEFAULT_FILE ".\n"
+	      "A rebuilt depgraph takes effect on the next boot.\n",
 	      f);
 }
 
@@ -72,7 +71,7 @@ int main(int argc, char **argv)
 		usage(stdout);
 		return 0;
 	}
-	
+
 	if (wants_help(rest, args)) {
 		usage(stdout);
 		return 0;

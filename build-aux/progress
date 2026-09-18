@@ -1,0 +1,28 @@
+#!/bin/sh
+rundir=$1
+total=$2
+key=$3
+shift 3
+
+n='?'
+if test -n "$rundir" && mkdir -p "$rundir" 2>/dev/null; then
+	tag=`printf '%s' "$key" | tr -c 'A-Za-z0-9._-' '_'`
+	: > "$rundir/step-$tag" 2>/dev/null
+	n=`ls -1 "$rundir" 2>/dev/null | wc -l | tr -d '[:space:]'`
+fi
+
+line=
+for arg do
+	case $arg in
+	'')
+		arg="''" ;;
+	*[!A-Za-z0-9_@%+=:,./-]*)
+		case $arg in
+		*\'*)	arg="'`printf '%s' "$arg" | sed "s/'/'\\\\\\\\''/g"`'" ;;
+		*)	arg="'$arg'" ;;
+		esac ;;
+	esac
+	line="$line $arg"
+done
+
+printf '[%s/%s]%s\n' "$n" "$total" "$line"

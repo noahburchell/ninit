@@ -201,8 +201,7 @@ static void cgroup_init(void)
 	struct statfs sf;
 
 	if (statfs(CG_BASE, &sf) < 0 || (unsigned long)sf.f_type != CG_MAGIC) {
-		log_warn("cgroup: %s is not cgroup2, services are contained by process group only",
-			 CG_BASE);
+		log_warn("cgroup: %s is not a cgroup2 mount, using process groups", CG_BASE);
 		return;
 	}
 	if (mkdir(CG_DIR, 0755) < 0 && errno != EEXIST) {
@@ -210,7 +209,7 @@ static void cgroup_init(void)
 		return;
 	}
 	if (mkdir(CG_DIR "/.probe", 0755) < 0 && errno != EEXIST) {
-		log_warn("cgroup: cannot create %s/*: %s, services are contained by process group only",
+		log_warn("cgroup: cannot create %s/*: %s, using process groups",
 			 CG_DIR, strerror(errno));
 		return;
 	}
@@ -235,13 +234,12 @@ static void cgroup_make(uint32_t i, char *procs, size_t cap)
 	if (!cg_path(i, "", dir, sizeof(dir)) ||
 	    !cg_path(i, "cgroup.procs", procs, cap)) {
 		procs[0] = '\0';
-		log_warn("%s: cgroup path is too long, falling back to its process group",
-			 ng_name(map, i));
+		log_warn("%s: cgroup path is too long, using its process group", ng_name(map, i));
 		return;
 	}
 	if (mkdir(dir, 0755) < 0 && errno != EEXIST) {
 		procs[0] = '\0';
-		log_warn("%s: mkdir %s: %s, falling back to its process group",
+		log_warn("%s: mkdir %s: %s, using its process group",
 			 ng_name(map, i), dir, strerror(errno));
 	}
 }
@@ -370,7 +368,7 @@ static void setup_signals(void)
 	sigaddset(&sig_want, SIGUSR2);
 	sfd = signalfd(-1, &sig_want, SFD_NONBLOCK | SFD_CLOEXEC);
 	if (sfd < 0)
-		log_err("signalfd: %s, dequeuing signals directly instead", strerror(errno));
+		log_err("signalfd: %s, polling for signals instead", strerror(errno));
 
 	reboot(RB_DISABLE_CAD);
 }
@@ -453,7 +451,7 @@ static const void *load_graph(const char *path, const char **why)
 		if (k <= 0) {
 			close(fd);
 			munmap(m, (size_t)st.st_size);
-			*why = k < 0 ? strerror(errno) : "shorter than it claimed";
+			*why = k < 0 ? strerror(errno) : "unexpected end of file";
 			return NULL;
 		}
 		got += k;
@@ -504,7 +502,7 @@ static void load_locale(void)
 	int n = ng_locale_env(env_locale, NG_LOCALE_MAX, &why);
 
 	if (why)
-		log_warn("locale: %s %s, using what it could parse", NG_LOCALE_CONF, why);
+		log_warn("locale: %s %s, ignoring the rest", NG_LOCALE_CONF, why);
 	if (n > 0) {
 		n_locale = n;
 		return;
@@ -799,7 +797,9 @@ static int svc_gone(uint32_t i)
 {
 	const struct run *r = &runs[i];
 
-	return r->pid <= 0 && !r->stale_pid && cgroup_populated(i) <= 0;
+	if (r->pid > 0 || r->stale_pid)
+		return 0;
+	return !r->started || cgroup_populated(i) <= 0;
 }
 
 static int svc_can_start(uint32_t i, const char **why)
@@ -1292,8 +1292,8 @@ static void fire_restart(uint32_t i, long long now)
 
 	if (!svc_can_start(i, &why)) {
 		if (r->stale_pid && state[i] == NG_ST_RUNNING) {
-			log_err("%s: the killed instance (pid %d) has not exited, not starting another",
-				ng_name(map, i), (int)r->stale_pid);
+			log_err("%s: pid %d has not exited, not restarting", ng_name(map, i),
+				(int)r->stale_pid);
 			give_up(i, FAIL_ST_TIMEOUT);
 			return;
 		}
@@ -1636,7 +1636,7 @@ static void remount_ro(void)
 				char *nb = realloc(buf, cap = cap ? cap * 2 : 16384);
 
 				if (!nb) {
-					log_warn("shutdown: out of memory reading the mount table, some filesystems may stay writable");
+					log_warn("shutdown: out of memory reading the mount table");
 					break;
 				}
 				buf = nb;
@@ -1668,7 +1668,7 @@ static void remount_ro(void)
 					char **nm = realloc(mps, (mcap = mcap ? mcap * 2 : 64) * sizeof(*mps));
 
 					if (!nm) {
-						log_warn("shutdown: out of memory listing mounts, some filesystems may stay writable");
+						log_warn("shutdown: out of memory listing mounts");
 						break;
 					}
 					mps = nm;
@@ -1702,7 +1702,7 @@ static void remount_ro(void)
 		if (!mps[k] || !strcmp(mps[k], "/"))
 			continue;
 		if (umount2(mps[k], 0) == 0) {
-			log_warn("shutdown: %s would not go read-only, unmounted it", mps[k]);
+			log_warn("shutdown: %s: remount read-only failed, unmounted", mps[k]);
 			mps[k] = NULL;
 			continue;
 		}
@@ -1715,17 +1715,17 @@ static void remount_ro(void)
 			if (!mps[k] || !strcmp(mps[k], "/"))
 				continue;
 			if (mount(NULL, mps[k], NULL, MS_REMOUNT | MS_RDONLY, NULL) == 0) {
-				log_warn("shutdown: %s went read-only on the second try", mps[k]);
+				log_warn("shutdown: %s: remounted read-only on retry", mps[k]);
 				mps[k] = NULL;
 				continue;
 			}
 			if (umount2(mps[k], 0) == 0) {
-				log_warn("shutdown: %s unmounted on the second try", mps[k]);
+				log_warn("shutdown: %s: unmounted on retry", mps[k]);
 				mps[k] = NULL;
 				continue;
 			}
-			log_err("shutdown: %s is still mounted writable (%s); detaching it, "
-				"its data may not be flushed", mps[k], strerror(errno));
+			log_err("shutdown: %s: still mounted writable (%s), detaching",
+				mps[k], strerror(errno));
 			if (umount2(mps[k], MNT_DETACH) < 0)
 				log_warn("shutdown: detaching %s: %s", mps[k], strerror(errno));
 		}
@@ -1735,7 +1735,7 @@ static void remount_ro(void)
 		if (mount(NULL, "/", NULL, MS_REMOUNT | MS_RDONLY, NULL) == 0)
 			break;
 		else if (pass == RO_PASSES - 1)
-			log_err("shutdown: / would not go read-only: %s", strerror(errno));
+			log_err("shutdown: /: remount read-only failed: %s", strerror(errno));
 
 	free(mps);
 	free(buf);
@@ -1811,7 +1811,7 @@ static void save_hwclock(void)
 	if (wait_pid_ms(pid, HWCLOCK_GRACE_MS))
 		return;
 
-	log_warn("shutdown: hwclock did not finish in %d s, killing it",
+	log_warn("shutdown: hwclock did not exit in %d s, killing it",
 		 HWCLOCK_GRACE_MS / 1000);
 	kill(pid, SIGKILL);
 	wait_pid_ms(pid, KILL_GRACE_MS);
@@ -1937,7 +1937,7 @@ static void stop_ordered(void)
 
 			for (i = 0; i < n_svc; i++)
 				stuck += !svc_gone(i);
-			log_warn("shutdown: %u service%s would not stop in order", stuck,
+			log_warn("shutdown: %u service%s did not stop in order", stuck,
 				 stuck == 1 ? "" : "s");
 			break;
 		}
@@ -1967,11 +1967,11 @@ static void shutdown_system(int how, const char *what)
 {
 	shutting_down = 1;
 	stop_ordered();
-	log_note("%s: sending SIGTERM to everything", what);
+	log_note("%s: sending SIGTERM to all processes", what);
 	kill(-1, SIGTERM);
 	wait_children(TERM_GRACE_MS);
 	if (userspace_left()) {
-		log_warn("%s: some processes ignored SIGTERM, sending SIGKILL", what);
+		log_warn("%s: sending SIGKILL to all processes", what);
 		kill(-1, SIGKILL);
 		wait_children(KILL_GRACE_MS);
 	}
@@ -2025,7 +2025,7 @@ static void poll_signals(void)
 
 	sfd = signalfd(-1, &sig_want, SFD_NONBLOCK | SFD_CLOEXEC);
 	if (sfd >= 0)
-		log_note("signalfd: recovered, back to event-driven signals");
+		log_note("signalfd: recovered");
 
 	while (sigtimedwait(&sig_want, &si, &zero) > 0)
 		dispatch_signal(si.si_signo);
@@ -2075,8 +2075,7 @@ static void check_timeouts(void)
 			}
 		}
 
-		log_err("%s: startup deadline of %u ms exceeded, giving up on it",
-			ng_name(map, i), ng_start_ms(map, i));
+		log_err("%s: start timed out after %u ms", ng_name(map, i), ng_start_ms(map, i));
 		r->timedout = 1;
 		if (state[i] == NG_ST_RUNNING)
 			service_failed(i, FAIL_ST_TIMEOUT);
@@ -2355,11 +2354,11 @@ static void ctl_tick(void)
 				if (r->op_restart)
 					svc_op_start(i);
 				else
-					svc_op_done(i, 1, "stopped, it needed SIGKILL");
+					svc_op_done(i, 1, "stopped after SIGKILL");
 				break;
 			}
 			if (now >= r->op_at)
-				svc_op_done(i, 0, "would not stop, even after SIGKILL");
+				svc_op_done(i, 0, "did not stop after SIGKILL");
 			break;
 
 		case SVC_OP_START:
@@ -2372,7 +2371,7 @@ static void ctl_tick(void)
 				break;
 			}
 			if (now >= r->op_at)
-				svc_op_done(i, 0, "did not come up in time");
+				svc_op_done(i, 0, "start timed out");
 			break;
 
 		default:
@@ -2413,7 +2412,7 @@ static void ctl_resume(struct ctl *c)
 	}
 	log_note("control: resuming %u service%s, %u started", reset,
 		 reset == 1 ? "" : "s", started);
-	ctl_end(c, 1, "resuming %u service%s, %u started now", reset,
+	ctl_end(c, 1, "resuming %u service%s, %u started", reset,
 		reset == 1 ? "" : "s", started);
 }
 
@@ -2459,7 +2458,7 @@ static void ctl_cmd(struct ctl *c, char *line)
 	}
 
 	if (!strcmp(line, "reload")) {
-		ctl_end(c, 0, "the running graph cannot be replaced; reboot to load a new one");
+		ctl_end(c, 0, "the running graph cannot be replaced, reboot to load a new one");
 		return;
 	}
 
@@ -2473,8 +2472,7 @@ static void ctl_cmd(struct ctl *c, char *line)
 
 	restart = !strcmp(line, "restart");
 	if (!restart && strcmp(line, "stop") && strcmp(line, "start")) {
-		ctl_end(c, 0, "unknown command '%s' "
-			"(status, log, start, stop, restart, resume, reload)", line);
+		ctl_end(c, 0, "unknown command '%s'", line);
 		return;
 	}
 	if (!arg) {
@@ -2495,7 +2493,7 @@ static void ctl_cmd(struct ctl *c, char *line)
 		return;
 	}
 	if (runs[i].op != SVC_OP_NONE) {
-		ctl_end(c, 0, "%s is busy with another operation", arg);
+		ctl_end(c, 0, "%s is busy", arg);
 		return;
 	}
 
@@ -2608,8 +2606,7 @@ static void check_boot_done(void)
 	boot_reported = 1;
 	fail_summary(map, state);
 	if (n_pending)
-		log_warn("boot: %u service%s never started, waiting on something that is not up",
-			 n_pending, n_pending == 1 ? "" : "s");
+		log_warn("boot: %u service%s never started", n_pending, n_pending == 1 ? "" : "s");
 	log_note("boot: %u of %u services up in %lld ms", n_done, n_svc, now_ms() - boot_t0);
 }
 
@@ -2682,8 +2679,12 @@ int main(int argc, char **argv)
 
 	log_init();
 	ensure_stdio();
-	placeholder = fcntl(0, F_GETFL) >= 0 && (fcntl(0, F_GETFL) & O_ACCMODE) == O_RDONLY &&
-		      fcntl(1, F_GETFL) >= 0 && (fcntl(1, F_GETFL) & O_ACCMODE) == O_RDONLY;
+	{
+		int f0 = fcntl(0, F_GETFL), f1 = fcntl(1, F_GETFL);
+
+		placeholder = f0 >= 0 && (f0 & O_ACCMODE) == O_RDONLY &&
+			      f1 >= 0 && (f1 & O_ACCMODE) == O_RDONLY;
+	}
 	umask(022);
 	(void)!chdir("/");
 	setup_signals();

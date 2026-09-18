@@ -54,7 +54,6 @@ static int st_shaped(const char *s)
 	return !*s && !strncmp(tok3, "pid ", 4);
 }
 
-// splitting is destructive, so it waits until every line is known to be shaped
 static void st_split(struct srow *r)
 {
 	char **fld[5] = { &r->name, &r->state, &r->want, NULL, &r->pid };
@@ -194,9 +193,9 @@ static int ctl_connect(void)
 	if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
 		fprintf(stderr, "ninitctl: %s: %s\n", NINIT_CTL_SOCK, strerror(errno));
 		if (errno == ENOENT)
-			fprintf(stderr, "ninitctl: pid 1 is not ninit, or it is too old to listen\n");
+			fprintf(stderr, "ninitctl: pid 1 is not ninit\n");
 		else if (errno == EACCES)
-			fprintf(stderr, "ninitctl: only root may control services\n");
+			fprintf(stderr, "ninitctl: permission denied\n");
 		close(fd);
 		return -1;
 	}
@@ -273,9 +272,14 @@ int cmd_ctl(const char *verb, int argc, char **argv)
 		return NCTL_EXIT_FAIL;
 	}
 
-	while ((n = read(fd, buf + held, sizeof(buf) - held - 1)) > 0) {
+	for (;;) {
 		char *p = buf, *nl;
 
+		n = read(fd, buf + held, sizeof(buf) - held - 1);
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n <= 0)
+			break;
 		held += (size_t)n;
 		buf[held] = '\0';
 		while ((nl = memchr(p, '\n', held - (size_t)(p - buf))) != NULL) {
@@ -298,7 +302,7 @@ int cmd_ctl(const char *verb, int argc, char **argv)
 				rc = NCTL_EXIT_FAIL;
 				seen_end = 1;
 			} else if (*p) {
-				fprintf(stderr, "ninitctl: unframed reply: %s\n", p);
+				fprintf(stderr, "ninitctl: malformed reply: %s\n", p);
 			}
 			p = nl + 1;
 		}
@@ -320,8 +324,7 @@ int cmd_ctl(const char *verb, int argc, char **argv)
 	close(fd);
 
 	if (!seen_end) {
-		fprintf(stderr, "ninitctl: %s: pid 1 closed the connection without a result; "
-			"the operation may still be in progress\n", verb);
+		fprintf(stderr, "ninitctl: %s: connection closed without a result\n", verb);
 		return 1;
 	}
 	return rc;

@@ -2,7 +2,11 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <signal.h>
+#ifdef HAVE_STDCKDINT_H
 #include <stdckdint.h>
+#else
+#define ckd_mul(r, a, b) __builtin_mul_overflow((a), (b), (r))
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -57,18 +61,18 @@ static const char *base(const char *p)
 static void usage(const char *me, FILE *f)
 {
 	fprintf(f,
-		"usage: %s [options] %s\n"
+		"Usage: %s [OPTION]...%s\n"
 		"\n"
-		"  -r            reboot\n"
-		"  -h, -P        power off\n"
-		"  -H            halt without powering off\n"
-		"  -f            do not ask pid 1, reboot straight from here\n"
-		"  -c            explains how to cancel a pending shutdown\n"
-		"      --help    this text\n"
+		"  -r         reboot\n"
+		"  -h, -P     power off\n"
+		"  -H         halt without powering off\n"
+		"  -f         reboot directly, without signalling pid 1\n"
+		"  -c         report how to cancel a pending shutdown\n"
+		"      --help display this help and exit\n"
 		"\n"
-		"TIME is now, +MINUTES or HH:MM. reboot, poweroff and halt take the\n"
-		"same options and imply their own action.\n",
-		me, strcmp(base(me), "shutdown") ? "" : "TIME");
+		"TIME is now, +MINUTES or HH:MM.\n"
+		"reboot, poweroff and halt accept the same options.\n",
+		me, strcmp(base(me), "shutdown") ? "" : " TIME");
 }
 
 static int pid1_is_ninit(void)
@@ -169,8 +173,8 @@ static int try_logind(enum act a)
 		[ACT_POWEROFF] = "org.freedesktop.login1.Manager.PowerOff",
 		[ACT_HALT] = "org.freedesktop.login1.Manager.Halt",
 	};
-	pid_t pid;
-	int st;
+	pid_t pid, got;
+	int st = -1;
 
 	pid = fork();
 	if (pid < 0)
@@ -181,8 +185,10 @@ static int try_logind(enum act a)
 		       method[a], "boolean:true", (char *)NULL);
 		_exit(127);
 	}
-	while (waitpid(pid, &st, 0) < 0 && errno == EINTR)
+	while ((got = waitpid(pid, &st, 0)) < 0 && errno == EINTR)
 		;
+	if (got != pid)
+		return -1;
 
 	return WIFEXITED(st) && WEXITSTATUS(st) == 0 ? 0 : -1;
 }
@@ -195,8 +201,14 @@ static void warn_console(enum act a, long secs)
 
 	if (fd < 0)
 		return;
-	n = snprintf(msg, sizeof(msg), "\r\nThe system is going down for %s in %ld minute%s\r\n",
-		     act_name[a], secs / 60, secs / 60 == 1 ? "" : "s");
+	if (secs >= 60)
+		n = snprintf(msg, sizeof(msg),
+			     "\r\nThe system is going down for %s in %ld minute%s\r\n",
+			     act_name[a], secs / 60, secs / 60 == 1 ? "" : "s");
+	else
+		n = snprintf(msg, sizeof(msg),
+			     "\r\nThe system is going down for %s in %ld second%s\r\n",
+			     act_name[a], secs, secs == 1 ? "" : "s");
 	if (n > 0)
 		(void)!write(fd, msg, (size_t)n);
 	close(fd);
@@ -204,7 +216,7 @@ static void warn_console(enum act a, long secs)
 
 int main(int argc, char **argv)
 {
-	const char *me = base(argv[0]);
+	const char *me = argc > 0 && argv[0] ? base(argv[0]) : "ninit-shutdown";
 	enum act act;
 	long when = 0;
 	int is_shutdown, is_telinit, force = 0, have_when = 0, k;
@@ -238,16 +250,15 @@ int main(int argc, char **argv)
 		} else if (!strcmp(a, "-f")) {
 			force = 1;
 		} else if (!strcmp(a, "-c")) {
-			fprintf(stderr,
-				"%s: a pending shutdown runs in the foreground here; "
-				"interrupt it with ctrl-c\n", me);
+			fprintf(stderr, "%s: a pending shutdown runs in the "
+				"foreground, interrupt it instead\n", me);
 			return 1;
 		} else if (!strcmp(a, "-t") || !strcmp(a, "-k") || !strcmp(a, "-n") ||
 			   !strcmp(a, "-w") || !strcmp(a, "-d")) {
 			if (!strcmp(a, "-t") && k + 1 < argc)
 				k++;
 		} else if (a[0] == '-' && a[1]) {
-			fprintf(stderr, "%s: unknown option '%s'\n", me, a);
+			fprintf(stderr, "%s: unrecognized option '%s'\n", me, a);
 			usage(me, stderr);
 			return 1;
 		} else if (is_telinit) {
@@ -258,14 +269,14 @@ int main(int argc, char **argv)
 			} else if (!strcmp(a, "q") || !strcmp(a, "Q")) {
 				return 0;
 			} else {
-				fprintf(stderr, "%s: ninit has no runlevels; only 0 and 6 work\n", me);
+				fprintf(stderr, "%s: unknown runlevel '%s', expected 0 or 6\n", me, a);
 				return 1;
 			}
 			have_when = 1;
 		} else if (!have_when) {
 			when = parse_when(a);
 			if (when < 0) {
-				fprintf(stderr, "%s: '%s' is not now, +MINUTES or HH:MM\n", me, a);
+				fprintf(stderr, "%s: invalid time '%s'\n", me, a);
 				return 1;
 			}
 			have_when = 1;
@@ -273,12 +284,12 @@ int main(int argc, char **argv)
 	}
 
 	if (is_telinit && !have_when) {
-		fprintf(stderr, "%s: needs a runlevel, 0 to power off or 6 to reboot\n", me);
+		fprintf(stderr, "%s: missing runlevel operand\n", me);
 		return 1;
 	}
 
 	if (is_shutdown && !have_when) {
-		fprintf(stderr, "%s: needs a time, use 'now' to go down immediately\n", me);
+		fprintf(stderr, "%s: missing time operand\n", me);
 		usage(me, stderr);
 		return 1;
 	}
@@ -289,13 +300,13 @@ int main(int argc, char **argv)
 	if (force) {
 		sync();
 		reboot(act_rb(act));
-		fprintf(stderr, "%s: reboot(): %s\n", me, strerror(errno));
+		fprintf(stderr, "%s: reboot: %s\n", me, strerror(errno));
 		return 1;
 	}
 
 	if (when > 0) {
 		warn_console(act, when);
-		printf("%s: %s in %ld seconds, ctrl-c cancels\n", me, act_name[act], when);
+		printf("%s: %s in %ld seconds\n", me, act_name[act], when);
 		fflush(stdout);
 		while (when > 0)
 			when = (long)sleep((unsigned)when);
@@ -304,13 +315,12 @@ int main(int argc, char **argv)
 	if (geteuid() != 0) {
 		if (try_logind(act) == 0)
 			return 0;
-		fprintf(stderr, "%s: only root can signal pid 1, and elogind refused "
-			"or is not running; try again as root\n", me);
+		fprintf(stderr, "%s: permission denied, must be run as root\n", me);
 		return 1;
 	}
 
 	if (kill(1, act_signal(act)) < 0) {
-		fprintf(stderr, "%s: signalling pid 1: %s\n", me, strerror(errno));
+		fprintf(stderr, "%s: cannot signal pid 1: %s\n", me, strerror(errno));
 		return 1;
 	}
 
