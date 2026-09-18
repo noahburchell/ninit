@@ -3,7 +3,7 @@
 ### get it: [gentoo](#if-youre-on-gentoo) | [source](#if-youre-on-something-else)
 
 faster than sysvinit. one file per service, a compiled dependency graph, cgroup
-tracking, and a control socket. this is the documentation:
+tracking, and a control socket.
 
 ### service files
 
