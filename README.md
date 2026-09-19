@@ -3,7 +3,7 @@
 ### get it: [gentoo](#if-youre-on-gentoo) | [source](#if-youre-on-something-else)
 
 faster than sysvinit. one file per service, a compiled dependency graph, cgroup
-tracking, and a control socket. this is the documentation:
+tracking, and a control socket.
 
 ### service files
 
@@ -165,7 +165,7 @@ on purpose. then skip to [services](#then)
 
 ### if you're on something else
 
-you have to build it. you need a c compiler and make, nothing else — gcc 14+ or
+you have to build it, you need a c compiler and make. gcc 14+ or
 clang 18+, because the source is c23.
 
 grab the release tarball:
@@ -181,7 +181,8 @@ don't use github's own "source code" tarball off the tags page
 then the usual lines:
 
 ```sh
-./configure # whatever options, i use --enable-o3 --enable-lto --enable-native
+# 99% of you should use prefix usr, and if you shouldnt, youd know
+./configure --prefix=/usr # whatever options, i use --enable-o3 --enable-lto --enable-native
 make -j"$(nproc)"
 sudo make install
 sudo make tools-install   # optional, see shutting down
@@ -230,11 +231,10 @@ you need to do that again every time you change a service file.
 
 ### boot with it
 
-**for the first boot, do not remove your existing init.** point your bootloader
-at ninit as pid 1:
+for the first boot, i recomend you do not remove your existing init. so put this in cmdline:
 
 ```
-init=/sbin/ninit   # or /usr/sbin/init, /usr/* may be a symlink to /*
+init=/sbin/ninit
 ```
 
 mine:
