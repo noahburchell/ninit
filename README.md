@@ -38,7 +38,7 @@ the rules worth knowing:
   - `deps: uptime` means a dependent may only start while this service is up. `deps: order` means it only needs to have started once. it is set on the service that others depend ON
   - a target goes down if anything behind it dies, and so does everything waiting on it
   - without `onfail` the policy is `stop` when something depends on the service and `warn` when nothing does
-  - services get their own cgroup under `/sys/fs/cgroup/ninit.services` and are killed with `cgroup.kill`, so `setsid()` can't escape. without cgroup v2 it falls back to the process group and says so
+  - services get their own cgroup under `/sys/fs/cgroup/ninit.services` and are killed with `cgroup.kill`, so `setsid()` can't escape. on linux 5.7+ a service is forked straight into its cgroup, otherwise it joins right after the fork. without cgroup v2 it falls back to the process group and says so
   - they run with stdin on `/dev/null`, stdout and stderr through ninit, only `PATH` `HOME=/` and `TERM=linux`, in their own session with no controlling terminal. console output is prefixed with the service name and the last KiB is printed on failure
 
 a daemon must run in the foreground: `exec` the real binary with whatever flag
@@ -171,9 +171,9 @@ clang 18+, because the source is c23.
 grab the release tarball:
 
 ```sh
-curl -LO https://github.com/noahburchell/ninit/releases/download/v1.0.0/ninit-1.0.0.tar.xz
-tar xf ninit-1.0.0.tar.xz
-cd ninit-1.0.0
+curl -LO https://github.com/noahburchell/ninit/releases/download/v1.0.1/ninit-1.0.1.tar.xz
+tar xf ninit-1.0.1.tar.xz
+cd ninit-1.0.1
 ```
 
 don't use github's own "source code" tarball off the tags page
