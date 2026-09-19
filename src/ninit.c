@@ -23,6 +23,7 @@
 #include <sys/statfs.h>
 #include <sys/un.h>
 #include <sys/swap.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -962,6 +963,56 @@ static void complete(uint32_t i)
 	svc_release(i);
 }
 
+#ifndef CLONE_INTO_CGROUP
+#define CLONE_INTO_CGROUP 0x200000000ULL
+#endif
+
+struct ninit_clone_args {
+	uint64_t flags, pidfd, child_tid, parent_tid, exit_signal;
+	uint64_t stack, stack_size, tls, set_tid, set_tid_size, cgroup;
+};
+
+static_assert(sizeof(struct ninit_clone_args) == 88, "clone_args v2 is 88 bytes");
+
+static int clone3_ok = 1;
+
+static pid_t spawn_into_cgroup(uint32_t i, int have_cg)
+{
+#ifdef SYS_clone3
+	struct ninit_clone_args ca = { .flags = CLONE_INTO_CGROUP, .exit_signal = SIGCHLD };
+	char dir[CG_PATH_MAX];
+	long pid;
+	int fd, err;
+
+	if (!clone3_ok || !have_cg || !cg_path(i, "", dir, sizeof(dir)))
+		return -1;
+	fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (fd < 0)
+		return -1;
+
+	ca.cgroup = (uint64_t)fd;
+	pid = syscall(SYS_clone3, &ca, sizeof(ca));
+	if (pid == 0)
+		return 0;
+	if (pid > 0) {
+		close(fd);
+		return (pid_t)pid;
+	}
+
+	err = errno;
+	close(fd);
+	if (err == ENOSYS || err == EINVAL || err == E2BIG || err == EOPNOTSUPP) {
+		clone3_ok = 0;
+		log_warn("cgroup: this kernel cannot fork into a cgroup, joining after fork instead");
+	}
+	return -1;
+#else
+	(void)i;
+	(void)have_cg;
+	return -1;
+#endif
+}
+
 static int launch(uint32_t i)
 {
 	struct run *r = &runs[i];
@@ -994,9 +1045,14 @@ static int launch(uint32_t i)
 
 	cgroup_make(i, cg, sizeof(cg));
 
-	pid = fork();
+	pid = spawn_into_cgroup(i, cg[0] != '\0');
 	if (pid == 0)
-		child_exec(i, out[1], ntf[1], cg);
+		child_exec(i, out[1], ntf[1], "");
+	if (pid < 0) {
+		pid = fork();
+		if (pid == 0)
+			child_exec(i, out[1], ntf[1], cg);
+	}
 	err = errno;
 	close(out[1]);
 	if (ntf[1] >= 0)
@@ -1142,10 +1198,12 @@ static void drain_notify(uint32_t i, unsigned chunks)
 
 		if (k > 0) {
 			if (r->starting && !r->timedout && !r->hup && memchr(buf, '\n', (size_t)k)) {
+				[[maybe_unused]] long long ms = now_ms() - r->started;
+
 				r->starting = 0;
-				log_done("%s (%lld ms)", ng_name(map, i), now_ms() - r->started);
 				if (state[i] == NG_ST_RUNNING || state[i] == NG_ST_DONE)
 					complete(i);
+				log_done("%s (%lld ms)", ng_name(map, i), ms);
 			}
 			continue;
 		}
@@ -1188,10 +1246,13 @@ static void drain_exec(uint32_t i)
 		r->ntf_fd = -1;
 		if (k > 0 || !r->starting)
 			return;
+
+		[[maybe_unused]] long long ms = now_ms() - r->started;
+
 		r->starting = 0;
-		log_done("%s (%lld ms)", ng_name(map, i), now_ms() - r->started);
 		if (state[i] == NG_ST_RUNNING || state[i] == NG_ST_DONE)
 			complete(i);
+		log_done("%s (%lld ms)", ng_name(map, i), ms);
 	}
 }
 
@@ -1447,8 +1508,10 @@ static void child_exited(uint32_t i, int status)
 
 	if (ng_svcs(map)[i].type == NG_TYPE_ONESHOT) {
 		if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-			log_done("%s (%lld ms)", name, now_ms() - r->started);
+			[[maybe_unused]] long long ms = now_ms() - r->started;
+
 			complete(i);
+			log_done("%s (%lld ms)", name, ms);
 			maybe_free(i);
 		} else {
 			service_failed(i, status);

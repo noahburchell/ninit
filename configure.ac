@@ -1,5 +1,5 @@
 AC_PREREQ([2.69])
-AC_INIT([ninit], [1.0.0], [ninit@nburch.org], [ninit],
+AC_INIT([ninit], [1.0.1], [ninit@nburch.org], [ninit],
 	[https://github.com/noahburchell/ninit])
 AC_CONFIG_SRCDIR([src/ninit.c])
 AC_CONFIG_AUX_DIR([build-aux])
