@@ -2,5 +2,4 @@
 #%depon: basic, elogind
 #%type: daemon
 #%restart: always
-
 exec sddm

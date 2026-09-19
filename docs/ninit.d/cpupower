@@ -1,4 +1,0 @@
-#!/bin/bash
-#%onfail: warn
-
-cpupower frequency-set --governor performance &> /dev/null

@@ -1,6 +1,14 @@
 #!/bin/bash
-#%depon: udev-trigger, loopback
+#%depon: udev, loopback
 #%type: daemon
+#%notify: 3
 #%restart: always
-
-exec dhcpcd -B
+fifo=/run/dhcpcd.ready
+rm -f "$fifo"
+mkfifo -m 600 "$fifo" && exec 4<> "$fifo"
+{
+	read -r -t 15 -u 4 _ ||
+		echo "dhcpcd: no lease after 15s, calling it ready anyway" >&2
+	echo >&3
+} &
+exec 3>&- 4>&- dhcpcd -B

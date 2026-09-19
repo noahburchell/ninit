@@ -1,5 +1,4 @@
 #!/bin/bash
 #%depon: modules-load
-
 sysctl --system >& /dev/null
 exit 0

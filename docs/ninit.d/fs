@@ -1,5 +1,11 @@
 #!/bin/bash
 #%onfail: shell
-
-mount -o remount,rw /
-mountpoint -q /usr/lib/modules || mount /usr/lib/modules
+root_ro=0 have_mods=0
+while read -r _ _ _ _ mp opts _; do
+	case $mp in
+	/) [[ ,$opts, == *,ro,* ]] && root_ro=1 ;;
+	/usr/lib/modules) have_mods=1 ;;
+	esac
+done < /proc/self/mountinfo
+((root_ro)) && { mount -o remount,rw / || exit; }
+((have_mods)) || mount /usr/lib/modules

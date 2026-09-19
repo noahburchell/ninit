@@ -1,4 +1,0 @@
-#!/bin/bash
-#%depon: udev-trigger
-
-udevadm settle

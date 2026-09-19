@@ -1,0 +1,9 @@
+#!/bin/bash
+#%onfail: stop
+#%depon: dbus, udev-trigger
+#%type: daemon
+#%notify: 3
+#%restart: always
+#%start-timeout: 10s
+{ gdbus wait --system org.freedesktop.Avahi && echo >&3; } &
+exec 3>&- avahi-daemon

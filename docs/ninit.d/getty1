@@ -2,5 +2,4 @@
 #%depon: mounts
 #%type: daemon
 #%restart: always
-
 exec agetty --noclear tty1 linux

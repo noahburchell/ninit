@@ -2,5 +2,4 @@
 #%depon: mounts
 #%type: daemon
 #%restart: always
-
-exec agetty tty5 linux
+exec smbd --foreground --no-process-group --debug-stdout
