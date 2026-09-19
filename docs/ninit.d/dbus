@@ -3,18 +3,6 @@
 #%type: daemon
 #%notify: 3
 #%restart: always
-
+#%start-timeout: 10s
 mkdir -p /run/dbus
-
-{
-	for ((n = 0; n < 500; n++)); do
-		if [ -S /run/dbus/system_bus_socket ]; then
-			echo >&3
-			exit 0
-		fi
-		sleep 0.02
-	done
-	echo "dbus: no system bus socket after 10s" >&2
-} &
-
-exec 3>&- dbus-daemon --system --nofork --nopidfile
+exec dbus-daemon --system --nofork --nopidfile --print-address=3

@@ -3,5 +3,4 @@
 #%type: daemon
 #%restart: always
 #%onfail: warn
-
 exec chronyd -n -u ntp -F 2 -f /etc/chrony/chrony.conf

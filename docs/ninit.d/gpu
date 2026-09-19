@@ -1,0 +1,5 @@
+#!/bin/bash
+#%depon: fs
+#%depof: sddm
+modprobe amdgpu || echo "modprobe amdgpu failed, sddm starts anyway" >&2
+exit 0

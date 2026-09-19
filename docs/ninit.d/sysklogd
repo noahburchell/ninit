@@ -3,5 +3,4 @@
 #%type: daemon
 #%restart: always
 #%onfail: warn
-
 exec syslogd -F -m 0 -s -s -r 10M:10

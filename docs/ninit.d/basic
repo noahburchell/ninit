@@ -1,5 +1,3 @@
 #!/bin/bash
 #%type: target
-#%depon: mounts, tmpfiles, udev-trigger, sysctl, hostname, keymaps, termencoding
-
-# ready for desktop!
+#%depon: mounts, tmpfiles, udev-trigger, sysctl, hostname, keymaps

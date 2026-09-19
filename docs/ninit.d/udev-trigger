@@ -1,5 +1,4 @@
 #!/bin/bash
-#%depon: udev, modules-load
-
-udevadm trigger --type=subsystems --action=add
-udevadm trigger --type=devices --action=add
+#%depon: udev
+exec udevadm trigger --type=all --action=add \
+	--prioritized-subsystem=module,drm,input,block,tpmrm,net,tty

@@ -1,4 +1,5 @@
 #!/bin/bash
-#%depon: kmod-static-nodes
-
-systemd-tmpfiles --prefix=/dev --create --boot
+#%depon: fs
+mkdir -p /run/tmpfiles.d
+kmod static-nodes --format=tmpfiles --output=/run/tmpfiles.d/kmod.conf
+exec systemd-tmpfiles --prefix=/dev --create --boot
