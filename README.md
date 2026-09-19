@@ -77,6 +77,46 @@ caught at build time rather than at boot (`--no-check` skips it). one exclusive
 lock covers reading and publishing, and `add`/`del` take the same lock, so a
 build always sees one coherent revision of the directory
 
+```sh
+noah@lychee ~ % ninitctl show
+depgraph  /etc/ninit.d/depgraph
+27 services, 31 edges, 6 roots, 6 levels, 7849 bytes, crc 5ac874c4
+
+  #  service       type     lvl  kills  onfail  rdy  rst  depends on
+  ───────────────────────────────────────────────────────────────────────
+  0  fs            oneshot    1     21  shell     —    —  —
+  1  hostname      oneshot    1      3  stop      —    —  —
+  2  keymaps       oneshot    1      3  stop      —    —  —
+  3  loopback      oneshot    1      1  stop      —    —  —
+  4  binfmt        oneshot    1      0  warn      —    —  —
+  5  hwclock       oneshot    1      0  warn      —    —  —
+  6  tmpfiles-dev  oneshot    2      8  stop      —    —  fs
+  7  modules-load  oneshot    2      4  stop      —    —  fs
+  8  mounts        oneshot    2      8  shell     —    —  fs
+  9  udev          daemon     3      7  stop      3  yes  tmpfiles-dev
+ 10  dbus          daemon     2      3  stop      3  yes  fs
+ 11  sysctl        oneshot    3      3  stop      —    —  modules-load
+ 12  tmpfiles      oneshot    3      3  stop      —    —  mounts
+ 13  udev-trigger  oneshot    4      4  stop      —    —  udev
+ 14  basic         target     5      2  stop      —    —  hostname keymaps mounts sysctl tmpfiles udev-trigger
+ 15  elogind       daemon     4      1  stop      3  yes  udev dbus
+ 16  gpu           oneshot    2      1  stop      —    —  fs
+ 17  avahi         daemon     5      0  stop      3  yes  dbus udev-trigger
+ 18  chronyd       daemon     2      0  warn      —  yes  fs
+ 19  dhcpcd        daemon     4      0  warn      3  yes  loopback udev
+ 20  getty1        daemon     3      0  warn      —  yes  mounts
+ 21  getty2        daemon     3      0  warn      —  yes  mounts
+ 22  samba         daemon     3      0  warn      —  yes  mounts
+ 23  sddm          daemon     6      0  warn      —  yes  basic elogind gpu
+ 24  sshd          daemon     6      0  warn      —  yes  basic
+ 25  swap          oneshot    3      0  warn      —    —  mounts
+ 26  sysklogd      daemon     2      0  warn      —  yes  fs
+
+deepest dependency chain (6 services)
+  fs → tmpfiles-dev → udev → udev-trigger → basic → sddm
+noah@lychee ~ % 
+```
+
 talking to the running system, over `/run/ninit/control`, root only:
 
 ```sh
@@ -116,7 +156,7 @@ services are stopped in dependency order across the whole graph. nothing is
 signalled until everything depending on it is gone, independent branches stop in
 parallel, and each service gets its own `stop-timeout` before SIGKILL. after that
 ninit SIGTERMs whatever is left, waits 5s, SIGKILLs, syncs, and remounts
-filesystems read-only.
+filesystems read-only
 
 `tools/shutdown.c` builds one binary that answers to `shutdown`, `poweroff`,
 `halt`, `reboot` and `telinit` by looking at `argv[0]` the way sysvinit and
@@ -145,7 +185,7 @@ start-tries, a root shell runs on the console and is respawned when it exits.
 
 by default this is an /!\ unauthenticated root shell /!\ the same bargain sysvinit
 and busybox make, but if your console is a serial port or a BMC, treat it as a
-root credential and configure with `--enable-authshell` to put sulogin in front.
+root credential and configure with `--enable-authshell` to put sulogin in front
 
 ### if you're on gentoo
 
@@ -166,7 +206,7 @@ on purpose. then skip to [services](#then)
 ### if you're on something else
 
 you have to build it, you need a c compiler and make. gcc 14+ or
-clang 18+, because the source is c23.
+clang 18+, because the source is c23
 
 grab the release tarball:
 
@@ -216,7 +256,7 @@ initramfs, link it static with `./configure LDFLAGS=-static`
 
 scripts are compiled as programs for `/bin/bash` and there is no fallback to
 another shell: the same text under a different shell is a different program.
-`--with-shell=/bin/dash --with-shell-name=dash` to change the interpreter.
+`--with-shell=/bin/dash --with-shell-name=dash` to change the interpreter
 
 ### then
 
