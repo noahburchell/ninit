@@ -1,5 +1,5 @@
 '\" t
-.TH NINITCTL 8 2026-09-23 "ninit @PACKAGE_VERSION@"
+.TH NINITCTL 8 2026-09-24 "ninit @PACKAGE_VERSION@"
 .SH NAME
 ninitctl \- compile, inspect and control the ninit service graph
 .SH SYNOPSIS
@@ -74,10 +74,10 @@ and
 .B del
 take
 .IP 2. 4
-parse every service file.
+parse every service file and strip the comments from its script.
 the first error ends the command
 .IP 3. 4
-check every script with
+check every stripped script with
 .BR "@ninit_shell@ \-n" ,
 up to 32 in parallel, and report every syntax error
 .IP 4. 4
@@ -237,7 +237,7 @@ mode, marked
 .B (set)
 or
 .BR (default) ,
-followed by its script
+followed by its script as stored, without comments
 .TP
 .BR \-h ", " \-\-help
 print a summary of the commands

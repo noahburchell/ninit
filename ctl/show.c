@@ -181,6 +181,8 @@ int cmd_show(int argc, char **argv)
 			if (sv[i].type == NG_TYPE_TARGET)
 				continue;
 			p = ng_script(map, i);
+			while (*p == '\n')
+				p++;
 
 			while (*p) {
 				const char *nl = strchr(p, '\n');

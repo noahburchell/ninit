@@ -88,9 +88,9 @@ the ebuild sets optimisation flags from these use flags and ignores `CFLAGS` and
 download and unpack the release archive:
 
 ```sh
-curl -LO https://github.com/noahburchell/ninit/releases/download/v1.0.1/ninit-1.0.1.tar.xz
-tar xf ninit-1.0.1.tar.xz
-cd ninit-1.0.1
+curl -LO https://github.com/noahburchell/ninit/releases/download/v1.0.2/ninit-1.0.2.tar.xz
+tar xf ninit-1.0.2.tar.xz
+cd ninit-1.0.2
 ```
 
 the "source code" archives github generates for each tag contain no `configure` script. a git checkout needs `./autogen.sh` first, which requires autoconf 2.69 and automake 1.16 or later
@@ -176,9 +176,9 @@ a service file is a shell script. its header is every line before the first line
 
 the `#!` line is an ordinary comment. the interpreter is always the configured one, `/bin/bash` by default. the file does not need to be executable
 
-the whole file, header included, is passed to the interpreter, so line numbers in shell errors match the file
+`ninitctl init` stores the script without its comments, indentation or trailing blanks, and with runs of blanks collapsed to one space. text inside quotes and here-documents is stored as written, and so is the rest of the file after a construct it cannot follow exactly, such as a line continuation inside a word. a removed line stays as an empty line, so line numbers in shell errors match the file
 
-a `#%` line after the header is not a directive. `ninitctl init` warns about it and treats it as a comment. lines inside a here-document are exempt from the warning
+a `#%` line after the header is not a directive. `ninitctl init` warns about it and treats it as a comment. lines inside a quoted string or a here-document are exempt from the warning
 
 a file containing a NUL byte is rejected
 
@@ -291,7 +291,7 @@ when a daemon without `restart` exits after being ready, the console shows `NAME
 
 ### 3.8 execution environment
 
-each start runs `/bin/bash -c SCRIPT NAME`, where SCRIPT is the whole file, so `$0` is the service name. the process has:
+each start runs `/bin/bash -c SCRIPT NAME`, where SCRIPT is the file as stored by `ninitctl init`, see [3.2](#32-file-format), so `$0` is the service name. the process has:
 
 - a new session and no controlling terminal
 - the cgroup `/sys/fs/cgroup/ninit.services/svc-N`, where N is the service's index in the graph, the `#` column of `ninitctl show`
@@ -361,8 +361,8 @@ ninitctl init [-d DIR] [-o FILE] [-n] [--no-check]
 `init` performs, in order:
 
 1. take an exclusive `flock` on DIR. `add` and `del` take the same lock, so a build reads one consistent state of the directory
-2. read and parse every service file, see [3](#3-service-files). the first error stops the build
-3. check every script with `bash -n`, up to 32 in parallel. every syntax error is reported with its service name, and any error stops the build
+2. read and parse every service file, see [3](#3-service-files), and strip the comments from its script. the first error stops the build
+3. check every stripped script with `bash -n`, up to 32 in parallel. every syntax error is reported with its service name, and any error stops the build
 4. resolve `depon` and `depof`, merge duplicate edges, reject cycles
 5. order the services topologically. among the services ready to be placed, roots come first, then the service with the longest chain of dependents, then the first by name
 6. resolve the default `onfail` of each service and count its dependents
@@ -441,7 +441,7 @@ deepest dependency chain (6 services)
 | `rst` | `yes` for `restart: always` |
 | `depends on` | direct prerequisites |
 
-the last line is one of the longest chains. `-v` adds under each service its effective `start-timeout`, `stop-timeout`, `start-tries`, `start-delay` and `deps`, marked `(set)` if any policy directive was given and `(default)` if not, followed by its script
+the last line is one of the longest chains. `-v` adds under each service its effective `start-timeout`, `stop-timeout`, `start-tries`, `start-delay` and `deps`, marked `(set)` if any policy directive was given and `(default)` if not, followed by its script as stored, without comments
 
 ### 4.3 add, del
 
@@ -621,7 +621,7 @@ busybox `reboot`, `poweroff` and `halt` send these signals, as does `ninit-shutd
 1. stop the services in reverse dependency order across the whole graph. a service is sent SIGTERM once every service that depends on it has stopped, and SIGKILL after its `stop-timeout`. independent branches stop in parallel. this step ends after 30 s regardless
 2. send SIGTERM to every process and wait up to 5 s for all of them to exit
 3. send SIGKILL to what remains and wait up to 2 s
-4. run `hwclock --systohc --utc`, killing it after 5 s
+4. run `hwclock --systohc --utc`, or `hwclock --systohc --localtime` if the third line of `/etc/adjtime` is `LOCAL`, killing it after 5 s
 5. `swapoff` every active swap area
 6. remove the control socket
 7. sync, then remount every filesystem read-only, most recently mounted first, in up to 3 passes. a filesystem that stays writable is unmounted. if that fails, it is synced and remounted or unmounted once more, and otherwise detached. `/` is remounted read-only last
@@ -629,7 +629,7 @@ busybox `reboot`, `poweroff` and `halt` send these signals, as does `ninit-shutd
 
 step 1 follows every dependency, including those with `deps: order`. during shutdown services are not restarted, the emergency shell is not respawned, and further shutdown signals are ignored
 
-**note** step 4 writes the system time to the hardware clock as utc. on a machine whose hardware clock keeps local time, such as one that also boots windows, this changes the hardware clock's meaning
+**note** step 4 writes the system time to the hardware clock as utc unless `/etc/adjtime` says `LOCAL`. on a machine whose hardware clock keeps local time, such as one that also boots windows, set the third line of `/etc/adjtime` to `LOCAL`, or run `hwclock --systohc --localtime` once
 
 ### 7.3 ninit-shutdown
 
@@ -759,7 +759,7 @@ services are stored in topological order, roots first at indices 0 to n_roots - 
 |---|---|
 | services in a graph | 8192 |
 | service name | 255 bytes |
-| script of a oneshot or daemon | 131071 bytes, so that it fits in one `execve()` argument |
+| script of a oneshot or daemon, without comments | 131071 bytes, so that it fits in one `execve()` argument |
 | service file | 135167 bytes |
 | `start-timeout`, `stop-timeout` | 1 ms to 24 h |
 | `start-delay` | 1 ms to 65535 ms |
@@ -796,6 +796,7 @@ services are stored in topological order, roots first at indices 0 to n_roots - 
 | `/etc/ninit.d/depgraph` | compiled graph |
 | `/etc/ninit.d/depgraph.old` | graph replaced by the last `ninitctl init` |
 | `/etc/locale.conf` | locale for services |
+| `/etc/adjtime` | hardware clock mode for `hwclock` at shutdown, `UTC` or `LOCAL` on its third line |
 | `/etc/os-release`, `/usr/lib/os-release` | name in the welcome line |
 | `/etc/shadow` | read before the emergency shell with `--enable-authshell` |
 | `/run/ninit/control` | control socket |
