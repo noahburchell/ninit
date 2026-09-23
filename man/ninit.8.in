@@ -1,5 +1,5 @@
 '\" t
-.TH NINIT 8 2026-09-23 "ninit @PACKAGE_VERSION@"
+.TH NINIT 8 2026-09-24 "ninit @PACKAGE_VERSION@"
 .SH NAME
 ninit \- init system driven by a compiled service dependency graph
 .SH SYNOPSIS
@@ -263,7 +263,15 @@ the remaining processes are sent
 waits up to 2 s
 .IP 4. 4
 .B hwclock \-\-systohc \-\-utc
-is run, and killed after 5 s
+is run, with
+.B \-\-localtime
+in place of
+.B \-\-utc
+if the third line of
+.I /etc/adjtime
+is
+.BR LOCAL ,
+and killed after 5 s
 .IP 5. 4
 every swap area in
 .I /proc/swaps
@@ -352,6 +360,13 @@ the compiled graph
 .I /etc/locale.conf
 locale variables for services
 .TP
+.I /etc/adjtime
+hardware clock mode,
+.B UTC
+or
+.B LOCAL
+on its third line, read at shutdown
+.TP
 .I /run/ninit/control
 control socket
 .TP
@@ -373,8 +388,13 @@ a root account without a usable hash, or a system on which
 .B sulogin
 cannot be executed, still receives an unauthenticated shell
 .PP
-shutdown writes the system time to the hardware clock as utc.
-this is incorrect for a hardware clock that keeps local time
+shutdown writes the system time to the hardware clock as utc unless
+.I /etc/adjtime
+says
+.BR LOCAL .
+a hardware clock that keeps local time needs
+.B LOCAL
+on the third line of that file
 .PP
 .BR ninit\-shutdown (8)
 recognises

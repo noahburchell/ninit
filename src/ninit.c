@@ -1855,12 +1855,31 @@ static int wait_pid_ms(pid_t pid, long long ms)
 	}
 }
 
+static int rtc_local(void)
+{
+	char buf[256], *p;
+	ssize_t k;
+	int fd = open("/etc/adjtime", O_RDONLY | O_CLOEXEC | O_NOCTTY);
+
+	if (fd < 0)
+		return 0;
+	k = read(fd, buf, sizeof(buf) - 1);
+	close(fd);
+	if (k <= 0)
+		return 0;
+	buf[k] = '\0';
+	p = strchr(buf, '\n');
+	if (p)
+		p = strchr(p + 1, '\n');
+	return p && !strncmp(p + 1, "LOCAL", 5) && (!p[6] || p[6] == '\n');
+}
+
 static void save_hwclock(void)
 {
-	static char arg0[] = "hwclock", arg1[] = "--systohc", arg2[] = "--utc";
-	static char *const argv[] = { arg0, arg1, arg2, NULL };
+	static char arg0[] = "hwclock", arg1[] = "--systohc", utc[] = "--utc", local[] = "--localtime";
 	static char path[] = NG_PATH;
 	static char *const envp[] = { path, NULL };
+	char *const argv[] = { arg0, arg1, rtc_local() ? local : utc, NULL };
 	pid_t pid = fork();
 
 	if (pid < 0)
