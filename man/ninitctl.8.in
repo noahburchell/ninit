@@ -1,0 +1,352 @@
+'\" t
+.TH NINITCTL 8 2026-09-23 "ninit @PACKAGE_VERSION@"
+.SH NAME
+ninitctl \- compile, inspect and control the ninit service graph
+.SH SYNOPSIS
+.B ninitctl init
+.RB [ \-d
+.IR dir ]
+.RB [ \-o
+.IR file ]
+.RB [ \-n ]
+.RB [ \-\-no\-check ]
+.br
+.B ninitctl show
+.RB [ \-v ]
+.RB [[ \-f ]
+.IR file ]
+.br
+.B ninitctl add
+.RB [ \-d
+.IR dir ]
+.RB [ \-\- ]
+.IR name ...
+.br
+.B ninitctl del
+.RB [ \-d
+.IR dir ]
+.RB [ \-\- ]
+.IR name ...
+.br
+.B ninitctl status
+.RI [ name ]
+.br
+.B ninitctl log
+.br
+.BR "ninitctl start" | stop | restart
+.I name
+.br
+.B ninitctl resume
+.br
+.B ninitctl help
+.SH DESCRIPTION
+.B ninitctl
+compiles the service directory described in
+.BR ninit.d (5)
+into the graph that
+.BR ninit (8)
+loads at boot, prints that graph, moves services in and out of use, and sends commands to the running
+.BR ninit .
+.PP
+.BR init ,
+.BR show ,
+.B add
+and
+.B del
+operate on files and do not require
+.B ninit
+to be running.
+the other commands connect to
+.IR /run/ninit/control ,
+which only root can open
+.SH CONFIGURATION COMMANDS
+.TP
+.B init
+compile the service directory and write the graph.
+the steps are:
+.RS
+.IP 1. 4
+take an exclusive
+.BR flock (2)
+on the service directory, the same lock
+.B add
+and
+.B del
+take
+.IP 2. 4
+parse every service file.
+the first error ends the command
+.IP 3. 4
+check every script with
+.BR "@ninit_shell@ \-n" ,
+up to 32 in parallel, and report every syntax error
+.IP 4. 4
+resolve dependencies and reject unknown names, self dependencies and cycles
+.IP 5. 4
+order the services topologically, placing services without prerequisites first, then the service with the longest chain of dependents, then by name
+.IP 6. 4
+resolve the default
+.B onfail
+of each service
+.IP 7. 4
+verify the result with the checks
+.B ninit
+applies at boot
+.IP 8. 4
+write it to a temporary file and
+.BR fsync (2)
+it, link the existing graph to
+.IB file .old\c
+, rename the temporary file to
+.IR file ,
+and
+.BR fsync (2)
+the directory
+.RE
+.IP
+nothing is written if any step fails, and an existing
+.I file
+that is not a graph is never replaced.
+the graph has mode 0644, less group or other read permission if any service file lacks it, less the umask.
+.B init
+warns about daemons that have dependents and no
+.BR notify ,
+about a missing or empty
+.IR /etc/locale.conf ,
+and about directives after the header
+.TP
+.B show
+verify a graph and print it as a table, followed by one of its longest dependency chains
+.TP
+.B add
+move each
+.IR dir /unused/ name
+to
+.IR dir / name
+.TP
+.B del
+move each
+.IR dir / name
+to
+.IR dir /unused/ name ,
+creating
+.IR dir /unused
+if needed
+.PP
+.B add
+and
+.B del
+never replace an existing file.
+a relative symbolic link is rewritten to resolve to the same target from its new location.
+neither command rebuilds the graph
+.SH RUNTIME COMMANDS
+.TP
+.B status
+print the state of every service, or of
+.I name
+.TP
+.B log
+print the retained
+.B WARN
+and
+.B FAIL
+lines, oldest first, up to 64
+.TP
+.B start
+clear the hold on
+.IR name ,
+reset its start attempts and restart delay, and start it.
+the command returns when the service is ready or has failed, and fails if neither happens within its
+.B start-timeout
+plus 2 s.
+it is refused if the service is running or its previous instance has not exited.
+if a prerequisite is not up it is refused, and the service is left pending to start when its prerequisites are up.
+a oneshot that has completed is run again
+.TP
+.B stop
+hold
+.IR name ,
+send it
+.BR SIGTERM ,
+and send
+.B SIGKILL
+when its
+.B stop-timeout
+expires.
+the command returns when the service has stopped, and fails if it has not stopped 2 s after
+.BR SIGKILL .
+dependents are not stopped
+.TP
+.B restart
+.B stop
+then
+.BR start ,
+or
+.B start
+alone if
+.I name
+is already stopped
+.TP
+.B resume
+return every failed and skipped service to pending, reset its start attempts, and start each whose prerequisites are up
+.TP
+.B help
+print a summary of the commands
+.PP
+a held service is not restarted, not started when its prerequisites come up, and not started by
+.BR resume .
+a service accepts one operation at a time.
+targets cannot be started, stopped or restarted.
+an operation continues if
+.B ninitctl
+is interrupted
+.SH OPTIONS
+.TP
+.BR \-d ", " \-\-dir " \fIdir\fR"
+service directory.
+default
+.I @ninit_svcdir@
+.TP
+.BR \-o ", " \-\-out " \fIfile\fR"
+output of
+.BR init .
+default
+.IR dir /depgraph
+.TP
+.BR \-f ", " \-\-file " \fIfile\fR"
+graph read by
+.BR show .
+default
+.I @ninit_svcdir@/depgraph
+.TP
+.BR \-n ", " \-\-dry\-run
+perform every step of
+.B init
+except writing the output
+.TP
+.B \-\-no\-check
+skip the syntax check of
+.B init
+.TP
+.BR \-v ", " \-\-verbose
+with
+.BR show ,
+print under each service its effective timeouts, start attempts, start delay and
+.B deps
+mode, marked
+.B (set)
+or
+.BR (default) ,
+followed by its script
+.TP
+.BR \-h ", " \-\-help
+print a summary of the commands
+.SH OUTPUT
+the columns of
+.B show
+are:
+.TP
+.B #
+index in the graph, which also names the service's cgroup,
+.BI svc\- #
+.TP
+.B lvl
+number of services in the longest prerequisite chain ending at the service, the service included
+.TP
+.B kills
+number of services that depend on the service directly or indirectly, which are skipped if it fails
+.TP
+.B onfail
+effective failure policy
+.TP
+.B rdy
+notify descriptor
+.TP
+.B rst
+.B yes
+if the service has
+.B restart: always
+.TP
+.B depends on
+direct prerequisites
+.PP
+the columns of
+.B status
+are index, name, state and main process id, and
+.B held
+when any service is held.
+the states are:
+.TP
+.B pending
+not started, or stopped before it became ready
+.TP
+.B starting
+spawned and not yet ready
+.TP
+.B up
+ready and still up
+.TP
+.B down
+was ready and has since exited or been stopped
+.TP
+.B failed
+exhausted its start attempts
+.TP
+.B skipped
+not started because a prerequisite failed or went down
+.PP
+output to a terminal is coloured
+.SH EXIT STATUS
+.TP
+.B 0
+success
+.TP
+.B 1
+failure, including a failure reported by
+.B ninit
+and an unreachable control socket
+.TP
+.B 2
+usage error
+.SH FILES
+.TP
+.I @ninit_svcdir@
+service directory
+.TP
+.I @ninit_svcdir@/unused
+disabled services
+.TP
+.I @ninit_svcdir@/depgraph
+compiled graph
+.TP
+.I @ninit_svcdir@/depgraph.old
+graph replaced by the last
+.B init
+.TP
+.I /run/ninit/control
+control socket
+.SH EXAMPLES
+check the service directory without writing anything, then compile it:
+.PP
+.EX
+ninitctl init \-n
+ninitctl init
+.EE
+.PP
+disable a service and rebuild:
+.PP
+.EX
+ninitctl del sshd
+ninitctl init
+.EE
+.PP
+retry everything that failed during boot:
+.PP
+.EX
+ninitctl log
+ninitctl resume
+.EE
+.SH SEE ALSO
+.BR ninit (8),
+.BR ninit.d (5),
+.BR ninit\-shutdown (8)

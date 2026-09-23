@@ -5,6 +5,7 @@
 /ninit
 /ninitctl
 /ninit-shutdown
+/man/*.[58]
 *.o
 *.a
 *.lo

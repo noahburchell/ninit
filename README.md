@@ -1,84 +1,397 @@
 # ninit
 ### small init for any linux distro
-### get it: [gentoo](#if-youre-on-gentoo) | [source](#if-youre-on-something-else)
+### get it: [gentoo](#21-gentoo) | [source](#22-from-source)
 
-faster than sysvinit. one file per service, a compiled dependency graph, cgroup
-tracking, and a control socket.
+ninit is an init system for linux. each service is a shell script in its own file, with its dependencies and policy declared in comment directives. `ninitctl init` compiles the service directory into one binary dependency graph. at boot ninit loads that graph once, verifies it, and starts each service as soon as its prerequisites are ready, independent services in parallel. every service runs in its own cgroup. a unix socket exposes the running state to `ninitctl`
 
-### service files
+## contents
 
-one per service in `/etc/ninit.d`, named after the service. it's a bash script.
-directives are `#%key: value` comments and must come before the first command
-a directive after code is an error
+- [1 overview](#1-overview)
+- [2 installation](#2-installation)
+- [3 service files](#3-service-files)
+- [4 compiling the graph](#4-compiling-the-graph)
+- [5 boot](#5-boot)
+- [6 runtime control](#6-runtime-control)
+- [7 shutdown](#7-shutdown)
+- [8 emergency shell](#8-emergency-shell)
+- [9 depgraph format](#9-depgraph-format)
+- [10 limits](#10-limits)
+- [11 files](#11-files)
+- [contact](#contact)
+- [license](#license)
+
+## 1 overview
+
+### 1.1 components
+
+| program | source | function |
+|---|---|---|
+| `ninit` | `src/` | pid 1. mounts the kernel filesystems, loads the graph, starts and supervises services, serves the control socket, shuts the system down |
+| `ninitctl` | `ctl/` | compiles and prints the graph, enables and disables services, sends commands to the running ninit |
+| `ninit-shutdown` | `tools/shutdown.c` | `shutdown`, `poweroff`, `halt`, `reboot` and `telinit` for a system running ninit |
+
+all three are installed into sbindir. the manual pages `ninit(8)`, `ninitctl(8)`, `ninit-shutdown(8)` and `ninit.d(5)` are installed into mandir unless ninit is configured with `--disable-man`
+
+### 1.2 terms
+
+| term | definition |
+|---|---|
+| service | one file in the service directory. its name is the filename |
+| prerequisite | a service that must be up before another may start |
+| dependent | a service that has this one as a prerequisite, directly or through other services |
+| root | a service with no prerequisites. roots are started at boot |
+| ready | the event that makes a service up. defined per type in [3.4](#34-types-and-readiness) |
+| up | ready, and not since exited or stopped |
+| held | stopped by `ninitctl stop`. a held service is not started again until `ninitctl start` or `ninitctl restart` |
+| graph, depgraph | the compiled form of the service directory, `/etc/ninit.d/depgraph` by default |
+
+### 1.3 requirements
+
+- linux. `configure` rejects any other host
+- a c23 compiler, gcc 14 or later or clang 18 or later, and make
+- bash at `/bin/bash`, or the interpreter chosen with `--with-shell`, when the first service starts
+- `/bin/sh` for the emergency shell
+- cgroup v2 for service containment. forking directly into a cgroup uses `CLONE_INTO_CGROUP` (linux 5.7). SIGKILL is delivered through `cgroup.kill` (linux 5.14). without cgroup v2 services are contained by process group only
+- optional: `hwclock` at shutdown, `sulogin` for `--enable-authshell`, `dbus-send` and elogind for `ninit-shutdown` run without root
+
+### 1.4 scope
+
+ninit mounts only the kernel filesystems listed in [5.2](#52-initialisation). it does not remount the root filesystem, mount fstab entries, enable swap, set the hostname, load modules or keymaps, run udev, or start gettys. each of these is a service. `docs/ninit.d/` contains one complete set, see [3.11](#311-examples)
+
+## 2 installation
+
+### 2.1 gentoo
+
+ninit is packaged in the nburch overlay:
+
+```sh
+emerge --ask app-eselect/eselect-repository
+eselect repository add nburch git https://github.com/noahburchell/nburch-overlay.git
+emaint sync --repo nburch
+emerge --ask sys-apps/ninit
+```
+
+| use flag | configure option |
+|---|---|
+| `o3` | `--enable-o3` |
+| `lto` | `--enable-lto` |
+| `native` | `--enable-native` |
+| `quiet` | `--enable-quiet` |
+| `authshell` | `--enable-authshell` |
+| `busybox` | `--with-busybox` |
+| `debug` | `--enable-debug` |
+
+the ebuild sets optimisation flags from these use flags and ignores `CFLAGS` and `LDFLAGS` from make.conf. continue at [2.5](#25-setup)
+
+### 2.2 from source
+
+download and unpack the release archive:
+
+```sh
+curl -LO https://github.com/noahburchell/ninit/releases/download/v1.0.1/ninit-1.0.1.tar.xz
+tar xf ninit-1.0.1.tar.xz
+cd ninit-1.0.1
+```
+
+the "source code" archives github generates for each tag contain no `configure` script. a git checkout needs `./autogen.sh` first, which requires autoconf 2.69 and automake 1.16 or later
+
+build and install:
+
+```sh
+./configure --prefix=/usr
+make -j"$(nproc)"
+sudo make install
+sudo make tools-install   # optional, see 7.3
+```
+
+the default prefix is `/usr/local`, which installs into `/usr/local/sbin`. `--prefix=/usr` installs into `/usr/sbin`
+
+builds out of tree are supported and leave the source directory untouched:
+
+```sh
+mkdir build && cd build && ../configure && make
+```
+
+`make` prefixes each compile and link command with a progress counter. `make V=1` prints the plain automake commands instead. `./configure LDFLAGS=-static` links statically, as required for an initramfs whose libc differs from the build host's
+
+`configure` starts from an empty `CFLAGS` and supplies its own warning and optimisation flags. `CFLAGS` given to `configure` or `make` are appended after them
+
+### 2.3 configure options
+
+| option | effect |
+|---|---|
+| `--enable-o3` | `-O3` instead of `-O2` |
+| `--enable-lto` | link time optimisation. `-flto=thin` with clang, `-flto=auto` with gcc |
+| `--enable-native` | `-march=native -mtune=native`. the binaries may not run on a different cpu |
+| `--enable-quiet` | only `WARN` and `FAIL` lines are printed on the console. service output is not echoed |
+| `--enable-authshell` | run sulogin in front of the emergency shell, see [8](#8-emergency-shell) |
+| `--with-busybox[=PATH]` | try PATH before `/bin/sh` for the emergency shell. PATH defaults to `/bin/busybox` |
+| `--with-shell=PATH` | interpreter for service scripts. default `/bin/bash` |
+| `--with-shell-name=NAME` | `argv[0]` for that interpreter. default the basename of PATH |
+| `--with-service-dir=DIR` | service directory. default `/etc/ninit.d`. the graph is `DIR/depgraph` |
+| `--disable-man` | do not build or install the manual pages |
+| `--enable-werror` | warnings are errors |
+| `--enable-debug` | `-O0 -g3` with ASan and UBSan. not for use as pid 1. cannot be combined with `--enable-lto` |
+
+a service script is a program for one interpreter, and the same text under another shell is a different program, so there is no fallback to another shell. `--with-shell` also selects the interpreter `ninitctl init` uses for its syntax check. dash, for example, is `--with-shell=/bin/dash --with-shell-name=dash`
+
+### 2.4 make targets
+
+| target | effect |
+|---|---|
+| `install` | install `ninit`, `ninitctl` and `ninit-shutdown` into sbindir and the manual pages into mandir, and create the service directory |
+| `tools-install` | `install`, then link `shutdown`, `poweroff`, `halt`, `reboot` and `telinit` to `ninit-shutdown`, see [7.3](#73-ninit-shutdown) |
+| `tools-uninstall` | restore the originals saved by `tools-install` and remove `ninit-shutdown` |
+| `graph` | run the freshly built `ninitctl init` on the configured service directory |
+| `dist` | build `ninit-VERSION.tar.xz` |
+
+### 2.5 setup
+
+1. write the service files into `/etc/ninit.d`, see [3](#3-service-files)
+2. run `ninitctl init -n` and correct everything it reports
+3. run `ninitctl init` to write the graph
+4. add a boot entry with `init=` pointing at ninit and keep the existing entry as the default, see [5.1](#51-kernel-command-line)
+5. after booting, run `ninitctl log` to list the warnings and failures of the boot
+
+steps 2 and 3 are repeated after every change to a service file
+
+## 3 service files
+
+### 3.1 service directory
+
+every regular file in the service directory is one service, named after the file. symlinks are followed. `ninitctl init` skips:
+
+- names beginning with `.`
+- directories and any other file that is not regular
+- the reserved names `unused`, `depgraph`, `depgraph.old` and `depgraph.tmp`
+- any file that is itself a compiled graph
+
+a name must be 1 to 255 bytes and must not contain `/`, `,`, whitespace or control characters. names ending in `~` or enclosed in `#` are rejected as editor files. an invalid name fails the build
+
+`DIR/unused/` holds disabled services and is not read by `ninitctl init`. `ninitctl del` and `ninitctl add` move files into and out of it, see [4.3](#43-add-del)
+
+### 3.2 file format
+
+a service file is a shell script. its header is every line before the first line that is neither blank nor a comment. a directive is a header line of the form `#%key: value`. whitespace around the key and the value is ignored
+
+the `#!` line is an ordinary comment. the interpreter is always the configured one, `/bin/bash` by default. the file does not need to be executable
+
+the whole file, header included, is passed to the interpreter, so line numbers in shell errors match the file
+
+a `#%` line after the header is not a directive. `ninitctl init` warns about it and treats it as a comment. lines inside a here-document are exempt from the warning
+
+a file containing a NUL byte is rejected
+
+a daemon with a readiness probe:
 
 ```sh
 #!/bin/bash
-#%type: daemon            oneshot (default), daemon, or target
-#%depon: fs, udev         services that must be complete first
-#%depof: multi-user       services that must wait for this one
-#%onfail: stop            warn, stop, shell
-#%restart: always         daemon only: respawn after it has reported ready
-#%notify: 3               daemon only: ready once it writes a newline to this fd
-#%start-timeout: 90s      how long it may take to become ready (default 90s)
-#%stop-timeout: 5s        how long it gets after SIGTERM before SIGKILL (5s)
-#%start-tries: 2          attempts before onfail decides (oneshot 1, daemon 2)
-#%start-delay: 0s         wait between those attempts (default none)
-#%deps: uptime            uptime (default) or order
+#%depon: dbus, udev
+#%type: daemon
+#%notify: 3
+#%restart: always
+#%start-timeout: 10s
+{ gdbus wait --system org.freedesktop.login1 && echo >&3; } &
+exec 3>&- /lib/elogind/elogind
 ```
 
-durations take `ms`, `s`, `m` or `h`, or a count of milliseconds
+### 3.3 directives
 
-types:
-  - oneshot: complete when it exits 0
-  - daemon: complete when it writes a newline to its notify fd, or right after spawn if it has none
-  - target: no commands, complete when its dependencies are
+| directive | value | default | meaning |
+|---|---|---|---|
+| `type` | `oneshot`, `daemon`, `target` | `oneshot` if the file has commands, `target` if not | how the service becomes ready, see [3.4](#34-types-and-readiness) |
+| `depon` | service names | none | prerequisites of this service |
+| `depof` | service names | none | services this one is a prerequisite of |
+| `deps` | `uptime`, `order` | `uptime` | what the dependents of this service require of it, see [3.5](#35-dependencies) |
+| `onfail` | `warn`, `stop`, `shell` | `stop` if the service has dependents, `warn` if not | action once `start-tries` are exhausted, see [3.6](#36-start-failures) |
+| `start-tries` | 1 to 250 | 1 for a oneshot, 2 for a daemon | start attempts before `onfail` applies |
+| `start-delay` | duration, at most 65535 ms | 0, applied as 10 ms | delay between start attempts |
+| `start-timeout` | duration | 90 s | time allowed from spawn to ready |
+| `stop-timeout` | duration | 5 s | time allowed from SIGTERM to SIGKILL |
+| `restart` | `always`, `no` | `no` | daemons only. respawn after an exit once it has been ready, see [3.7](#37-restart). `never` is accepted for `no` |
+| `notify` | 3 to 255 | none | daemons only. the fd on which the daemon reports readiness |
+| `name` | the filename | none | optional. the build fails if it differs from the filename |
 
-the rules worth knowing:
-  - `start-tries` is the startup budget, `restart` is supervision and only begins once a daemon has reported ready. a daemon that keeps dying before it is ready is broken, not one to respawn forever
-  - `deps: uptime` means a dependent may only start while this service is up. `deps: order` means it only needs to have started once. it is set on the service that others depend ON
-  - a target goes down if anything behind it dies, and so does everything waiting on it
-  - without `onfail` the policy is `stop` when something depends on the service and `warn` when nothing does
-  - services get their own cgroup under `/sys/fs/cgroup/ninit.services` and are killed with `cgroup.kill`, so `setsid()` can't escape. on linux 5.7+ a service is forked straight into its cgroup, otherwise it joins right after the fork. without cgroup v2 it falls back to the process group and says so
-  - they run with stdin on `/dev/null`, stdout and stderr through ninit, only `PATH` `HOME=/` and `TERM=linux`, in their own session with no controlling terminal. console output is prefixed with the service name and the last KiB is printed on failure
+- keys are lowercase and case sensitive
+- names in `depon` and `depof` are separated by commas, whitespace or both
+- `depon` and `depof` may be repeated and accumulate. any other repeated directive takes its last value
+- a duration is a decimal integer with an optional unit, `ms`, `s`, `m` or `h`. no unit means milliseconds. zero is rejected. the maximum is 24 h
+- an unknown key, a directive without `:`, or an invalid value fails the build
 
-a daemon must run in the foreground: `exec` the real binary with whatever flag
-stops it daemonising (`-n`, `--nofork`, `--foreground`). a script that forks and
-returns is reported complete and then immediately treated as dead. a readiness
-probe belongs in a background subshell of the same script, which writes the
-newline while the main shell execs the daemon
+### 3.4 types and readiness
 
-a shell on the console has to take the tty itself:
+a service is ready when its dependents may start. readiness makes it up and releases its dependents
+
+| type | commands | ready when |
+|---|---|---|
+| `oneshot` | required | the script exits with status 0 |
+| `daemon` with `notify: N` | required | data containing a newline is written to fd N |
+| `daemon` without `notify` | required | the interpreter has been executed |
+| `target` | forbidden | all of its prerequisites are up |
+
+a oneshot stays up after it exits. a daemon is up until its main process exits. a target has no process, and goes down when a prerequisite with `deps: uptime` goes down
+
+a daemon with `notify: N` is started with the write end of a pipe on fd N. bytes other than the newline are ignored. if every copy of the write end is closed before a newline arrives, the start fails with `closed its notify fd before reporting ready`
+
+a daemon without `notify` is ready as soon as it is spawned, so its dependents do not wait for it to be serving. `ninitctl init` lists every daemon that has dependents and no `notify`
+
+a start attempt fails when:
+
+- a oneshot exits nonzero or is killed by a signal
+- a daemon exits before it is ready
+- a daemon closes its notify fd before it is ready
+- the service is not ready within `start-timeout` of being spawned, in which case it is killed. this applies to oneshots as well
+
+### 3.5 dependencies
+
+`depon: a` in service x makes a a prerequisite of x. `depof: y` in service x makes x a prerequisite of y. both produce the same edge. `depof` lets a service place itself before another without editing it
+
+a name that matches no service, a service that depends on itself, and a dependency cycle each fail the build. a cycle is printed as `a -> b -> a`
+
+a service is started as soon as all of its prerequisites are up. roots are started at boot
+
+`deps` is set on the prerequisite and defines what its dependents require of it:
+
+| `deps` | meaning |
+|---|---|
+| `uptime` | dependents may start only while this service is up. while it is down they cannot be started or restarted, and targets that depend on it are down |
+| `order` | dependents may start once this service has been ready once. later exits do not affect them |
+
+a dependent that is already running is never stopped because a prerequisite went down
+
+### 3.6 start failures
+
+a failed start attempt kills the service's cgroup and process group. if attempts remain, the service is started again after `start-delay`, at least 10 ms later. the console shows `NAME: failed (REASON), retrying (A of T)`
+
+when `start-tries` attempts have failed, the service is failed. the console shows `NAME: failed T times (REASON)` followed by the last 1 KiB of its output, and `onfail` applies:
+
+| `onfail` | effect |
+|---|---|
+| `warn` | nothing beyond the report. valid only for a service with no dependents |
+| `stop` | every dependent that has not started is marked skipped and will not start. services outside that set continue |
+| `shell` | as `stop`, and the emergency shell is started, see [8](#8-emergency-shell) |
+
+the default is `stop` for a service with dependents and `warn` for one without. `onfail: warn` on a service with dependents fails the build
+
+`onfail` applies only to starting. an exit after the service has been ready is handled as described in [3.7](#37-restart)
+
+REASON is one of `exit N`, `killed by SIGNAME`, `killed by SIGNAME (core dumped)`, `timed out and was killed` or `closed its notify fd before reporting ready`
+
+`ninitctl resume` returns every failed and skipped service to pending and starts those that can start, see [6](#6-runtime-control)
+
+### 3.7 restart
+
+`restart: always` supervises a daemon after it has been ready once. before that only `start-tries` applies, and a daemon that never becomes ready fails like any other service
+
+when a daemon with `restart: always` exits, it goes down, its cgroup and process group are killed, and it is started again after a delay of 100, 250, 500, 1000 and 2000 ms, then 5000 ms for every further exit. the delay returns to 100 ms once the daemon has stayed up for 10 s. the console shows `NAME: exited (REASON) after N ms up, restarting in D ms`, followed by the output tail on the first exit of a sequence
+
+a respawned daemon that fails to become ready is killed and started again on the same schedule, without limit. a restart is postponed while a prerequisite with `deps: uptime` is down, and made when that prerequisite is up again. a held service is not restarted
+
+when a daemon without `restart` exits after being ready, the console shows `NAME: exited (REASON) after N ms up` and the output tail, its cgroup is killed, and if it has `deps: uptime`, every dependent that has not started is marked skipped
+
+### 3.8 execution environment
+
+each start runs `/bin/bash -c SCRIPT NAME`, where SCRIPT is the whole file, so `$0` is the service name. the process has:
+
+- a new session and no controlling terminal
+- the cgroup `/sys/fs/cgroup/ninit.services/svc-N`, where N is the service's index in the graph, the `#` column of `ninitctl show`
+- stdin on `/dev/null`, stdout and stderr on a pipe read by ninit
+- the notify pipe on fd N if `notify: N` is set. every other descriptor is closed
+- the environment `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, `HOME=/`, `TERM=linux`, and the locale variables from `/etc/locale.conf`. nothing else is inherited
+- an empty signal mask and the default disposition for every signal
+- working directory `/` and umask `022`
+- `RLIMIT_NOFILE` of 1024 soft and 524288 hard, or ninit's hard limit if that is lower
+- `oom_score_adj` 0. ninit itself runs at -1000
+- uid 0, gid 0 and every capability. ninit changes no credentials. dropping privileges is left to the script or the daemon
+
+`/etc/locale.conf` is read once at boot. it holds `NAME=value` lines for `LANG` and the `LC_*` variables, with optionally quoted values made of letters, digits, `_`, `.`, `-` and `@`, and `#` comments. a later assignment overrides an earlier one. an invalid line is skipped with a warning. without the file, or with no locale variable in it, services get `LANG=C.UTF-8` and `ninitctl init` warns
+
+on linux 5.7 and later the process is created inside its cgroup by `clone3()` with `CLONE_INTO_CGROUP`. on older kernels it is forked and joins the cgroup before exec. if it cannot join, it prints `ninit: could not join its cgroup` on its own output and is contained by its process group only. if `/sys/fs/cgroup` is not cgroup2, or `ninit.services` cannot be created in it, every service is contained by process group only and ninit logs this at boot
+
+a signal sent to a service reaches every process in its cgroup and its process group. SIGKILL is delivered through `cgroup.kill`, which also reaches processes that have forked or called `setsid()`. on kernels without `cgroup.kill`, before 5.14, SIGKILL reaches the process group only
+
+a service is stopped when its main process has been reaped and its cgroup is empty. without cgroups it is stopped when its main process has been reaped
+
+processes a oneshot leaves running after it exits remain in its cgroup. they are signalled by `ninitctl stop` and at shutdown
+
+### 3.9 output
+
+each line a service writes to stdout or stderr is printed on the console as `NAME: line` at `NOTE` level. lines longer than 256 bytes are split. with `--enable-quiet` service output is not printed
+
+the last 1024 bytes of output are kept per service and printed with the failure messages described in [3.6](#36-start-failures) and [3.7](#37-restart)
+
+### 3.10 writing daemons
+
+the main process of a daemon must stay in the foreground. `exec` the daemon binary with its option not to fork, such as `-n`, `-D`, `--nofork` or `--foreground`. when the main process exits the service has exited: a script that starts a forking daemon and returns is treated as a daemon that died, and its cgroup, the forked daemon included, is killed
+
+a daemon with no readiness mechanism of its own is given one by a probe in a background subshell of the same script, as in the example in [3.2](#32-file-format). the subshell writes the newline once the probe succeeds. the main shell closes its own copy of the fd with `3>&-` and execs the daemon, so the pipe reaches end of file if the probe exits without reporting, and the start fails at once instead of at `start-timeout`
+
+a daemon that can report readiness on a descriptor writes to it directly, such as `dbus-daemon --print-address=3` with `notify: 3`
+
+services have no controlling terminal, and opening `/dev/console` does not acquire one. an interactive shell on the console acquires it explicitly:
 
 ```sh
 #%type: daemon
 exec setsid -c bash -i < /dev/console > /dev/console 2>&1
 ```
 
-or use a real getty
+a getty acquires its terminal itself, as in `exec agetty --noclear tty1 linux`
 
-examples are in `docs/ninit.d/`. warning: they're written for my machine
-my filesystem drivers are `=y` so udev runs after the `/usr/lib/modules` mount
+### 3.11 examples
 
-you most likely shouldnt use them like this
+`docs/ninit.d/` is the complete service set of one gentoo system running elogind, sddm and dhcpcd. it assumes filesystem drivers built into the kernel, so udev starts after `/usr/lib/modules` is mounted. it is not portable without review
 
-### ninitctl
+## 4 compiling the graph
 
-compiling the graph:
+`ninitctl` has configuration commands, described here, and runtime commands, described in [6](#6-runtime-control). `ninitctl help` prints a summary of both
 
-```sh
-ninitctl init            # compile /etc/ninit.d into /etc/ninit.d/depgraph
-ninitctl init -n         # check everything, write nothing
-ninitctl show -v         # print the compiled graph and scripts
-ninitctl add|del NAME... # move services between /etc/ninit.d and /etc/ninit.d/unused
+### 4.1 init
+
+```
+ninitctl init [-d DIR] [-o FILE] [-n] [--no-check]
 ```
 
-`init` checks each script with `bash -n` before publishing, so a syntax error is
-caught at build time rather than at boot (`--no-check` skips it). one exclusive
-lock covers reading and publishing, and `add`/`del` take the same lock, so a
-build always sees one coherent revision of the directory
+| option | effect |
+|---|---|
+| `-d`, `--dir DIR` | service directory. default `/etc/ninit.d` |
+| `-o`, `--out FILE` | output file. default `DIR/depgraph` |
+| `-n`, `--dry-run` | perform every step except writing the output |
+| `--no-check` | skip the syntax check |
 
-```sh
-noah@lychee ~ % ninitctl show
+`init` performs, in order:
+
+1. take an exclusive `flock` on DIR. `add` and `del` take the same lock, so a build reads one consistent state of the directory
+2. read and parse every service file, see [3](#3-service-files). the first error stops the build
+3. check every script with `bash -n`, up to 32 in parallel. every syntax error is reported with its service name, and any error stops the build
+4. resolve `depon` and `depof`, merge duplicate edges, reject cycles
+5. order the services topologically. among the services ready to be placed, roots come first, then the service with the longest chain of dependents, then the first by name
+6. resolve the default `onfail` of each service and count its dependents
+7. build the image and verify it with the checks ninit applies at boot
+8. write it to a temporary file in the output directory and fsync it, hard link the current graph to `FILE.old`, rename the new file over FILE, fsync the directory
+
+a failed build writes nothing and leaves the existing graph in place. if FILE exists and is not a graph, the build fails instead of replacing it. the output mode is 0644 less the umask, and less group or other read permission if any service file lacks it
+
+on success `init` prints `FILE: N services, E edges, R roots, B bytes`. `-n` prints `FILE: would write` followed by the same figures and the mode
+
+`init` warns about:
+
+- daemons that have dependents and no `notify`, see [3.4](#34-types-and-readiness)
+- a missing `/etc/locale.conf`, or one that sets no locale variable
+- a `#%` line after the header
+- a file with a reserved name that is not a graph
+
+the running ninit does not read the new graph. it takes effect at the next boot
+
+### 4.2 show
+
+```
+ninitctl show [-f FILE | FILE] [-v]
+```
+
+`show` verifies FILE, default `/etc/ninit.d/depgraph`, and prints it:
+
+```
+$ ninitctl show
 depgraph  /etc/ninit.d/depgraph
 27 services, 31 edges, 6 roots, 6 levels, 7849 bytes, crc 5ac874c4
 
@@ -114,182 +427,385 @@ depgraph  /etc/ninit.d/depgraph
 
 deepest dependency chain (6 services)
   fs → tmpfiles-dev → udev → udev-trigger → basic → sddm
-noah@lychee ~ % 
 ```
 
-talking to the running system, over `/run/ninit/control`, root only:
+| column | meaning |
+|---|---|
+| `#` | index in the graph. the service's cgroup is `svc-#` |
+| `service` | name. roots are shown in green on a terminal |
+| `type` | `oneshot`, `daemon` or `target` |
+| `lvl` | number of services in the longest prerequisite chain ending at this one, itself included |
+| `kills` | number of services that depend on it, directly or not. these are skipped if it fails |
+| `onfail` | effective failure policy |
+| `rdy` | notify fd |
+| `rst` | `yes` for `restart: always` |
+| `depends on` | direct prerequisites |
+
+the last line is one of the longest chains. `-v` adds under each service its effective `start-timeout`, `stop-timeout`, `start-tries`, `start-delay` and `deps`, marked `(set)` if any policy directive was given and `(default)` if not, followed by its script
+
+### 4.3 add, del
+
+```
+ninitctl del [-d DIR] [--] NAME...
+ninitctl add [-d DIR] [--] NAME...
+```
+
+`del` moves `DIR/NAME` to `DIR/unused/NAME`, creating `unused/` if needed. `add` moves it back. neither replaces an existing file. a relative symlink is rewritten so that it resolves to the same target from its new location. both take the lock described in [4.1](#41-init). neither rebuilds the graph
+
+### 4.4 exit status
+
+| status | meaning |
+|---|---|
+| 0 | success |
+| 1 | failure, including a failure reported by ninit |
+| 2 | usage error |
+
+this applies to every `ninitctl` command
+
+## 5 boot
+
+### 5.1 kernel command line
+
+```
+init=/usr/sbin/ninit
+```
+
+the path is wherever ninit was installed. `ninit-shutdown` identifies ninit by `/proc/1/comm`, which the kernel takes from the name of the file it executes, so pid 1 must be started through a path whose last component is `ninit`, not through a link named `init`
+
+add `init=` to a second boot entry and keep the entry for the existing init as the default until the new setup has booted successfully. a systemd-boot entry:
+
+```
+title    linux (ninit)
+linux    /vmlinuz-linux
+options  root=PARTUUID=... rw init=/usr/sbin/ninit
+```
+
+ninit does not remount the root filesystem. it stays as the kernel mounted it, read-only unless the command line has `rw`, until a service remounts it
+
+`ninit_graph=PATH` selects a different graph. an argument that ninit receives beginning with `/` takes precedence over it. the kernel passes arguments after `--` to init unchanged, and elsewhere drops bare arguments that contain a `.`, so a path is normally given as `ninit_graph=`. the previous graph, `/etc/ninit.d/depgraph.old`, can be booted this way
+
+### 5.2 initialisation
+
+ninit performs, in order:
+
+1. exit with status 1 if it is not pid 1
+2. open `/dev/null` on any of fd 0 to 2 that is closed. set umask `022` and working directory `/`
+3. block every signal except SIGSEGV, SIGBUS, SIGILL and SIGFPE, receive SIGCHLD, SIGTERM, SIGINT, SIGUSR1 and SIGUSR2 through a signalfd, and have ctrl-alt-del send SIGINT
+4. mount each filesystem below that is not already mounted, creating the mount point. a failure is logged as a warning
+5. create the links `/dev/fd`, `/dev/stdin`, `/dev/stdout` and `/dev/stderr`, and `/dev/core` if `/proc/kcore` exists
+6. create `/sys/fs/cgroup/ninit.services`, or fall back to process groups
+7. create `/run/ninit` with mode 0700 and listen on `/run/ninit/control` with mode 0600
+8. set its own `oom_score_adj` to -1000
+9. write its log to `/dev/console`
+10. raise its own `RLIMIT_NOFILE`
+11. read `/etc/locale.conf`
+12. print `Welcome to NAME!`, where NAME is `PRETTY_NAME` from `/etc/os-release` or `/usr/lib/os-release`
+13. load and verify the graph. on failure, start the emergency shell
+14. start every root
+
+| mount point | type | options |
+|---|---|---|
+| `/proc` | proc | nosuid, noexec, nodev |
+| `/sys` | sysfs | nosuid, noexec, nodev |
+| `/dev` | devtmpfs | nosuid, mode=0755 |
+| `/run` | tmpfs | nosuid, nodev, mode=0755 |
+| `/dev/pts` | devpts | nosuid, noexec, mode=0620, gid=5, ptmxmode=0666 |
+| `/dev/shm` | tmpfs | nosuid, nodev, mode=1777 |
+| `/sys/fs/cgroup` | cgroup2 | nosuid, noexec, nodev, nsdelegate |
+
+the control socket exists before the graph is loaded, so `ninitctl` works from the emergency shell in every case
+
+### 5.3 startup
+
+startup is event driven. when a service becomes ready, each dependent whose prerequisites are now all up is started at once. the roots are started together, in index order
+
+while any service is starting, each 10 s in which nothing else happens produces `WAIT NAME: still running after N s` for every service still starting
+
+startup ends when no service is starting and no restart is pending. ninit then prints a summary: each failed and each skipped service, the number never started, and `boot: N of M services up in T ms`
+
+processes reparented to pid 1 are reaped
+
+### 5.4 console log
+
+each line is `[SSS.mmm] TAG > message`, where the time is seconds since ninit started
+
+| tag | meaning |
+|---|---|
+| `DONE` | a service became ready. for a oneshot or daemon, with the time since it was spawned |
+| `NOTE` | progress and service output |
+| `WAIT` | a service is still starting |
+| `WARN` | a problem ninit recovered from |
+| `FAIL` | a failure |
+
+on a terminal the tags are coloured. with `--enable-quiet` only `WARN` and `FAIL` lines are printed
+
+ninit never blocks on the console. output the console does not accept within 100 ms is dropped and counted, and the count is printed as `console: dropped N messages` once output resumes
+
+every `WARN` and `FAIL` line, including the output tails printed with them, is also kept in a ring of 64 lines of up to 199 bytes each, which `ninitctl log` reads. the ring retains lines the console dropped
+
+## 6 runtime control
+
+### 6.1 commands
+
+runtime commands go to ninit over `/run/ninit/control`. the socket has mode 0600 in a directory with mode 0700, so only root can use it
+
+| command | effect |
+|---|---|
+| `ninitctl status [NAME]` | state of every service, or of NAME |
+| `ninitctl log` | retained `WARN` and `FAIL` lines, oldest first |
+| `ninitctl start NAME` | clear the hold, reset the attempt count and the restart delay, start NAME. returns when it is ready or has failed |
+| `ninitctl stop NAME` | hold NAME, send it SIGTERM, and SIGKILL after `stop-timeout`. returns when it has stopped |
+| `ninitctl restart NAME` | `stop`, then `start`. if NAME is already stopped, `start` |
+| `ninitctl resume` | return every failed and skipped service to pending, reset their attempt counts, start those whose prerequisites are up |
+| `ninitctl reload` | refused. the graph is read once, at boot |
+
+`status` prints a table of index, name, state and main pid, with a `held` column when any service is held. its last line is `N services, M up`
+
+### 6.2 service states
+
+| state | meaning |
+|---|---|
+| `pending` | not started. waiting for prerequisites, held, or stopped before it became ready |
+| `starting` | spawned and not yet ready |
+| `up` | ready and still up |
+| `down` | was ready, has since exited or been stopped |
+| `failed` | exhausted `start-tries` |
+| `skipped` | will not start because a prerequisite failed or went down |
+
+### 6.3 semantics
+
+- an operation belongs to the service, not to the connection. closing the client does not cancel it
+- a service accepts one operation at a time. a second is refused with `NAME is busy`
+- `start` is refused if the service is running or its previous instance has not exited
+- `start` is refused with `waiting on a prerequisite` if a prerequisite is not up. the service is left pending and starts when its prerequisites are up
+- `start` on a oneshot that has completed runs it again
+- `start` reports failure if the service is neither ready nor failed within `start-timeout` plus 2 s
+- `stop` reports failure if the service has not stopped 2 s after SIGKILL
+- `stop` does not stop dependents. what they may do while the service is down is set by its `deps`, see [3.5](#35-dependencies)
+- a held service is not restarted, not started when its prerequisites come up, and not started by `resume`
+- targets have no process and cannot be started, stopped or restarted
+- once shutdown has begun the socket is no longer served
+
+### 6.4 protocol
+
+a client connects, sends one request line, and reads the reply until ninit closes the connection
+
+- request: `VERB [NAME]` and a newline, at most 1023 bytes. a carriage return before the newline is ignored. VERB is a command from [6.1](#61-commands)
+- reply: zero or more data lines beginning with `. `, then one line beginning with `+ ` on success or `- ` on failure
+- a client that closes its end before the final line is dropped. its operation continues
+- at most 8 connections are served at once. a further connection receives `- too many control connections`
+
+a `status` data line has the form `NAME STATE HOLD pid PID`, where HOLD is `wanted` or `stopped` and PID is 0 when there is no process:
+
+```
+> status udev
+< . udev up wanted pid 412
+< + udev
+```
+
+## 7 shutdown
+
+### 7.1 signals
+
+| signal to pid 1 | action |
+|---|---|
+| SIGTERM | reboot |
+| SIGINT | reboot. the kernel sends it on ctrl-alt-del |
+| SIGUSR1 | halt |
+| SIGUSR2 | power off |
+
+busybox `reboot`, `poweroff` and `halt` send these signals, as does `ninit-shutdown`
+
+### 7.2 sequence
+
+1. stop the services in reverse dependency order across the whole graph. a service is sent SIGTERM once every service that depends on it has stopped, and SIGKILL after its `stop-timeout`. independent branches stop in parallel. this step ends after 30 s regardless
+2. send SIGTERM to every process and wait up to 5 s for all of them to exit
+3. send SIGKILL to what remains and wait up to 2 s
+4. run `hwclock --systohc --utc`, killing it after 5 s
+5. `swapoff` every active swap area
+6. remove the control socket
+7. sync, then remount every filesystem read-only, most recently mounted first, in up to 3 passes. a filesystem that stays writable is unmounted. if that fails, it is synced and remounted or unmounted once more, and otherwise detached. `/` is remounted read-only last
+8. sync and call `reboot(2)` with the requested action
+
+step 1 follows every dependency, including those with `deps: order`. during shutdown services are not restarted, the emergency shell is not respawned, and further shutdown signals are ignored
+
+**note** step 4 writes the system time to the hardware clock as utc. on a machine whose hardware clock keeps local time, such as one that also boots windows, this changes the hardware clock's meaning
+
+### 7.3 ninit-shutdown
+
+`ninit-shutdown` is one binary installed under several names. the name it is invoked by selects the default action:
+
+| name | default action | operand |
+|---|---|---|
+| `shutdown`, `ninit-shutdown` | power off | TIME, required |
+| `poweroff` | power off | TIME, optional |
+| `reboot` | reboot | TIME, optional |
+| `halt` | halt | TIME, optional |
+| `telinit` | none | runlevel, required. `0` powers off, `6` reboots, `q` does nothing |
+
+| option | effect |
+|---|---|
+| `-r` | reboot |
+| `-h`, `-P`, `-p` | power off |
+| `-H` | halt |
+| `-f` | sync and call `reboot(2)` directly. services are not stopped and filesystems are not remounted |
+| `-c` | refused. a pending shutdown runs in the foreground and is cancelled by interrupting it |
+| `-t SEC`, `-k`, `-n`, `-w`, `-d` | accepted and ignored |
+| `--help` | print usage |
+
+TIME is `now`, `+MINUTES`, or `HH:MM` in local time, meaning its next occurrence. operands after TIME, such as a message, are ignored
+
+`ninit-shutdown` performs, in order:
+
+1. if `/proc/1/comm` is readable and is not `ninit`, execute `NAME.old` from its own directory with the same arguments. the installed names therefore keep working under another init
+2. with `-f`, sync and call `reboot(2)`
+3. if TIME is in the future, print a notice on `/dev/console` and wait in the foreground. ctrl-c cancels
+4. as root, send the signal from [7.1](#71-signals) to pid 1
+5. otherwise, call `org.freedesktop.login1.Manager.PowerOff`, `Reboot` or `Halt` through `dbus-send --system`, leaving the decision to elogind and polkit, the same request systemd's `poweroff` makes for an unprivileged caller. if that fails, exit with `permission denied`
 
 ```sh
-ninitctl status [NAME]   # what ninit is running
-ninitctl log             # failures ninit recorded
-ninitctl start NAME      # start it, or retry it after a failure
-ninitctl stop NAME       # stop it and keep it stopped
-ninitctl restart NAME    # restart it
-ninitctl resume          # retry every failed and skipped service
+make tools-install     # save the originals as NAME.old, link the names to ninit-shutdown
+make tools-uninstall   # put the originals back
 ```
 
-an operation belongs to the service, not to the connection that asked for it, so
-killing the client doesn't leave a stop half done. a service counts as stopped
-when its whole cgroup is empty, not when its main process has gone
+`tools-install` operates in sbindir. each existing `shutdown`, `poweroff`, `halt`, `reboot` and `telinit` is renamed to `NAME.old`. an existing symlink is saved as a new symlink to the same target, or to `TARGET.old` if the target is one of these names. an existing `NAME.old` is never replaced, so running it twice is safe. `/sbin/init` is not touched. `tools-uninstall` renames every `NAME.old` back and removes `ninit-shutdown`
 
-ninit reads its graph once at boot, a rebuilt graph takes effect on the next
-boot, and `resume` is how you retry with the graph already loaded. the console
-drops output when it can't keep up, so failure lines are also kept in a small
-ring that `ninitctl log` reads back — that's where a crash reason lives when the
-console lost it, or when built with `--enable-quiet`
+## 8 emergency shell
 
-the depgraph format is versioned (`NG_VERSION` in `src/ngraph.h`) and checked
-exactly. re-run `ninitctl init` after upgrading ninit and before rebooting,
-an older graph is refused and the boot lands in the emergency shell
+the emergency shell starts when:
 
-### shutting down
+- the graph is missing, unreadable, empty or fails verification, which includes a version mismatch
+- a service with `onfail: shell` exhausts its `start-tries`
+- memory runs out before the first service starts
 
-```sh
-kill -TERM 1   # reboot (also ctrl-alt-del)
-kill -USR2 1   # poweroff
-kill -USR1 1   # halt
-```
+ninit keeps running while the shell runs. services unaffected by the failure continue to start, and `ninitctl` works from the shell. once the shell has started ninit prints `shell: started on the console, exit with reboot or poweroff`
 
-busybox `reboot`, `poweroff` and `halt` send these
+before starting the shell ninit resets the console. a virtual terminal left in graphics mode is returned to text mode, a raw keyboard to unicode, and the terminal settings to sane defaults
 
-services are stopped in dependency order across the whole graph. nothing is
-signalled until everything depending on it is gone, independent branches stop in
-parallel, and each service gets its own `stop-timeout` before SIGKILL. after that
-ninit SIGTERMs whatever is left, waits 5s, SIGKILLs, syncs, and remounts
-filesystems read-only
+the shell runs on `/dev/console` in its own session with the console as its controlling terminal, with `PATH` as for services, `HOME=/`, and `TERM=linux` on a virtual terminal or `TERM=vt220` otherwise. ninit tries, in order:
 
-`tools/shutdown.c` builds one binary that answers to `shutdown`, `poweroff`,
-`halt`, `reboot` and `telinit` by looking at `argv[0]` the way sysvinit and
-busybox do:
+1. `/sbin/sulogin`, then `/usr/sbin/sulogin`, only with `--enable-authshell` and only if root's hash in `/etc/shadow` is usable, meaning not empty and not beginning with `!` or `*`
+2. the `--with-busybox` path, as the login shell `-sh`
+3. `/bin/sh`, as the login shell `-sh`
 
-```sh
-make tools-install   # save the originals as NAME.old, install ours
-make tools-uninstall # put the originals back
-```
+when the shell exits it is started again. ninit stops restarting it after 5 consecutive exits within 1 s of starting, after 2 consecutive failures to execute any shell, or after 5 consecutive failures to start it, which are retried every 2 s
 
-  - `reboot` is `shutdown -r`, `poweroff` is `shutdown -h`, `halt` is `shutdown -H`. `telinit` takes only 0 and 6
-  - TIME is `now`, `+MINUTES` or `HH:MM`. a delayed shutdown waits in the foreground and ctrl-c cancels it
-  - `-f` skips ninit and calls `reboot(2)` after a sync, for when ninit is cooked
-  - root signals ninit directly. an unprivileged caller asks elogind over D-Bus through `dbus-send` and lets polkit decide, which is what systemd's own `poweroff` does
-  - if pid 1 isn't ninit it hands over to the saved `NAME.old` binary, so these are safe to leave installed on a machine that also boots another init
+**note** without `--enable-authshell` the emergency shell is an unauthenticated root shell on the console, as with sysvinit and busybox init. where the console is reachable remotely, such as over a serial line or a BMC, access to it is equivalent to a root credential. with `--enable-authshell`, a root account without a usable hash still receives an unauthenticated shell, as does a system on which sulogin cannot be executed
 
-`tools-install` never overwrites an existing `NAME.old`, so running it twice is
-safe, and it leaves `/sbin/init` alone. a desktop needs none of this directly
+## 9 depgraph format
 
-### emergency shell
+a graph is loaded only if its version equals the `NG_VERSION` ninit was built with, defined in `src/ngraph.h`, currently 7. after upgrading ninit, run `ninitctl init` before rebooting. an older graph is refused and the boot ends in the emergency shell
 
-if the graph is missing or corrupt, or a service with `onfail: shell` runs out of
-start-tries, a root shell runs on the console and is respawned when it exits.
-`/bin/sh`, or busybox when built with it. ninit doesn't block while it starts and
-`ninitctl` still works from it
+ninit reads the whole graph into private read-only memory and verifies it before use. every offset and length is bounds checked, sections must not overlap, the checksum must match, every edge must point to a higher index, stored counts must agree with the edge list, names must be valid and unique, and every field must be in range. a graph that fails any check is not used. `ninitctl show` applies the same checks. replacing the file has no effect on the running system
 
-by default this is an /!\ unauthenticated root shell /!\ the same bargain sysvinit
-and busybox make, but if your console is a serial port or a BMC, treat it as a
-root credential and configure with `--enable-authshell` to put sulogin in front
+all integers are in host byte order. `ninitctl` writes the sections in the order below. ninit locates them through the offsets in the header
 
-### if you're on gentoo
+| section | alignment | size in bytes |
+|---|---|---|
+| header | 8 | 64 |
+| service table | 8 | 16 × n_svc |
+| dependent offsets | 4 | 4 × (n_svc + 1) |
+| dependent indices | 4 | 4 × n_edges |
+| policy table | 4 | 12 × n_svc |
+| string table | 1 | blob_len |
 
-it's in my overlay:
+header:
 
-```sh
-emerge --ask app-eselect/eselect-repository
-eselect repository add nburch git https://github.com/noahburchell/nburch-overlay.git
-emaint sync --repo nburch
-emerge --ask sys-apps/ninit
-```
+| offset | size | field | description |
+|---|---|---|---|
+| 0x00 | 4 | magic | `0x4744494e`, the bytes `NIDG` |
+| 0x04 | 4 | version | `NG_VERSION` |
+| 0x08 | 4 | crc32 | crc32c of the whole file with this field set to 0 |
+| 0x0c | 4 | total_len | file size |
+| 0x10 | 4 | n_svc | number of services |
+| 0x14 | 4 | n_roots | number of roots |
+| 0x18 | 4 | n_edges | number of edges |
+| 0x1c | 4 | blob_len | size of the string table |
+| 0x20 | 4 | off_svc | offset of the service table |
+| 0x24 | 4 | off_rdep_off | offset of the dependent offsets |
+| 0x28 | 4 | off_rdep_idx | offset of the dependent indices |
+| 0x2c | 4 | off_blob | offset of the string table |
+| 0x30 | 4 | off_pol | offset of the policy table |
+| 0x34 | 4 | reserved | 0 |
+| 0x38 | 8 | srcs_hash | 64-bit fnv-1a of the source files' names and contents in name order. not checked |
 
-the use flags are `o3`, `lto`, `native`, `quiet`, `authshell`, `busybox` and
-`debug` and mean the same as the configure options below. ninit picks its own
-optimisation flags from those, so `CFLAGS` and `LDFLAGS` in make.conf are ignored
-on purpose. then skip to [services](#then)
+service record:
 
-### if you're on something else
+| offset | size | field | description |
+|---|---|---|---|
+| 0x0 | 2 | unmet | number of prerequisites. 0 for roots and only for roots |
+| 0x2 | 1 | type | 0 oneshot, 1 daemon, 2 target |
+| 0x3 | 1 | flags | bits 1:0 onfail, 0 warn, 1 stop, 2 shell. bit 2 restart. other bits 0 |
+| 0x4 | 2 | n_desc | number of dependents, direct or not |
+| 0x6 | 2 | notify_fd | 0 for none, otherwise 3 to 255. daemons only |
+| 0x8 | 4 | script_off | string table offset of the script. `0xffffffff` for a target |
+| 0xc | 4 | name_off | string table offset of the name |
 
-you have to build it, you need a c compiler and make. gcc 14+ or
-clang 18+, because the source is c23
+policy record:
 
-grab the release tarball:
+| offset | size | field | description |
+|---|---|---|---|
+| 0x0 | 4 | start_ms | `start-timeout`. 0 means 90000 |
+| 0x4 | 4 | stop_ms | `stop-timeout`. 0 means 5000 |
+| 0x8 | 2 | retry_ms | `start-delay` |
+| 0xa | 1 | start_tries | `start-tries`. 0 means 1 for a oneshot and 2 for a daemon |
+| 0xb | 1 | pflags | bit 0 `deps: order`. other bits 0 |
 
-```sh
-curl -LO https://github.com/noahburchell/ninit/releases/download/v1.0.1/ninit-1.0.1.tar.xz
-tar xf ninit-1.0.1.tar.xz
-cd ninit-1.0.1
-```
+services are stored in topological order, roots first at indices 0 to n_roots - 1. the dependents of service i are entries `rdep_off[i]` up to but not including `rdep_off[i + 1]` of the dependent indices, sorted ascending, each greater than i. the string table holds the NUL-terminated names and scripts and ends in a NUL
 
-don't use github's own "source code" tarball off the tags page
+## 10 limits
 
-then the usual lines:
+| quantity | limit |
+|---|---|
+| services in a graph | 8192 |
+| service name | 255 bytes |
+| script of a oneshot or daemon | 131071 bytes, so that it fits in one `execve()` argument |
+| service file | 135167 bytes |
+| `start-timeout`, `stop-timeout` | 1 ms to 24 h |
+| `start-delay` | 1 ms to 65535 ms |
+| `start-tries` | 1 to 250 |
+| `notify` | fd 3 to 255 |
+| output kept per service | 1024 bytes |
+| service output line on the console | 256 bytes, longer lines are split |
+| `ninitctl log` ring | 64 lines of 199 bytes |
+| control request | 1023 bytes |
+| concurrent control connections | 8 |
+| `/etc/locale.conf` | 8191 bytes, 14 variables, 127 bytes per assignment |
 
-```sh
-# 99% of you should use prefix usr, and if you shouldnt, youd know
-./configure --prefix=/usr # whatever options, i use --enable-o3 --enable-lto --enable-native
-make -j"$(nproc)"
-sudo make install
-sudo make tools-install   # optional, see shutting down
-```
+| interval | value |
+|---|---|
+| minimum delay between start attempts | 10 ms |
+| restart delays | 100, 250, 500, 1000, 2000, then 5000 ms |
+| uptime that resets the restart delay | 10 s |
+| stall report | 10 s |
+| `ninitctl start` deadline | `start-timeout` + 2 s |
+| `ninitctl stop` wait after SIGKILL | 2 s |
+| ordered stop at shutdown | 30 s |
+| wait after SIGTERM to every process | 5 s |
+| wait after SIGKILL to every process | 2 s |
+| `hwclock` at shutdown | 5 s |
+| console write | 100 ms |
+| emergency shell exit counted as immediate | 1 s |
 
-out of tree builds work and keep the source dir clean:
+## 11 files
 
-```sh
-mkdir build && cd build && ../configure && make
-```
+| path | description |
+|---|---|
+| `/etc/ninit.d/` | service directory |
+| `/etc/ninit.d/unused/` | disabled services |
+| `/etc/ninit.d/depgraph` | compiled graph |
+| `/etc/ninit.d/depgraph.old` | graph replaced by the last `ninitctl init` |
+| `/etc/locale.conf` | locale for services |
+| `/etc/os-release`, `/usr/lib/os-release` | name in the welcome line |
+| `/etc/shadow` | read before the emergency shell with `--enable-authshell` |
+| `/run/ninit/control` | control socket |
+| `/sys/fs/cgroup/ninit.services/svc-N/` | cgroup of the service with index N |
+| `SBINDIR/NAME.old` | originals saved by `make tools-install` |
 
-`make V=1` is the plain automake recipe if you'd rather have that. for an
-initramfs, link it static with `./configure LDFLAGS=-static`
+## contact
 
-#### options
+ninit@nburch.org
 
-```
---enable-o3            -O3 instead of -O2
---enable-lto           link time optimisation
---enable-native        -march=native
---enable-quiet         only WARN and FAIL on the console during boot
---enable-authshell     run sulogin for recovery when root has a usable password
-                       hash, plain shell when it doesn't
---with-busybox[=PATH]  try busybox before /bin/sh for the emergency shell
---with-shell=PATH      the interpreter service scripts are written for
---with-shell-name=NAME what to call it
---with-service-dir=DIR where service files live, default /etc/ninit.d
---enable-werror        turn warnings into errors
---enable-debug         -O0 with ASan and UBSan, testing only, never pid 1
-```
-
-scripts are compiled as programs for `/bin/bash` and there is no fallback to
-another shell: the same text under a different shell is a different program.
-`--with-shell=/bin/dash --with-shell-name=dash` to change the interpreter
-
-### then
-
-write your services into `/etc/ninit.d` (see [above](#service-files)), then:
-
-```sh
-sudo ninitctl init -n   # fix anything it reports
-sudo ninitctl init      # compile the graph
-```
-
-you need to do that again every time you change a service file.
-
-### boot with it
-
-for the first boot, i recomend you do not remove your existing init. so put this in cmdline:
-
-```
-init=/sbin/ninit
-```
-
-mine:
-
-```
-title     Gentoo Linux 7.3 (ninit)
-version   7.3-lychee
-linux     /vmlinuz-7.3.0-rc2-lychee
-options   root=PARTUUID=168ebf8f-0d2d-4ca0-be3a-8216307cb6ba init=/sbin/ninit rootfstype=btrfs rootflags=subvol=@ rw fbcon=nodefer iommu=pt amdgpu.ppfeaturemask=0xfff7ffff
-```
-
-### contact
-
-if you have any questions contact me: ninit@nburch.org
-
-### license
+## license
 
 GNU General Public Licence v3.0

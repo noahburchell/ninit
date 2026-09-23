@@ -38,12 +38,30 @@ ninitctl_SOURCES = \
 
 ninit_shutdown_SOURCES = tools/shutdown.c
 
+NINIT_MANS = man/ninit.8 man/ninitctl.8 man/ninit-shutdown.8 man/ninit.d.5
+
+if ENABLE_MAN
+man_MANS = $(NINIT_MANS)
+endif
+
+CLEANFILES = $(NINIT_MANS)
+
+ninit_man_edit = sed \
+	-e 's|@sbindir[@]|$(sbindir)|g' \
+	-e 's|@ninit_svcdir[@]|$(ninit_svcdir)|g' \
+	-e 's|@ninit_shell[@]|$(ninit_shell)|g' \
+	-e 's|@PACKAGE_VERSION[@]|$(PACKAGE_VERSION)|g'
+
+man/%: man/%.in Makefile
+	$(AM_V_GEN)$(MKDIR_P) man && $(ninit_man_edit) $< > $@.tmp && mv $@.tmp $@
+
 EXTRA_DIST = \
 	README.md \
 	autogen.sh \
 	build-aux/progress \
     LICENSE \
-	docs/ninit.d
+	docs/ninit.d \
+	$(NINIT_MANS:=.in)
 
 NINIT_RUN   := $(abs_top_builddir)/.ninit-progress/$(shell echo $$PPID)
 NINIT_STEPS  = $(sort $(ninit_OBJECTS) $(ninitctl_OBJECTS) $(ninit_shutdown_OBJECTS)) \
