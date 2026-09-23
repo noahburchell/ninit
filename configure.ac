@@ -242,6 +242,8 @@ AC_ARG_WITH([shell-name],
 AC_DEFINE_UNQUOTED([NG_SHELL], ["$with_shell"], [Interpreter for service scripts.])
 AC_DEFINE_UNQUOTED([NG_SHELL_ARGV0], ["$with_shell_name"],
 		   [argv[0] to hand that interpreter.])
+ninit_shell=$with_shell
+AC_SUBST([ninit_shell])
 
 AC_ARG_WITH([service-dir],
   [AS_HELP_STRING([--with-service-dir=DIR], [directory holding service files @<:@/etc/ninit.d@:>@])],
@@ -252,6 +254,11 @@ AC_DEFINE_UNQUOTED([NG_DEFAULT_DIR], ["$with_service_dir"], [Service directory.]
 AC_DEFINE_UNQUOTED([NG_DEFAULT_FILE], ["$with_service_dir/depgraph"], [Compiled graph.])
 ninit_svcdir=$with_service_dir
 AC_SUBST([ninit_svcdir])
+
+AC_ARG_ENABLE([man],
+  [AS_HELP_STRING([--disable-man], [do not install the manual pages])],
+  [], [enable_man=yes])
+AM_CONDITIONAL([ENABLE_MAN], [test "x$enable_man" != xno])
 
 AC_CHECK_HEADERS([stdckdint.h linux/close_range.h sys/signalfd.h sys/statfs.h sys/swap.h])
 AC_CHECK_FUNCS([renameat2 memfd_create close_range mkostemp accept4 pipe2 \
@@ -304,6 +311,7 @@ AC_MSG_NOTICE([
     quiet boot ...... $enable_quiet
     authshell ....... $enable_authshell
     busybox shell ... $with_busybox
+    man pages ....... $enable_man
 
     CFLAGS ..........$NINIT_CFLAGS $CFLAGS
     LDFLAGS .........$NINIT_LDFLAGS $LDFLAGS

@@ -1,0 +1,509 @@
+'\" t
+.TH NINIT.D 5 2026-09-23 "ninit @PACKAGE_VERSION@"
+.SH NAME
+ninit.d \- ninit service directory, service files and compiled graph
+.SH SYNOPSIS
+.IR @ninit_svcdir@/ name
+.br
+.IR @ninit_svcdir@/unused/ name
+.br
+.I @ninit_svcdir@/depgraph
+.SH DESCRIPTION
+each regular file in
+.I @ninit_svcdir@
+defines one service, named after the file.
+symbolic links are followed.
+.B ninitctl init
+compiles the directory into
+.IR depgraph ,
+which is the only file
+.BR ninit (8)
+reads at boot.
+a change to a service file takes effect after the graph is rebuilt and the system is rebooted
+.PP
+the following entries are skipped:
+.IP \(bu 2
+names beginning with a dot
+.IP \(bu 2
+directories and other files that are not regular
+.IP \(bu 2
+the reserved names
+.BR unused ,
+.BR depgraph ,
+.B depgraph.old
+and
+.B depgraph.tmp
+.IP \(bu 2
+files that are themselves compiled graphs
+.PP
+a service name is 1 to 255 bytes and contains no slash, comma, whitespace or control character.
+names ending in
+.B ~
+and names both beginning and ending in
+.B #
+are rejected.
+an invalid name fails the build
+.PP
+.I unused/
+holds disabled services and is not read.
+.B ninitctl del
+and
+.B ninitctl add
+move files into and out of it
+.SH FILE FORMAT
+a service file is a script for
+.IR @ninit_shell@ .
+its header is every line before the first line that is neither blank nor a comment.
+a directive is a header line of the form
+.PP
+.RS
+.BI #% key : \~value
+.RE
+.PP
+whitespace around
+.I key
+and
+.I value
+is ignored.
+keys are case sensitive.
+.B depon
+and
+.B depof
+accumulate when repeated.
+any other repeated directive takes its last value.
+an unknown key, a directive without a colon, or an invalid value fails the build
+.PP
+a
+.B #%
+line after the header is not a directive.
+.B ninitctl init
+warns about it, except inside a here-document, and treats it as a comment
+.PP
+a
+.B #!\&
+line is an ordinary comment.
+the file is executed by the configured interpreter whatever its first line and mode.
+the whole file, header included, is the script, so line numbers in interpreter messages match the file.
+a file containing a NUL byte is rejected
+.PP
+a
+.I duration
+is a decimal integer followed by
+.BR ms ,
+.BR s ,
+.B m
+or
+.BR h ,
+or by nothing, meaning milliseconds.
+it is at least 1 ms and at most 24 h.
+a
+.I list
+is a sequence of service names separated by commas, whitespace or both
+.SH DIRECTIVES
+.TP
+.BR type: " oneshot" | daemon | target
+how the service becomes ready, see
+.BR "SERVICE TYPES" .
+the default is
+.B oneshot
+if the file contains a command and
+.B target
+if it does not
+.TP
+.BI depon: " list"
+the services that must be up before this one is started
+.TP
+.BI depof: " list"
+the services that must not start before this one is up.
+.BI "depof: " y
+in service
+.I x
+is equivalent to
+.BI "depon: " x
+in service
+.I y
+.TP
+.BR deps: " uptime" | order
+what the dependents of this service require of it, see
+.BR DEPENDENCIES .
+default
+.B uptime
+.TP
+.BR onfail: " warn" | stop | shell
+the action taken when the start attempts are exhausted, see
+.BR FAILURE .
+default
+.B stop
+if any service depends on this one, otherwise
+.BR warn .
+.B warn
+on a service with dependents fails the build
+.TP
+.BI start-tries: " n"
+the number of start attempts, 1 to 250.
+default 1 for a oneshot and 2 for a daemon
+.TP
+.BI start-delay: " duration"
+the delay between start attempts, at most 65535 ms.
+a delay under 10 ms, including the default of none, is applied as 10 ms
+.TP
+.BI start-timeout: " duration"
+the time allowed from spawn to ready.
+the service is killed when it expires.
+default 90 s
+.TP
+.BI stop-timeout: " duration"
+the time allowed from
+.B SIGTERM
+to
+.BR SIGKILL .
+default 5 s
+.TP
+.BR restart: " always" | no
+respawn the service when it exits after it has been ready, see
+.BR RESTART .
+.B never
+is accepted for
+.BR no .
+daemons only.
+default
+.B no
+.TP
+.BI notify: " fd"
+the descriptor, 3 to 255, on which the service reports readiness.
+daemons only
+.TP
+.BI name: " name"
+must equal the filename.
+it has no other effect
+.SH SERVICE TYPES
+a service is ready when its dependents may start.
+becoming ready makes it up
+.TP
+.B oneshot
+ready when the script exits with status 0.
+it remains up after it exits.
+processes it leaves running remain in its cgroup
+.TP
+.B daemon
+with
+.BI notify: " n" ,
+ready when data containing a newline is written to descriptor
+.IR n ,
+which holds the write end of a pipe.
+data other than the newline is ignored.
+without
+.BR notify ,
+ready once the interpreter has been executed.
+up until its main process exits.
+.B ninitctl init
+warns about each daemon that has dependents and no
+.B notify
+.TP
+.B target
+ready when all of its prerequisites are up.
+it has no commands and no process
+.PP
+a start attempt fails when a oneshot exits with a nonzero status or on a signal, when a daemon exits before it is ready, when every copy of a daemon's notify descriptor is closed before a newline, or when
+.B start-timeout
+expires
+.PP
+the main process of a daemon must remain in the foreground.
+when it exits the service has exited, and its cgroup is killed with every process in it
+.SH DEPENDENCIES
+a service is started as soon as all of its prerequisites are up.
+services with no prerequisites are started at boot.
+a name that matches no service, a dependency on the service itself, and a cycle fail the build
+.PP
+.B deps
+is set on the prerequisite:
+.TP
+.B uptime
+dependents may start only while this service is up.
+while it is down they are neither started nor restarted, and targets that depend on it are down.
+if it exits after being ready and is not restarted, its dependents that have not started are skipped
+.TP
+.B order
+dependents may start once this service has been ready once.
+its later state does not affect them
+.PP
+running dependents are not stopped when a prerequisite goes down
+.SH FAILURE
+a failed start attempt kills the service's cgroup and process group.
+while attempts remain, the service is started again after
+.BR start-delay .
+when all
+.B start-tries
+have failed the service is failed, the last 1024 bytes of its output are printed, and
+.B onfail
+applies:
+.TP
+.B warn
+no further action
+.TP
+.B stop
+every dependent that has not started is skipped.
+other services are unaffected
+.TP
+.B shell
+as
+.BR stop ,
+and the emergency shell is started
+.PP
+.B onfail
+governs start attempts only.
+.B ninitctl resume
+returns failed and skipped services to pending
+.SH RESTART
+.B restart: always
+applies once a daemon has been ready.
+when it then exits, it goes down, its cgroup and process group are killed, and it is started again after 100, 250, 500, 1000 or 2000 ms for the first five consecutive exits and 5000 ms for each further one.
+the count resets when the daemon has been up for 10 s.
+a respawned daemon that fails to become ready is handled the same way, without limit.
+a restart is deferred while a prerequisite with
+.B deps: uptime
+is down, and a service held by
+.B ninitctl stop
+is not restarted
+.SH EXECUTION ENVIRONMENT
+each start executes
+.PP
+.RS
+.B @ninit_shell@ \-c
+.I script name
+.RE
+.PP
+where
+.I script
+is the whole file and
+.I name
+is the service name, available as
+.BR $0 .
+the process has:
+.IP \(bu 2
+a new session and no controlling terminal
+.IP \(bu 2
+the cgroup
+.IR /sys/fs/cgroup/ninit.services/svc\- N ,
+where
+.I N
+is the index of the service in the graph.
+on linux 5.7 and later it is created inside the cgroup with
+.BR CLONE_INTO_CGROUP ,
+on older kernels it joins after
+.BR fork (2)
+.IP \(bu 2
+standard input on
+.IR /dev/null ,
+standard output and standard error on a pipe read by
+.B ninit
+.IP \(bu 2
+the notify pipe on its descriptor, and no other open descriptor
+.IP \(bu 2
+the environment
+.BR PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin ,
+.BR HOME=/ ,
+.B TERM=linux
+and the locale variables of
+.IR /etc/locale.conf ,
+or
+.B LANG=C.UTF\-8
+if it sets none
+.IP \(bu 2
+an empty signal mask and the default disposition for every signal
+.IP \(bu 2
+working directory
+.I /
+and umask 022
+.IP \(bu 2
+.B RLIMIT_NOFILE
+of 1024, hard limit 524288 or that of
+.BR ninit ,
+whichever is lower
+.IP \(bu 2
+.I oom_score_adj
+0
+.IP \(bu 2
+user and group 0 and every capability
+.PP
+a signal sent to a service reaches every process in its cgroup and its process group.
+.B SIGKILL
+is delivered through
+.IR cgroup.kill ,
+and to the process group only on kernels before 5.14.
+a service is stopped when its main process has been reaped and its cgroup is empty
+.PP
+.I /etc/locale.conf
+contains
+.IB name = value
+lines for
+.B LANG
+and the
+.B LC_*
+variables.
+a value may be quoted and consists of letters, digits,
+.BR _ ,
+.BR . ,
+.B \-
+and
+.BR @ .
+lines beginning with
+.B #
+are comments and a later assignment overrides an earlier one
+.SH OUTPUT
+each line a service writes is printed on the console, prefixed with the service name.
+lines longer than 256 bytes are split.
+the last 1024 bytes are retained and printed when the service fails to start or exits after being ready
+.SH DEPGRAPH
+.I depgraph
+is written by
+.BR "ninitctl init" .
+the previous graph is kept as
+.IR depgraph.old .
+.BR ninit (8)
+loads a graph only if its version equals the one it was built with, currently 7.
+the graph must be rebuilt after
+.B ninit
+is upgraded
+.PP
+all integers are unsigned and in host byte order.
+sections are located by the offsets in the header, must lie within the file, and must not overlap
+.PP
+.TS
+tab(|);
+lB lB lB
+l n l.
+section|align|size
+header|8|64
+service table|8|16 \(mu n_svc
+dependent offsets|4|4 \(mu (n_svc + 1)
+dependent indices|4|4 \(mu n_edges
+policy table|4|12 \(mu n_svc
+string table|1|blob_len
+.TE
+.PP
+header:
+.PP
+.TS
+tab(|);
+lB lB lB lB
+l n l l.
+offset|size|field|content
+0x00|4|magic|0x4744494e, the bytes NIDG
+0x04|4|version|7
+0x08|4|crc32|crc32c of the file with this field 0
+0x0c|4|total_len|file size
+0x10|4|n_svc|services, at most 8192
+0x14|4|n_roots|services without prerequisites
+0x18|4|n_edges|dependency edges
+0x1c|4|blob_len|string table size
+0x20|4|off_svc|service table offset
+0x24|4|off_rdep_off|dependent offsets offset
+0x28|4|off_rdep_idx|dependent indices offset
+0x2c|4|off_blob|string table offset
+0x30|4|off_pol|policy table offset
+0x34|4|reserved|0
+0x38|8|srcs_hash|fnv-1a of the sources, not checked
+.TE
+.PP
+service record:
+.PP
+.TS
+tab(|);
+lB lB lB lB
+l n l l.
+offset|size|field|content
+0x0|2|unmet|number of prerequisites
+0x2|1|type|0 oneshot, 1 daemon, 2 target
+0x3|1|flags|bits 1:0 onfail, bit 2 restart
+0x4|2|n_desc|number of transitive dependents
+0x6|2|notify_fd|0 or 3 to 255
+0x8|4|script_off|string offset, 0xffffffff for a target
+0xc|4|name_off|string offset
+.TE
+.PP
+policy record:
+.PP
+.TS
+tab(|);
+lB lB lB lB
+l n l l.
+offset|size|field|content
+0x0|4|start_ms|start-timeout, 0 for 90000
+0x4|4|stop_ms|stop-timeout, 0 for 5000
+0x8|2|retry_ms|start-delay
+0xa|1|start_tries|start-tries, 0 for the type default
+0xb|1|pflags|bit 0 deps: order
+.TE
+.PP
+the onfail field is 0 for warn, 1 for stop and 2 for shell.
+services are in topological order, those without prerequisites first.
+the dependents of service
+.I i
+are entries
+.BI rdep_off[ i ]
+up to but excluding
+.BI rdep_off[ i +1]
+of the dependent indices, ascending and each greater than
+.IR i .
+the string table holds NUL-terminated names and scripts.
+unused bits and the reserved word are 0
+.SH LIMITS
+.TS
+tab(|);
+l l.
+services|8192
+name|255 bytes
+script|131071 bytes
+service file|135167 bytes
+start-timeout, stop-timeout|24 h
+start-delay|65535 ms
+start-tries|250
+notify|3 to 255
+retained output|1024 bytes
+/etc/locale.conf|8191 bytes
+.TE
+.SH EXAMPLES
+a mount step that the rest of the system depends on:
+.PP
+.EX
+#!/bin/bash
+#%depon: fs
+#%onfail: shell
+mount \-a \-t ext4,xfs,btrfs,vfat
+.EE
+.PP
+a daemon with a readiness probe.
+the probe runs in a background subshell and writes the newline to descriptor 3.
+the main shell closes its copy of descriptor 3 before it executes the daemon, so the pipe reaches end of file if the probe exits without reporting:
+.PP
+.EX
+#!/bin/bash
+#%depon: dbus, udev
+#%type: daemon
+#%notify: 3
+#%restart: always
+#%start\-timeout: 10s
+{ gdbus wait \-\-system org.freedesktop.login1 && echo >&3; } &
+exec 3>&\- /lib/elogind/elogind
+.EE
+.PP
+a target:
+.PP
+.EX
+#!/bin/bash
+#%depon: mounts, tmpfiles, udev\-trigger, sysctl, hostname
+.EE
+.PP
+a shell on the console, which must acquire the terminal itself:
+.PP
+.EX
+#!/bin/bash
+#%type: daemon
+exec setsid \-c bash \-i < /dev/console > /dev/console 2>&1
+.EE
+.SH SEE ALSO
+.BR ninit (8),
+.BR ninitctl (8),
+.BR bash (1),
+.BR cgroups (7)

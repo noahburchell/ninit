@@ -1,0 +1,168 @@
+.TH NINIT-SHUTDOWN 8 2026-09-23 "ninit @PACKAGE_VERSION@"
+.SH NAME
+ninit-shutdown \- reboot, halt or power off a system running ninit
+.SH SYNOPSIS
+.B shutdown
+.RI [ option ]...\&
+.I time
+.RI [ message ]
+.br
+.BR poweroff | reboot | halt
+.RI [ option ]...\&
+.RI [ time ]
+.br
+.B telinit
+.BR 0 | 6 | q
+.SH DESCRIPTION
+.B ninit\-shutdown
+is installed under the names
+.BR shutdown ,
+.BR poweroff ,
+.BR reboot ,
+.B halt
+and
+.BR telinit .
+the name it is invoked by selects the default action:
+.B reboot
+reboots,
+.B halt
+halts, and every other name powers off.
+invoked as
+.BR ninit\-shutdown ,
+it behaves as
+.B shutdown
+.PP
+it performs, in order:
+.IP 1. 4
+if
+.I /proc/1/comm
+can be read and is not
+.BR ninit ,
+execute
+.IB name .old
+from its own directory with the same arguments, where
+.I name
+is the name it was invoked by
+.IP 2. 4
+with
+.BR \-f ,
+call
+.BR sync (2)
+and
+.BR reboot (2)
+.IP 3. 4
+if
+.I time
+is in the future, write a notice to
+.I /dev/console
+and wait in the foreground.
+.B SIGINT
+cancels
+.IP 4. 4
+if the effective user is root, send
+.B SIGTERM
+(reboot),
+.B SIGUSR1
+(halt) or
+.B SIGUSR2
+(power off) to process 1
+.IP 5. 4
+otherwise, call the
+.BR Reboot ,
+.B Halt
+or
+.B PowerOff
+method of
+.B org.freedesktop.login1.Manager
+on the system bus through
+.BR dbus\-send (1),
+leaving the decision to elogind and polkit
+.SH OPTIONS
+.TP
+.B \-r
+reboot
+.TP
+.BR \-h ", " \-P ", " \-p
+power off
+.TP
+.B \-H
+halt
+.TP
+.B \-f
+sync and call
+.BR reboot (2)
+directly.
+services are not stopped and filesystems are not remounted
+.TP
+.B \-c
+refused.
+a pending shutdown runs in the foreground and is cancelled by interrupting it
+.TP
+.BI \-t " sec" "\fR, \fP" \-k "\fR, \fP" \-n "\fR, \fP" \-w "\fR, \fP" \-d
+accepted and ignored
+.TP
+.B \-\-help
+print usage
+.SH OPERANDS
+.TP
+.I time
+.BR now ,
+.BI + minutes ,
+or
+.IB hh : mm
+in local time, meaning its next occurrence.
+required by
+.BR shutdown .
+operands after
+.IR time ,
+such as a message, are ignored
+.TP
+.BR 0 | 6 | q
+the runlevel operand of
+.BR telinit .
+.B 0
+powers off,
+.B 6
+reboots and
+.B q
+does nothing
+.SH EXIT STATUS
+.TP
+.B 0
+the request was delivered
+.TP
+.B 1
+an invalid argument, a request that could not be delivered, or a failure to execute
+.IB name .old
+.SH FILES
+.TP
+.I /proc/1/comm
+identifies
+.B ninit
+as process 1
+.TP
+.IB name .old
+the program this one replaced, installed by
+.B make tools\-install
+.SH NOTES
+.B make tools\-install
+renames each existing
+.BR shutdown ,
+.BR poweroff ,
+.BR halt ,
+.B reboot
+and
+.B telinit
+in sbindir to
+.IB name .old
+and replaces it with a symbolic link to
+.BR ninit\-shutdown .
+an existing
+.IB name .old
+is never replaced.
+.B make tools\-uninstall
+restores the originals
+.SH SEE ALSO
+.BR ninit (8),
+.BR ninitctl (8),
+.BR reboot (2)

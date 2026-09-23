@@ -1,0 +1,394 @@
+'\" t
+.TH NINIT 8 2026-09-23 "ninit @PACKAGE_VERSION@"
+.SH NAME
+ninit \- init system driven by a compiled service dependency graph
+.SH SYNOPSIS
+.B init=@sbindir@/ninit
+.RB [ ninit_graph=\c
+.IR path ]
+.RB [ \-\-
+.IR path ]
+.SH DESCRIPTION
+.B ninit
+runs as process 1.
+it mounts the kernel filesystems, loads the dependency graph written by
+.BR "ninitctl init" ,
+starts each service when its prerequisites are ready, supervises the services, serves a control socket, and stops the system on request
+.PP
+services and the graph are described in
+.BR ninit.d (5).
+the graph is read once, at boot.
+a graph rebuilt while the system runs takes effect at the next boot
+.PP
+started as any process other than 1,
+.B ninit
+exits with status 1
+.SH OPTIONS
+.TP
+.I path
+an argument beginning with
+.B /
+names the graph to load.
+it takes precedence over
+.BR ninit_graph .
+the kernel passes to init every argument that follows
+.B \-\-
+on its command line
+.SH BOOT
+.B ninit
+performs, in order:
+.IP 1. 4
+opens
+.I /dev/null
+on any of descriptors 0 to 2 that is closed, sets the umask to 022 and the working directory to
+.I /
+.IP 2. 4
+blocks every signal except
+.BR SIGSEGV ,
+.BR SIGBUS ,
+.B SIGILL
+and
+.BR SIGFPE ,
+receives the signals in
+.B SIGNALS
+through a signalfd, and has ctrl-alt-del delivered as
+.B SIGINT
+.IP 3. 4
+mounts each filesystem in the table below that is not already mounted, creating its mount point.
+a failure is logged as a warning
+.IP 4. 4
+creates the symbolic links
+.IR /dev/fd ,
+.IR /dev/stdin ,
+.I /dev/stdout
+and
+.IR /dev/stderr ,
+and
+.I /dev/core
+if
+.I /proc/kcore
+exists
+.IP 5. 4
+creates
+.IR /sys/fs/cgroup/ninit.services .
+if
+.I /sys/fs/cgroup
+is not cgroup2 or the directory cannot be created, services are contained by process group only
+.IP 6. 4
+creates
+.I /run/ninit
+with mode 0700 and listens on
+.I /run/ninit/control
+with mode 0600
+.IP 7. 4
+sets its own
+.I oom_score_adj
+to \-1000
+.IP 8. 4
+directs its log to
+.I /dev/console
+.IP 9. 4
+raises its own
+.B RLIMIT_NOFILE
+.IP 10. 4
+reads
+.I /etc/locale.conf
+for the service environment
+.IP 11. 4
+prints the
+.B PRETTY_NAME
+of
+.I /etc/os-release
+or
+.I /usr/lib/os-release
+.IP 12. 4
+loads and verifies the graph.
+if that fails, it starts the emergency shell
+.IP 13. 4
+starts every service that has no prerequisites
+.PP
+.TS
+tab(|);
+lB lB lB
+l l l.
+mount point|type|options
+/proc|proc|nosuid,noexec,nodev
+/sys|sysfs|nosuid,noexec,nodev
+/dev|devtmpfs|nosuid,mode=0755
+/run|tmpfs|nosuid,nodev,mode=0755
+/dev/pts|devpts|nosuid,noexec,mode=0620,gid=5,ptmxmode=0666
+/dev/shm|tmpfs|nosuid,nodev,mode=1777
+/sys/fs/cgroup|cgroup2|nosuid,noexec,nodev,nsdelegate
+.TE
+.PP
+.B ninit
+does not remount the root filesystem, mount the entries of
+.IR fstab ,
+enable swap, set the hostname, load modules or start udev.
+these tasks are services
+.SH STARTUP
+startup is event driven.
+when a service becomes ready, each dependent whose prerequisites are now all up is started immediately.
+services are started, retried, restarted and failed as described in
+.BR ninit.d (5)
+.PP
+while a service is starting, each 10 s interval without other activity produces a
+.B WAIT
+line for every service still starting.
+startup ends when no service is starting and no restart is pending.
+.B ninit
+then prints the failed and skipped services and the number of services up
+.PP
+processes reparented to process 1 are reaped
+.SH CONSOLE
+each log line has the form
+.PP
+.RS
+.BI [ sss.mmm ]
+.I tag
+.B >
+.I message
+.RE
+.PP
+where the time is seconds since
+.B ninit
+started and
+.I tag
+is one of:
+.TP
+.B DONE
+a service became ready
+.TP
+.B NOTE
+progress, and a line of service output prefixed with the service name
+.TP
+.B WAIT
+a service is still starting
+.TP
+.B WARN
+a problem that was recovered from
+.TP
+.B FAIL
+a failure
+.PP
+when built with
+.BR \-\-enable\-quiet ,
+only
+.B WARN
+and
+.B FAIL
+lines are printed.
+the console is written without blocking.
+output the console does not accept within 100 ms is dropped and counted, and the count is printed once output resumes
+.PP
+the last 64
+.B WARN
+and
+.B FAIL
+lines, up to 199 bytes each, are also kept in memory and returned by
+.B ninitctl log
+.SH CONTROL SOCKET
+.I /run/ninit/control
+is a stream socket in the unix domain.
+a client sends one request line,
+.I verb
+optionally followed by a space and a service name, at most 1023 bytes including the newline.
+.B ninit
+replies with zero or more data lines beginning with
+.RB \(dq .\~ \(dq,
+then one line beginning with
+.RB \(dq +\~ \(dq
+on success or
+.RB \(dq \-\~ \(dq
+on failure, and closes the connection
+.PP
+the verbs are
+.BR status ,
+.BR log ,
+.BR start ,
+.BR stop ,
+.BR restart ,
+.B resume
+and
+.BR reload ,
+with the meanings given in
+.BR ninitctl (8).
+.B reload
+is always refused
+.PP
+an operation belongs to the service, not to the connection.
+a client that disconnects before the final line is dropped and its operation continues.
+at most 8 connections are served at once.
+the socket is not served once shutdown has begun
+.SH SIGNALS
+.TP
+.B SIGTERM
+reboot
+.TP
+.B SIGINT
+reboot.
+the kernel sends it on ctrl-alt-del
+.TP
+.B SIGUSR1
+halt
+.TP
+.B SIGUSR2
+power off
+.TP
+.B SIGCHLD
+reap children
+.PP
+once shutdown has begun, further shutdown signals are ignored
+.SH SHUTDOWN
+.IP 1. 4
+the services are stopped in reverse dependency order.
+a service is sent
+.B SIGTERM
+when every service that depends on it has stopped, and
+.B SIGKILL
+when its
+.B stop-timeout
+expires.
+independent services stop in parallel.
+this step ends after 30 s
+.IP 2. 4
+every process is sent
+.BR SIGTERM .
+.B ninit
+waits up to 5 s for all of them to exit
+.IP 3. 4
+the remaining processes are sent
+.BR SIGKILL .
+.B ninit
+waits up to 2 s
+.IP 4. 4
+.B hwclock \-\-systohc \-\-utc
+is run, and killed after 5 s
+.IP 5. 4
+every swap area in
+.I /proc/swaps
+is disabled
+.IP 6. 4
+the control socket is removed
+.IP 7. 4
+the filesystems are synced and remounted read-only, most recently mounted first, in up to 3 passes.
+a filesystem that remains writable is unmounted, and failing that, detached.
+.I /
+is remounted read-only last
+.IP 8. 4
+.BR reboot (2)
+is called with the requested action
+.PP
+no service is restarted and the emergency shell is not respawned during shutdown
+.SH EMERGENCY SHELL
+the emergency shell is started when the graph is missing, unreadable, of another version or fails verification, when a service with
+.B onfail: shell
+exhausts its start attempts, and when memory runs out before the first service is started.
+.B ninit
+continues to run, services unaffected by the failure continue to start, and
+.BR ninitctl (8)
+can be used from the shell
+.PP
+the console is first reset: a virtual terminal in graphics mode is returned to text mode, a raw keyboard to unicode, and the terminal attributes to sane values.
+the shell runs on
+.I /dev/console
+in a new session with the console as its controlling terminal and the environment
+.BR PATH ,
+.B HOME=/
+and
+.B TERM=linux
+on a virtual terminal or
+.B TERM=vt220
+otherwise.
+the first of the following that can be executed is run:
+.IP 1. 4
+.I /sbin/sulogin
+or
+.IR /usr/sbin/sulogin ,
+if built with
+.B \-\-enable\-authshell
+and the root entry of
+.I /etc/shadow
+holds a hash that is not empty and does not begin with
+.B !
+or
+.B *
+.IP 2. 4
+the busybox given to
+.BR \-\-with\-busybox ,
+as
+.B \-sh
+.IP 3. 4
+.IR /bin/sh ,
+as
+.B \-sh
+.PP
+the shell is started again when it exits.
+.B ninit
+stops restarting it after 5 consecutive exits within 1 s of starting, 2 consecutive failures to execute any shell, or 5 consecutive failures to start it
+.SH ENVIRONMENT
+.TP
+.B ninit_graph
+path of the graph to load, if it begins with
+.BR / .
+the kernel passes a
+.IB name = value
+parameter it does not recognise to init as an environment variable.
+the default is
+.I @ninit_svcdir@/depgraph
+.PP
+the environment of
+.B ninit
+is not passed to services
+.SH EXIT STATUS
+.B ninit
+exits with status 1 when it is not process 1.
+as process 1 it does not exit
+.SH FILES
+.TP
+.I @ninit_svcdir@/depgraph
+the compiled graph
+.TP
+.I /etc/locale.conf
+locale variables for services
+.TP
+.I /run/ninit/control
+control socket
+.TP
+.I /sys/fs/cgroup/ninit.services/svc\-N
+cgroup of the service with index
+.I N
+.TP
+.I /etc/shadow
+consulted before the emergency shell when built with
+.B \-\-enable\-authshell
+.SH NOTES
+without
+.BR \-\-enable\-authshell ,
+the emergency shell is an unauthenticated root shell.
+where the console is reachable remotely, as over a serial line or a BMC, access to the console is equivalent to root access.
+with
+.BR \-\-enable\-authshell ,
+a root account without a usable hash, or a system on which
+.B sulogin
+cannot be executed, still receives an unauthenticated shell
+.PP
+shutdown writes the system time to the hardware clock as utc.
+this is incorrect for a hardware clock that keeps local time
+.PP
+.BR ninit\-shutdown (8)
+recognises
+.B ninit
+by
+.IR /proc/1/comm ,
+which the kernel derives from the name of the executed file.
+.B ninit
+must therefore be started through a path whose last component is
+.B ninit
+.SH SEE ALSO
+.BR ninitctl (8),
+.BR ninit\-shutdown (8),
+.BR ninit.d (5),
+.BR bootparam (7),
+.BR cgroups (7),
+.BR sulogin (8)
