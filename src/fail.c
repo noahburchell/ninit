@@ -330,7 +330,7 @@ static int emerg_console_reset(int con)
 	return vt;
 }
 
-#ifdef NINIT_AUTHSHELL
+#ifdef NINIT_SULOGIN
 static int root_hash_usable(void)
 {
 	FILE *f = fopen("/etc/shadow", "re");
@@ -493,7 +493,7 @@ static int emerg_start(void)
 
 	emerg_pid = -1;
 
-#ifdef NINIT_AUTHSHELL
+#ifdef NINIT_SULOGIN
 	auth = root_hash_usable();
 	if (!emerg_greeted)
 		log_warn(auth ? "shell: the root password is required"

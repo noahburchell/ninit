@@ -52,7 +52,7 @@ all three are installed into sbindir. the manual pages `ninit(8)`, `ninitctl(8)`
 - bash at `/bin/bash`, or the interpreter chosen with `--with-shell`, when the first service starts
 - `/bin/sh` for the emergency shell
 - cgroup v2 for service containment. forking directly into a cgroup uses `CLONE_INTO_CGROUP` (linux 5.7). SIGKILL is delivered through `cgroup.kill` (linux 5.14). without cgroup v2 services are contained by process group only
-- optional: `hwclock` at shutdown, `sulogin` for `--enable-authshell`, `dbus-send` and elogind for `ninit-shutdown` run without root
+- optional: `hwclock` at shutdown, `sulogin` for `--with-sulogin`, `dbus-send` and elogind for `ninit-shutdown` run without root
 
 ### 1.4 scope
 
@@ -73,15 +73,14 @@ emerge --ask sys-apps/ninit
 
 | use flag | configure option |
 |---|---|
-| `o3` | `--enable-o3` |
-| `lto` | `--enable-lto` |
 | `native` | `--enable-native` |
+| `hardened` | `--enable-hardened` |
 | `quiet` | `--enable-quiet` |
-| `authshell` | `--enable-authshell` |
+| `sulogin` | `--with-sulogin` |
 | `busybox` | `--with-busybox` |
 | `debug` | `--enable-debug` |
 
-the ebuild sets optimisation flags from these use flags and ignores `CFLAGS` and `LDFLAGS` from make.conf. continue at [2.5](#25-setup)
+`CFLAGS` and `LDFLAGS` from make.conf are used as described in [2.2](#22-from-source). continue at [2.5](#25-setup)
 
 ### 2.2 from source
 
@@ -114,24 +113,25 @@ mkdir build && cd build && ../configure && make
 
 `make` prefixes each compile and link command with a progress counter. `make V=1` prints the plain automake commands instead. `./configure LDFLAGS=-static` links statically, as required for an initramfs whose libc differs from the build host's
 
-`configure` starts from an empty `CFLAGS` and supplies its own warning and optimisation flags. `CFLAGS` given to `configure` or `make` are appended after them
+`configure` starts from an empty `CFLAGS`. its optimisation flags, `-O2` and link time optimisation, come before the `CFLAGS` and `LDFLAGS` given to `configure` or `make`, so `-O3` or `-fno-lto` there take effect. the language standard, the warnings, `--enable-native` and the hardening flags come after them and cannot be overridden
+
+every build is hardened with `_FORTIFY_SOURCE=2`, `-fstack-protector-strong`, `-fstack-clash-protection`, `-fPIE -pie`, `-z relro -z now` and `-z noexecstack`. `-pie` is left out when `LDFLAGS` contains `-static`
 
 ### 2.3 configure options
 
 | option | effect |
 |---|---|
-| `--enable-o3` | `-O3` instead of `-O2` |
-| `--enable-lto` | link time optimisation. `-flto=thin` with clang, `-flto=auto` with gcc |
-| `--enable-native` | `-march=native -mtune=native`. the binaries may not run on a different cpu |
+| `--enable-native` | `-march=native -mtune=native` |
+| `--enable-hardened` | `_FORTIFY_SOURCE=3`, `-fcf-protection=full` on x86 or `-mbranch-protection=standard` on arm64, `-ftrivial-auto-var-init=zero`, `-fstrict-flex-arrays=3`, `-fno-delete-null-pointer-checks` and `-fno-strict-overflow` |
 | `--enable-quiet` | only `WARN` and `FAIL` lines are printed on the console. service output is not echoed |
-| `--enable-authshell` | run sulogin in front of the emergency shell, see [8](#8-emergency-shell) |
+| `--with-sulogin` | run sulogin in front of the emergency shell, see [8](#8-emergency-shell) |
 | `--with-busybox[=PATH]` | try PATH before `/bin/sh` for the emergency shell. PATH defaults to `/bin/busybox` |
 | `--with-shell=PATH` | interpreter for service scripts. default `/bin/bash` |
 | `--with-shell-name=NAME` | `argv[0]` for that interpreter. default the basename of PATH |
 | `--with-service-dir=DIR` | service directory. default `/etc/ninit.d`. the graph is `DIR/depgraph` |
 | `--disable-man` | do not build or install the manual pages |
 | `--enable-werror` | warnings are errors |
-| `--enable-debug` | `-O0 -g3` with ASan and UBSan. not for use as pid 1. cannot be combined with `--enable-lto` |
+| `--enable-debug` | `-O0 -g3` with ASan and UBSan, without link time optimisation or `_FORTIFY_SOURCE`. not for use as pid 1 |
 
 a service script is a program for one interpreter, and the same text under another shell is a different program, so there is no fallback to another shell. `--with-shell` also selects the interpreter `ninitctl init` uses for its syntax check. dash, for example, is `--with-shell=/bin/dash --with-shell-name=dash`
 
@@ -684,13 +684,13 @@ before starting the shell ninit resets the console. a virtual terminal left in g
 
 the shell runs on `/dev/console` in its own session with the console as its controlling terminal, with `PATH` as for services, `HOME=/`, and `TERM=linux` on a virtual terminal or `TERM=vt220` otherwise. ninit tries, in order:
 
-1. `/sbin/sulogin`, then `/usr/sbin/sulogin`, only with `--enable-authshell` and only if root's hash in `/etc/shadow` is usable, meaning not empty and not beginning with `!` or `*`
+1. `/sbin/sulogin`, then `/usr/sbin/sulogin`, only with `--with-sulogin` and only if root's hash in `/etc/shadow` is usable, meaning not empty and not beginning with `!` or `*`
 2. the `--with-busybox` path, as the login shell `-sh`
 3. `/bin/sh`, as the login shell `-sh`
 
 when the shell exits it is started again. ninit stops restarting it after 5 consecutive exits within 1 s of starting, after 2 consecutive failures to execute any shell, or after 5 consecutive failures to start it, which are retried every 2 s
 
-**note** without `--enable-authshell` the emergency shell is an unauthenticated root shell on the console, as with sysvinit and busybox init. where the console is reachable remotely, such as over a serial line or a BMC, access to it is equivalent to a root credential. with `--enable-authshell`, a root account without a usable hash still receives an unauthenticated shell, as does a system on which sulogin cannot be executed
+**note** without `--with-sulogin` the emergency shell is an unauthenticated root shell on the console, as with sysvinit and busybox init. where the console is reachable remotely, such as over a serial line or a BMC, access to it is equivalent to a root credential. with `--with-sulogin`, a root account without a usable hash still receives an unauthenticated shell, as does a system on which sulogin cannot be executed
 
 ## 9 depgraph format
 
@@ -798,7 +798,7 @@ services are stored in topological order, roots first at indices 0 to n_roots - 
 | `/etc/locale.conf` | locale for services |
 | `/etc/adjtime` | hardware clock mode for `hwclock` at shutdown, `UTC` or `LOCAL` on its third line |
 | `/etc/os-release`, `/usr/lib/os-release` | name in the welcome line |
-| `/etc/shadow` | read before the emergency shell with `--enable-authshell` |
+| `/etc/shadow` | read before the emergency shell with `--with-sulogin` |
 | `/run/ninit/control` | control socket |
 | `/sys/fs/cgroup/ninit.services/svc-N/` | cgroup of the service with index N |
 | `SBINDIR/NAME.old` | originals saved by `make tools-install` |

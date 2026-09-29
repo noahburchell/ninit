@@ -314,7 +314,7 @@ the first of the following that can be executed is run:
 or
 .IR /usr/sbin/sulogin ,
 if built with
-.B \-\-enable\-authshell
+.B \-\-with\-sulogin
 and the root entry of
 .I /etc/shadow
 holds a hash that is not empty and does not begin with
@@ -376,14 +376,14 @@ cgroup of the service with index
 .TP
 .I /etc/shadow
 consulted before the emergency shell when built with
-.B \-\-enable\-authshell
+.B \-\-with\-sulogin
 .SH NOTES
 without
-.BR \-\-enable\-authshell ,
+.BR \-\-with\-sulogin ,
 the emergency shell is an unauthenticated root shell.
 where the console is reachable remotely, as over a serial line or a BMC, access to the console is equivalent to root access.
 with
-.BR \-\-enable\-authshell ,
+.BR \-\-with\-sulogin ,
 a root account without a usable hash, or a system on which
 .B sulogin
 cannot be executed, still receives an unauthenticated shell

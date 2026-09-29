@@ -44,6 +44,8 @@ AS_IF([test -z "$ninit_std"], [NINIT_TRY_CFLAG([-std=gnu2x], [ninit_std])])
 AS_IF([test -z "$ninit_std"],
       [AC_MSG_ERROR([$CC does not support C23, gcc 14+ or clang 18+ is required])])
 
+NINIT_OPT_CFLAGS=
+NINIT_OPT_LDFLAGS=
 NINIT_CFLAGS="$ninit_std"
 NINIT_CPPFLAGS=
 NINIT_LDFLAGS=
@@ -136,69 +138,83 @@ AC_ARG_ENABLE([debug],
     [build unoptimised with ASan and UBSan, not for booting])],
   [], [enable_debug=no])
 
-AC_ARG_ENABLE([o3],
-  [AS_HELP_STRING([--enable-o3], [compile at -O3 instead of -O2])],
-  [], [enable_o3=no])
-
 AC_ARG_ENABLE([native],
-  [AS_HELP_STRING([--enable-native],
-    [tune for this cpu (-march=native), the result is not portable])],
+  [AS_HELP_STRING([--enable-native], [tune for this cpu (-march=native)])],
   [], [enable_native=no])
 
-AC_ARG_ENABLE([lto],
-  [AS_HELP_STRING([--enable-lto], [link-time optimisation])],
-  [], [enable_lto=no])
+AC_ARG_ENABLE([hardened],
+  [AS_HELP_STRING([--enable-hardened],
+    [_FORTIFY_SOURCE=3, control-flow protection and further hardening])],
+  [], [enable_hardened=no])
 
+ninit_have_lto=no
 AS_IF([test "x$enable_debug" = xyes], [
-  AS_IF([test "x$enable_lto" = xyes],
-	[AC_MSG_ERROR([--enable-debug and --enable-lto are mutually exclusive])])
-  NINIT_TRY_CFLAGS([-O0 -g3 -fno-omit-frame-pointer -fno-common], [NINIT_CFLAGS])
+  NINIT_TRY_CFLAGS([-O0 -g3], [NINIT_OPT_CFLAGS])
+  NINIT_TRY_CFLAGS([-fno-omit-frame-pointer -fno-common], [NINIT_CFLAGS])
   ninit_san=
   NINIT_TRY_CFLAGS([
-	-fsanitize=address,undefined
+	-fsanitize=address
+	-fsanitize=undefined
 	-fsanitize-address-use-after-scope
 	-fno-sanitize-recover=all
   ], [ninit_san])
   AS_IF([test "x$CC_NAME" = xclang], [
-    NINIT_TRY_CFLAGS([-fsanitize=integer,local-bounds -fno-sanitize=unsigned-integer-overflow],
+    NINIT_TRY_CFLAGS([-fsanitize=integer -fsanitize=local-bounds -fno-sanitize=unsigned-integer-overflow],
 		     [ninit_san])
   ])
   NINIT_CFLAGS="$NINIT_CFLAGS$ninit_san"
   NINIT_LDFLAGS="$NINIT_LDFLAGS$ninit_san"
 ], [
-  AS_IF([test "x$enable_o3" = xyes],
-	[NINIT_TRY_CFLAG([-O3], [NINIT_CFLAGS])],
-	[NINIT_TRY_CFLAG([-O2], [NINIT_CFLAGS])])
-  NINIT_TRY_CFLAGS([-pipe -fno-semantic-interposition -fno-plt], [NINIT_CFLAGS])
-  NINIT_TRY_LDFLAG([-Wl,-O2], [NINIT_LDFLAGS])
-  NINIT_TRY_LDFLAG([-Wl,--as-needed], [NINIT_LDFLAGS])
-  NINIT_TRY_LDFLAG([-Wl,--hash-style=gnu], [NINIT_LDFLAGS])
-  NINIT_TRY_LDFLAG_RUN([-Wl,-z,pack-relative-relocs], [NINIT_LDFLAGS])
+  NINIT_TRY_CFLAGS([-O2 -pipe -fno-plt], [NINIT_OPT_CFLAGS])
+  NINIT_TRY_LDFLAG([-Wl,-O2], [NINIT_OPT_LDFLAGS])
+  NINIT_TRY_LDFLAG([-Wl,--as-needed], [NINIT_OPT_LDFLAGS])
+  NINIT_TRY_LDFLAG([-Wl,--hash-style=gnu], [NINIT_OPT_LDFLAGS])
+  NINIT_TRY_LDFLAG_RUN([-Wl,-z,pack-relative-relocs], [NINIT_OPT_LDFLAGS])
+
+  ninit_lto=
+  ninit_lto_CFLAGS=$CFLAGS
+  CFLAGS=
+  AS_IF([test "x$CC_NAME" = xclang], [
+    NINIT_TRY_LDFLAG([-flto=thin], [ninit_lto])
+    AS_IF([test -z "$ninit_lto"], [NINIT_TRY_LDFLAG([-flto], [ninit_lto])])
+  ], [
+    NINIT_TRY_LDFLAG([-flto=auto], [ninit_lto])
+    AS_IF([test -z "$ninit_lto"], [NINIT_TRY_LDFLAG([-flto], [ninit_lto])])
+    AS_IF([test -n "$ninit_lto"], [
+      NINIT_TRY_CFLAG([-fno-fat-lto-objects], [ninit_lto])
+      NINIT_TRY_CFLAG([-flto-partition=one], [ninit_lto])
+      AC_CHECK_TOOLS([AR], [gcc-ar ar], [ar])
+      AC_CHECK_TOOLS([RANLIB], [gcc-ranlib ranlib], [ranlib])
+    ])
+  ])
+  CFLAGS=$ninit_lto_CFLAGS
+  AS_IF([test -n "$ninit_lto"], [ninit_have_lto=yes])
+  NINIT_OPT_CFLAGS="$NINIT_OPT_CFLAGS$ninit_lto"
 ])
 
 AS_IF([test "x$enable_native" = xyes], [
   NINIT_TRY_CFLAGS([-march=native -mtune=native], [NINIT_CFLAGS])
-  AC_MSG_WARN([--enable-native: the result is not portable])
 ])
 
-AS_IF([test "x$enable_lto" = xyes], [
-  ninit_lto=
-  AS_IF([test "x$CC_NAME" = xclang], [
-    NINIT_TRY_CFLAG([-flto=thin], [ninit_lto])
-    AS_IF([test -z "$ninit_lto"], [NINIT_TRY_CFLAG([-flto], [ninit_lto])])
-  ], [
-    NINIT_TRY_CFLAG([-flto=auto], [ninit_lto])
-    AS_IF([test -z "$ninit_lto"], [NINIT_TRY_CFLAG([-flto], [ninit_lto])])
-    NINIT_TRY_CFLAG([-fno-fat-lto-objects], [ninit_lto])
-    NINIT_TRY_CFLAG([-flto-partition=one], [ninit_lto])
-  ])
-  AS_IF([test -z "$ninit_lto"], [AC_MSG_ERROR([$CC does not support link-time optimisation])])
-  NINIT_CFLAGS="$NINIT_CFLAGS$ninit_lto"
-  NINIT_LDFLAGS="$NINIT_LDFLAGS$ninit_lto"
-  AS_IF([test "x$CC_NAME" = xgcc], [
-    AC_CHECK_TOOLS([AR], [gcc-ar ar], [ar])
-    AC_CHECK_TOOLS([RANLIB], [gcc-ranlib ranlib], [ranlib])
-  ])
+AS_IF([test "x$enable_debug" != xyes], [
+  AS_IF([test "x$enable_hardened" = xyes], [ninit_fortify=3], [ninit_fortify=2])
+  NINIT_CPPFLAGS="$NINIT_CPPFLAGS -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=$ninit_fortify"
+])
+NINIT_TRY_CFLAGS([-fstack-protector-strong -fstack-clash-protection -fPIE], [NINIT_CFLAGS])
+AS_CASE([" $LDFLAGS "], [*" -static "*|*" -static-pie "*], [],
+	[NINIT_TRY_LDFLAG([-pie], [NINIT_LDFLAGS])])
+NINIT_TRY_LDFLAG([-Wl,-z,relro], [NINIT_LDFLAGS])
+NINIT_TRY_LDFLAG([-Wl,-z,now], [NINIT_LDFLAGS])
+NINIT_TRY_LDFLAG([-Wl,-z,noexecstack], [NINIT_LDFLAGS])
+AS_IF([test "x$enable_hardened" = xyes], [
+  NINIT_TRY_CFLAGS([
+	-fcf-protection=full
+	-mbranch-protection=standard
+	-ftrivial-auto-var-init=zero
+	-fstrict-flex-arrays=3
+	-fno-delete-null-pointer-checks
+	-fno-strict-overflow
+  ], [NINIT_CFLAGS])
 ])
 
 AC_ARG_ENABLE([quiet],
@@ -207,12 +223,13 @@ AC_ARG_ENABLE([quiet],
 AS_IF([test "x$enable_quiet" = xyes],
       [AC_DEFINE([NINIT_QUIET], [1], [Only print warnings and failures on the console.])])
 
-AC_ARG_ENABLE([authshell],
-  [AS_HELP_STRING([--enable-authshell],
-    [run sulogin before the emergency shell])],
-  [], [enable_authshell=no])
-AS_IF([test "x$enable_authshell" = xyes],
-      [AC_DEFINE([NINIT_AUTHSHELL], [1], [Try sulogin before the emergency shell.])])
+AC_ARG_WITH([sulogin],
+  [AS_HELP_STRING([--with-sulogin], [run sulogin before the emergency shell])],
+  [], [with_sulogin=no])
+AS_CASE([$with_sulogin],
+  [yes], [AC_DEFINE([NINIT_SULOGIN], [1], [Try sulogin before the emergency shell.])],
+  [no], [],
+  [AC_MSG_ERROR([--with-sulogin takes no argument, not $with_sulogin])])
 
 AC_ARG_WITH([busybox],
   [AS_HELP_STRING([--with-busybox@<:@=PATH@:>@],
@@ -289,6 +306,8 @@ AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
 	[AC_MSG_ERROR([no usable renameat2])])
 ])
 
+AC_SUBST([NINIT_OPT_CFLAGS])
+AC_SUBST([NINIT_OPT_LDFLAGS])
 AC_SUBST([NINIT_CFLAGS])
 AC_SUBST([NINIT_CPPFLAGS])
 AC_SUBST([NINIT_LDFLAGS])
@@ -304,15 +323,15 @@ AC_MSG_NOTICE([
     services ........ $with_service_dir
     interpreter ..... $with_shell (argv[0] $with_shell_name)
 
-    -O3 ............. $enable_o3
-    lto ............. $enable_lto
+    lto ............. $ninit_have_lto
     march=native .... $enable_native
+    hardened ........ $enable_hardened
     sanitisers ...... $enable_debug
     quiet boot ...... $enable_quiet
-    authshell ....... $enable_authshell
+    sulogin ......... $with_sulogin
     busybox shell ... $with_busybox
     man pages ....... $enable_man
 
-    CFLAGS ..........$NINIT_CFLAGS $CFLAGS
-    LDFLAGS .........$NINIT_LDFLAGS $LDFLAGS
+    CFLAGS ..........$NINIT_OPT_CFLAGS $CFLAGS$NINIT_CPPFLAGS$NINIT_CFLAGS
+    LDFLAGS .........$NINIT_OPT_LDFLAGS $LDFLAGS$NINIT_LDFLAGS
 ])
