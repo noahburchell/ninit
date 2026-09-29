@@ -1,6 +1,6 @@
 #!/bin/bash
-#%depon: fs
+#%depon: mounts
 #%type: daemon
 #%restart: always
 #%onfail: warn
-exec chronyd -n -u ntp -F 2 -f /etc/chrony/chrony.conf
+exec chronyd -n

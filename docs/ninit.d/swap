@@ -1,8 +1,4 @@
 #!/bin/bash
 #%depon: mounts
 #%onfail: warn
-swapon -a || true
-if [ -f /swap/swapfile ] && ! grep -q '^/swap/swapfile ' /proc/swaps; then
-	swapon /swap/swapfile || echo "swap: could not enable /swap/swapfile" >&2
-fi
-exit 0
+exec swapon -a

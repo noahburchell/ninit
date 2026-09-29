@@ -3,4 +3,5 @@
 #%type: daemon
 #%restart: always
 #%onfail: warn
-exec /usr/sbin/sshd -D -e
+ssh-keygen -A
+exec /usr/sbin/sshd -D

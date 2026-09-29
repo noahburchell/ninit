@@ -54,17 +54,57 @@ ninit_man_edit = sed \
 	-e 's|@sbindir[@]|$(sbindir)|g' \
 	-e 's|@ninit_svcdir[@]|$(ninit_svcdir)|g' \
 	-e 's|@ninit_shell[@]|$(ninit_shell)|g' \
+	-e 's|@docdir[@]|$(docdir)|g' \
 	-e 's|@PACKAGE_VERSION[@]|$(PACKAGE_VERSION)|g'
 
 man/%: man/%.in Makefile
 	$(AM_V_GEN)$(MKDIR_P) man && $(ninit_man_edit) $< > $@.tmp && mv $@.tmp $@
+
+exampledir = $(docdir)/ninit.d
+dist_example_DATA = \
+	docs/ninit.d/basic \
+	docs/ninit.d/binfmt \
+	docs/ninit.d/bluetooth \
+	docs/ninit.d/chronyd \
+	docs/ninit.d/console \
+	docs/ninit.d/cronie \
+	docs/ninit.d/cupsd \
+	docs/ninit.d/dbus \
+	docs/ninit.d/elogind \
+	docs/ninit.d/fs \
+	docs/ninit.d/getty1 \
+	docs/ninit.d/getty2 \
+	docs/ninit.d/getty3 \
+	docs/ninit.d/getty4 \
+	docs/ninit.d/getty5 \
+	docs/ninit.d/getty6 \
+	docs/ninit.d/hostname \
+	docs/ninit.d/hwclock \
+	docs/ninit.d/loopback \
+	docs/ninit.d/modules-load \
+	docs/ninit.d/mounts \
+	docs/ninit.d/NetworkManager \
+	docs/ninit.d/sddm \
+	docs/ninit.d/sshd \
+	docs/ninit.d/swap \
+	docs/ninit.d/sysctl \
+	docs/ninit.d/sysklogd \
+	docs/ninit.d/tmpfiles \
+	docs/ninit.d/tmpfiles-dev \
+	docs/ninit.d/udev \
+	docs/ninit.d/udev-trigger
+
+exampleunuseddir = $(docdir)/ninit.d/unused
+dist_exampleunused_DATA = \
+	docs/ninit.d/unused/avahi \
+	docs/ninit.d/unused/dhcpcd \
+	docs/ninit.d/unused/udev-settle
 
 EXTRA_DIST = \
 	README.md \
 	autogen.sh \
 	build-aux/progress \
     LICENSE \
-	docs/ninit.d \
 	$(NINIT_MANS:=.in)
 
 NINIT_RUN   := $(abs_top_builddir)/.ninit-progress/$(shell echo $$PPID)
@@ -86,6 +126,7 @@ install-data-hook:
 	@$(MKDIR_P) "$(DESTDIR)$(ninit_svcdir)" 2>/dev/null || \
 		echo "cannot create $(DESTDIR)$(ninit_svcdir)"
 	@echo "install service files in $(DESTDIR)$(ninit_svcdir), then run 'ninitctl init'"
+	@echo "example service files are in $(DESTDIR)$(exampledir)"
 
 TOOL_NAMES = shutdown poweroff halt reboot telinit
 
