@@ -676,7 +676,7 @@ the emergency shell starts when:
 
 - the graph is missing, unreadable, empty or fails verification, which includes a version mismatch
 - a service with `onfail: shell` exhausts its `start-tries`
-- memory runs out before the first service starts
+- memory runs out while ninit allocates its tables at boot
 
 ninit keeps running while the shell runs. services unaffected by the failure continue to start, and `ninitctl` works from the shell. once the shell has started ninit prints `shell: started on the console, exit with reboot or poweroff`
 

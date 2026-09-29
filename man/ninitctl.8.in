@@ -1,5 +1,5 @@
 '\" t
-.TH NINITCTL 8 2026-09-24 "ninit @PACKAGE_VERSION@"
+.TH NINITCTL 8 2026-09-30 "ninit @PACKAGE_VERSION@"
 .SH NAME
 ninitctl \- compile, inspect and control the ninit service graph
 .SH SYNOPSIS
@@ -235,9 +235,9 @@ print under each service its effective timeouts, start attempts, start delay and
 .B deps
 mode, marked
 .B (set)
-or
-.BR (default) ,
-followed by its script as stored, without comments
+if the file sets any of them and
+.B (default)
+otherwise, followed by its script as stored, without comments
 .TP
 .BR \-h ", " \-\-help
 print a summary of the commands
@@ -249,6 +249,15 @@ are:
 .B #
 index in the graph, which also names the service's cgroup,
 .BI svc\- #
+.TP
+.B service
+service name
+.TP
+.B type
+.BR oneshot ,
+.B daemon
+or
+.B target
 .TP
 .B lvl
 number of services in the longest prerequisite chain ending at the service, the service included
