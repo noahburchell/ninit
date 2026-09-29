@@ -1,0 +1,5 @@
+#!/bin/bash
+#%depon: udev-trigger
+#%depof: mounts
+udevadm settle --timeout=30 || echo "udev-settle: events still queued after 30s" >&2
+exit 0

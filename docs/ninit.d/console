@@ -1,0 +1,11 @@
+#!/bin/bash
+[ -r /etc/vconsole.conf ] && . /etc/vconsole.conf
+if [ -n "$KEYMAP" ]; then
+	loadkeys -q "$KEYMAP" || echo "console: loadkeys $KEYMAP failed" >&2
+fi
+if [ -n "$FONT" ]; then
+	for tty in /dev/tty[1-6]; do
+		setfont -C "$tty" "$FONT" || echo "console: setfont $FONT failed on $tty" >&2
+	done
+fi
+exit 0

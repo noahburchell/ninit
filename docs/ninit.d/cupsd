@@ -1,0 +1,5 @@
+#!/bin/bash
+#%depon: mounts
+#%type: daemon
+#%restart: always
+exec cupsd -f
