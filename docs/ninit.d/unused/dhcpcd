@@ -1,0 +1,5 @@
+#!/bin/bash
+#%depon: udev, loopback
+#%type: daemon
+#%restart: always
+exec dhcpcd -B

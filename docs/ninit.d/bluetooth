@@ -1,0 +1,9 @@
+#!/bin/bash
+#%depon: dbus, udev
+#%type: daemon
+#%restart: always
+for b in /usr/libexec/bluetooth/bluetoothd /usr/lib/bluetooth/bluetoothd; do
+	[ -x "$b" ] && exec "$b" -n
+done
+echo "bluetooth: no bluetoothd binary found" >&2
+exit 1
