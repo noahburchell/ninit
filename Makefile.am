@@ -4,11 +4,15 @@ AM_CPPFLAGS = \
 	-I$(top_builddir) \
 	-I$(top_srcdir)/src \
 	-include $(top_builddir)/config.h \
-	-DNINIT_SBINDIR='"$(sbindir)"' \
-	@NINIT_CPPFLAGS@
+	-DNINIT_SBINDIR='"$(sbindir)"'
 
-AM_CFLAGS  = @NINIT_CFLAGS@
-AM_LDFLAGS = @NINIT_LDFLAGS@
+AM_CFLAGS  = @NINIT_OPT_CFLAGS@
+AM_LDFLAGS = @NINIT_OPT_LDFLAGS@
+
+# user flags may override optimisation but not warnings, -march=native or hardening
+COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) \
+	$(AM_CFLAGS) $(CFLAGS) $(NINIT_CPPFLAGS) $(NINIT_CFLAGS)
+LINK = $(CCLD) $(AM_CFLAGS) $(CFLAGS) $(NINIT_CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) $(NINIT_LDFLAGS) -o $@
 
 sbin_PROGRAMS = ninit ninitctl ninit-shutdown
 
