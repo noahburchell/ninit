@@ -23,10 +23,10 @@ static long long log_wait_until;
 static const char *const tag_color[] = {
 	"\033[32mDONE\033[0m",
 	"",
-	"\033[1;33mWARN\033[0m",
-	"\033[1;31mFAIL\033[0m",
+	"\033[33mWARN\033[0m",
+	"\033[31mFAIL\033[0m",
 	"\033[1;34mWAIT\033[0m",
-	"\033[1;36mNOTE\033[0m",
+	"\033[36mNOTE\033[0m",
 };
 
 static const char *const tag_plain[] = {

@@ -139,7 +139,7 @@ a service script is a program for one interpreter, and the same text under anoth
 
 | target | effect |
 |---|---|
-| `install` | install `ninit`, `ninitctl` and `ninit-shutdown` into sbindir and the manual pages into mandir, and create the service directory |
+| `install` | install `ninit`, `ninitctl` and `ninit-shutdown` into sbindir, the manual pages into mandir and the example services into `DOCDIR/ninit.d`, and create the service directory |
 | `tools-install` | `install`, then link `shutdown`, `poweroff`, `halt`, `reboot` and `telinit` to `ninit-shutdown`, see [7.3](#73-ninit-shutdown) |
 | `tools-uninstall` | restore the originals saved by `tools-install` and remove `ninit-shutdown` |
 | `graph` | run the freshly built `ninitctl init` on the configured service directory |
@@ -147,7 +147,7 @@ a service script is a program for one interpreter, and the same text under anoth
 
 ### 2.5 setup
 
-1. write the service files into `/etc/ninit.d`, see [3](#3-service-files)
+1. write the service files into `/etc/ninit.d`, see [3](#3-service-files), or start from the examples, see [3.11](#311-examples)
 2. run `ninitctl init -n` and correct everything it reports
 3. run `ninitctl init` to write the graph
 4. add a boot entry with `init=` pointing at ninit and keep the existing entry as the default, see [5.1](#51-kernel-command-line)
@@ -339,7 +339,50 @@ a getty acquires its terminal itself, as in `exec agetty --noclear tty1 linux`
 
 ### 3.11 examples
 
-`docs/ninit.d/` is the complete service set of one gentoo system running elogind, sddm and dhcpcd. it assumes filesystem drivers built into the kernel, so udev starts after `/usr/lib/modules` is mounted. it is not portable without review
+`docs/ninit.d/` is a complete service set for a system with udev, dbus and elogind, and one daemon for each common task. `make install` installs it into `DOCDIR/ninit.d/`. DOCDIR is `PREFIX/share/doc/ninit` unless `configure` is given `--docdir`
+
+| service | function |
+|---|---|
+| `fs` | if `/` is mounted read-only, check it with `fsck` and remount it read-write |
+| `mounts` | check the local filesystems in `/etc/fstab` with `fsck`, then mount them. `_netdev` entries and network filesystems are skipped |
+| `swap` | `swapon -a` |
+| `tmpfiles-dev`, `tmpfiles` | kmod static nodes and the tmpfiles.d entries under `/dev`, then every other tmpfiles.d entry |
+| `udev`, `udev-trigger` | the udev daemon, then an `add` event for every existing device |
+| `modules-load`, `sysctl`, `binfmt` | modules-load.d, sysctl.d and binfmt.d |
+| `console` | `KEYMAP` and `FONT` from `/etc/vconsole.conf` |
+| `hostname` | the name in `/etc/hostname` |
+| `hwclock` | the kernel timezone, from `/etc/adjtime` |
+| `loopback` | brings `lo` up |
+| `basic` | target. the local system is set up |
+| `getty1` to `getty6` | agetty on tty1 to tty6 |
+| `dbus`, `elogind` | the system bus and the login manager |
+| `sysklogd` | system log |
+| `cronie` | cron |
+| `sshd` | ssh server. missing host keys are generated first |
+| `chronyd` | ntp client |
+| `NetworkManager` | network configuration |
+| `bluetooth` | bluetoothd |
+| `cupsd` | printing |
+| `sddm` | display manager |
+
+`fs` and `mounts` fail, and start the emergency shell, when fsck reports errors it could not correct. for `/` a correction that requires a reboot counts as a failure
+
+`unused/` holds three disabled services:
+
+| service | function |
+|---|---|
+| `dhcpcd` | dhcp client, an alternative to `NetworkManager` |
+| `avahi` | mdns and dns-sd |
+| `udev-settle` | waits until udev has processed every queued event. needed when `/etc/fstab` names devices that udev rules create, such as lvm or raid volumes. it places itself before `mounts` with `depof`, so enabling it requires no change to `mounts` |
+
+to use the set, copy it, move the services whose programs are not installed to `unused/`, and build the graph:
+
+```sh
+cp -a /usr/share/doc/ninit/ninit.d/. /etc/ninit.d/
+ninitctl del bluetooth cupsd sddm
+ninitctl add udev-settle
+ninitctl init -n
+```
 
 ## 4 compiling the graph
 
@@ -393,40 +436,44 @@ ninitctl show [-f FILE | FILE] [-v]
 ```
 $ ninitctl show
 depgraph  /etc/ninit.d/depgraph
-27 services, 31 edges, 6 roots, 6 levels, 7849 bytes, crc 5ac874c4
+31 services, 33 edges, 8 roots, 5 levels, 4527 bytes, crc 44b8e8ee
 
-  #  service       type     lvl  kills  onfail  rdy  rst  depends on
-  ───────────────────────────────────────────────────────────────────────
-  0  fs            oneshot    1     21  shell     —    —  —
-  1  hostname      oneshot    1      3  stop      —    —  —
-  2  keymaps       oneshot    1      3  stop      —    —  —
-  3  loopback      oneshot    1      1  stop      —    —  —
-  4  binfmt        oneshot    1      0  warn      —    —  —
-  5  hwclock       oneshot    1      0  warn      —    —  —
-  6  tmpfiles-dev  oneshot    2      8  stop      —    —  fs
-  7  modules-load  oneshot    2      4  stop      —    —  fs
-  8  mounts        oneshot    2      8  shell     —    —  fs
-  9  udev          daemon     3      7  stop      3  yes  tmpfiles-dev
- 10  dbus          daemon     2      3  stop      3  yes  fs
- 11  sysctl        oneshot    3      3  stop      —    —  modules-load
- 12  tmpfiles      oneshot    3      3  stop      —    —  mounts
- 13  udev-trigger  oneshot    4      4  stop      —    —  udev
- 14  basic         target     5      2  stop      —    —  hostname keymaps mounts sysctl tmpfiles udev-trigger
- 15  elogind       daemon     4      1  stop      3  yes  udev dbus
- 16  gpu           oneshot    2      1  stop      —    —  fs
- 17  avahi         daemon     5      0  stop      3  yes  dbus udev-trigger
- 18  chronyd       daemon     2      0  warn      —  yes  fs
- 19  dhcpcd        daemon     4      0  warn      3  yes  loopback udev
- 20  getty1        daemon     3      0  warn      —  yes  mounts
- 21  getty2        daemon     3      0  warn      —  yes  mounts
- 22  samba         daemon     3      0  warn      —  yes  mounts
- 23  sddm          daemon     6      0  warn      —  yes  basic elogind gpu
- 24  sshd          daemon     6      0  warn      —  yes  basic
- 25  swap          oneshot    3      0  warn      —    —  mounts
- 26  sysklogd      daemon     2      0  warn      —  yes  fs
+  #  service         type     lvl  kills  onfail  rdy  rst  depends on
+  ─────────────────────────────────────────────────────────────────────────
+  0  fs              oneshot    1     20  shell     —    —  —
+  1  tmpfiles-dev    oneshot    1     14  stop      —    —  —
+  2  modules-load    oneshot    1     10  stop      —    —  —
+  3  console         oneshot    1      9  stop      —    —  —
+  4  hostname        oneshot    1      9  stop      —    —  —
+  5  loopback        oneshot    1      1  stop      —    —  —
+  6  binfmt          oneshot    1      0  warn      —    —  —
+  7  hwclock         oneshot    1      0  warn      —    —  —
+  8  mounts          oneshot    2     19  shell     —    —  fs
+  9  udev            daemon     2     13  stop      3  yes  tmpfiles-dev
+ 10  dbus            daemon     3      4  stop      3  yes  mounts
+ 11  sysctl          oneshot    2      9  stop      —    —  modules-load
+ 12  tmpfiles        oneshot    3      9  stop      —    —  mounts
+ 13  udev-trigger    oneshot    3      9  stop      —    —  udev
+ 14  basic           target     4      8  stop      —    —  console hostname mounts sysctl tmpfiles udev-trigger
+ 15  elogind         daemon     4      1  stop      3  yes  udev dbus
+ 16  NetworkManager  daemon     4      0  warn      3  yes  loopback udev dbus
+ 17  bluetooth       daemon     4      0  warn      —  yes  udev dbus
+ 18  chronyd         daemon     3      0  warn      —  yes  mounts
+ 19  cronie          daemon     3      0  warn      —  yes  mounts
+ 20  cupsd           daemon     3      0  warn      —  yes  mounts
+ 21  getty1          daemon     5      0  warn      —  yes  basic
+ 22  getty2          daemon     5      0  warn      —  yes  basic
+ 23  getty3          daemon     5      0  warn      —  yes  basic
+ 24  getty4          daemon     5      0  warn      —  yes  basic
+ 25  getty5          daemon     5      0  warn      —  yes  basic
+ 26  getty6          daemon     5      0  warn      —  yes  basic
+ 27  sddm            daemon     5      0  warn      —  yes  basic elogind
+ 28  sshd            daemon     5      0  warn      —  yes  basic
+ 29  swap            oneshot    3      0  warn      —    —  mounts
+ 30  sysklogd        daemon     3      0  warn      —  yes  mounts
 
-deepest dependency chain (6 services)
-  fs → tmpfiles-dev → udev → udev-trigger → basic → sddm
+deepest dependency chain (5 services)
+  fs → mounts → tmpfiles → basic → getty1
 ```
 
 | column | meaning |
@@ -795,6 +842,7 @@ services are stored in topological order, roots first at indices 0 to n_roots - 
 | `/etc/ninit.d/unused/` | disabled services |
 | `/etc/ninit.d/depgraph` | compiled graph |
 | `/etc/ninit.d/depgraph.old` | graph replaced by the last `ninitctl init` |
+| `DOCDIR/ninit.d/` | example service set, see [3.11](#311-examples) |
 | `/etc/locale.conf` | locale for services |
 | `/etc/adjtime` | hardware clock mode for `hwclock` at shutdown, `UTC` or `LOCAL` on its third line |
 | `/etc/os-release`, `/usr/lib/os-release` | name in the welcome line |

@@ -475,7 +475,9 @@ a mount step that the rest of the system depends on:
 #!/bin/bash
 #%depon: fs
 #%onfail: shell
-mount \-a \-t ext4,xfs,btrfs,vfat
+fsck \-A \-M \-T \-a \-t noopts=_netdev
+(($? < 4)) || exit 1
+exec mount \-a \-t nonfs,nfs4,cifs,smb3 \-O no_netdev
 .EE
 .PP
 a daemon with a readiness probe.
@@ -497,7 +499,7 @@ a target:
 .PP
 .EX
 #!/bin/bash
-#%depon: mounts, tmpfiles, udev\-trigger, sysctl, hostname
+#%depon: mounts, tmpfiles, udev\-trigger, sysctl, hostname, console
 .EE
 .PP
 a shell on the console, which must acquire the terminal itself:
@@ -507,6 +509,17 @@ a shell on the console, which must acquire the terminal itself:
 #%type: daemon
 exec setsid \-c bash \-i < /dev/console > /dev/console 2>&1
 .EE
+.PP
+a complete service set, with disabled services in
+.IR unused/ ,
+is installed in
+.IR @docdir@/ninit.d .
+copy it to
+.I @ninit_svcdir@
+and move the services whose programs are not installed to
+.I unused/
+with
+.BR "ninitctl del" .
 .SH SEE ALSO
 .BR ninit (8),
 .BR ninitctl (8),

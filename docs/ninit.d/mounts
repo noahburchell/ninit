@@ -1,4 +1,6 @@
 #!/bin/bash
 #%depon: fs
 #%onfail: shell
-mount -a -t ext4,xfs,btrfs,vfat
+fsck -A -M -T -a -t noopts=_netdev
+(($? < 4)) || exit 1
+exec mount -a -t nonfs,nfs4,cifs,smb3 -O no_netdev
