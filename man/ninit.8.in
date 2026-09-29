@@ -1,5 +1,5 @@
 '\" t
-.TH NINIT 8 2026-09-24 "ninit @PACKAGE_VERSION@"
+.TH NINIT 8 2026-09-30 "ninit @PACKAGE_VERSION@"
 .SH NAME
 ninit \- init system driven by a compiled service dependency graph
 .SH SYNOPSIS
@@ -291,7 +291,7 @@ no service is restarted and the emergency shell is not respawned during shutdown
 .SH EMERGENCY SHELL
 the emergency shell is started when the graph is missing, unreadable, of another version or fails verification, when a service with
 .B onfail: shell
-exhausts its start attempts, and when memory runs out before the first service is started.
+exhausts its start attempts, and when memory runs out while it allocates its tables at boot.
 .B ninit
 continues to run, services unaffected by the failure continue to start, and
 .BR ninitctl (8)
