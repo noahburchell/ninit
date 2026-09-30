@@ -7,6 +7,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -352,8 +353,6 @@ void ninit_log(int level, const char *fmt, ...)
 	log_write(con, (size_t)(c + n - p));
 }
 
-#define LOG_CONT	"         "
-
 void log_raw(int level, const char *buf, size_t len)
 {
 	const char *p = buf, *end = buf + len;
@@ -375,6 +374,7 @@ void print_welcome(void)
 	FILE *file = fopen("/etc/os-release", "r");
 	char line[128], buf[LOG_LINE];
 	const char *os = "Linux";
+	struct utsname u;
 	int n;
 
 	if (!file)
@@ -401,13 +401,15 @@ void print_welcome(void)
 	if (file)
 		fclose(file);
 
-	// the ring gets it without the bold
-	n = fitted(snprintf(buf, sizeof(buf), "\n" LOG_CONT "Welcome to %s!\n\n", os), 0, sizeof(buf));
+	uname(&u);
+
+	// the ring gets it without the colour
+	n = fitted(snprintf(buf, sizeof(buf), "Welcome to %s! (%s)\n\n", os, u.release), 0, sizeof(buf));
 	ring_put(buf, (size_t)n);
 #ifndef NINIT_QUIET
 	if (log_color)
-		n = fitted(snprintf(buf, sizeof(buf), "\n" LOG_CONT "Welcome to \033[1m%s\033[0m!\n\n", os),
-			   0, sizeof(buf));
+		n = fitted(snprintf(buf, sizeof(buf), "Welcome to \033[1m%s\033[0m! \033[1;30m(%s)\033[0m\n\n",
+				    os, u.release), 0, sizeof(buf));
 	log_write(buf, (size_t)n);
 #endif
 }

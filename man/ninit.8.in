@@ -75,32 +75,33 @@ if
 .I /sys/fs/cgroup
 is not cgroup2 or the directory cannot be created, services are contained by process group only
 .IP 6. 4
-creates
-.I /run/ninit
-with mode 0700 and listens on
-.I /run/ninit/control
-with mode 0600
-.IP 7. 4
 sets its own
 .I oom_score_adj
 to \-1000
-.IP 8. 4
+.IP 7. 4
 directs its log to
 .I /dev/console
-.IP 9. 4
+.IP 8. 4
 raises its own
 .B RLIMIT_NOFILE
-.IP 10. 4
+.IP 9. 4
 reads
 .I /etc/locale.conf
 for the service environment
-.IP 11. 4
+.IP 10. 4
 prints the
 .B PRETTY_NAME
 of
 .I /etc/os-release
 or
 .I /usr/lib/os-release
+and the kernel release
+.IP 11. 4
+creates
+.I /run/ninit
+with mode 0700 and listens on
+.I /run/ninit/control
+with mode 0600
 .IP 12. 4
 loads and verifies the graph.
 if that fails, it starts the emergency shell

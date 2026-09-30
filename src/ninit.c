@@ -2802,8 +2802,6 @@ int main(int argc, char **argv)
 	mount_api_fs();
 	seed_dev();
 	cgroup_init();
-	ctl_init();
-	log_feed(ctl_feed);
 
 	// keep it off the oom victim list
 	ninit_oom_score_adj("-1000\n", 6);
@@ -2818,6 +2816,8 @@ int main(int argc, char **argv)
 	raise_nofile();
 	load_locale();
 	print_welcome();
+	ctl_init();
+	log_feed(ctl_feed);
 	boot_t0 = now_ms();
 
 	// the kernel passes unknown key=value boot parameters to init
