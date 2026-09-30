@@ -408,7 +408,7 @@ void print_welcome(void)
 	ring_put(buf, (size_t)n);
 #ifndef NINIT_QUIET
 	if (log_color)
-		n = fitted(snprintf(buf, sizeof(buf), "Welcome to \033[1m%s\033[0m! \033[1;30m(%s)\033[0m\n\n",
+		n = fitted(snprintf(buf, sizeof(buf), "Welcome to \033[1m%s\033[0m! (%s)\n\n",
 				    os, u.release), 0, sizeof(buf));
 	log_write(buf, (size_t)n);
 #endif
