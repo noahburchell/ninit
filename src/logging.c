@@ -41,32 +41,58 @@ static const char *const tag_plain[] = {
 static_assert(sizeof(tag_color) / sizeof(*tag_color) == LOG_N, "tag_color must cover every level");
 static_assert(sizeof(tag_plain) / sizeof(*tag_plain) == LOG_N, "tag_plain must cover every level");
 
-static char keep_line[LOG_KEEP][LOG_KEEP_LEN];
-static unsigned keep_head, keep_n;
+static_assert(!(LOG_RING & (LOG_RING - 1)) && LOG_RING > LOG_LINE, "LOG_RING must be a power of two above LOG_LINE");
 
-static void log_keep(const char *buf, size_t len)
+// every line in the ring ends in a newline. ring_tail is the start of the oldest one
+static char log_ring[LOG_RING];
+static uint64_t ring_head, ring_tail;
+static void (*ring_feed)(void);
+
+// the offset past the newline that ends the line starting at at, at < ring_head
+static uint64_t ring_eol(uint64_t at)
 {
-	if (len && buf[len - 1] == '\n')
-		len--;
-	if (len >= LOG_KEEP_LEN)
-		len = LOG_KEEP_LEN - 1;
-	memcpy(keep_line[keep_head], buf, len);
-	keep_line[keep_head][len] = '\0';
-	keep_head = (keep_head + 1) % LOG_KEEP;
-	if (keep_n < LOG_KEEP)
-		keep_n++;
+	for (;;) {
+		size_t off = (size_t)(at & (LOG_RING - 1)), seg = LOG_RING - off;
+		const char *nl;
+
+		if (seg > ring_head - at)
+			seg = (size_t)(ring_head - at);
+		nl = memchr(log_ring + off, '\n', seg);
+		if (nl)
+			return at + (uint64_t)(nl - (log_ring + off)) + 1;
+		at += seg;
+	}
 }
 
-unsigned log_kept(void)
+static void ring_put(const char *s, size_t n)
 {
-	return keep_n;
+	size_t off = (size_t)(ring_head & (LOG_RING - 1)), k = LOG_RING - off;
+
+	while (ring_head + n - ring_tail > LOG_RING)
+		ring_tail = ring_eol(ring_tail);
+	if (k > n)
+		k = n;
+	memcpy(log_ring + off, s, k);
+	memcpy(log_ring, s + k, n - k);
+	ring_head += n;
+	if (ring_feed)
+		ring_feed();
 }
 
-const char *log_kept_line(unsigned i)
+// fn runs after every append, to serve readers the ring would otherwise overtake
+void log_feed(void (*fn)(void))
 {
-	if (i >= keep_n)
-		return NULL;
-	return keep_line[(keep_head + LOG_KEEP - keep_n + i) % LOG_KEEP];
+	ring_feed = fn;
+}
+
+uint64_t log_first(void)
+{
+	return ring_tail;
+}
+
+uint64_t log_end(void)
+{
+	return ring_head;
 }
 
 static long long log_now_ms(void)
@@ -170,21 +196,50 @@ static int fitted(int ret, int at, size_t cap)
 	return at + ret;
 }
 
-static int prefix(char *buf, size_t cap, const char *tag)
+static long long log_elapsed_ms(void)
 {
 	struct timespec now;
 	long long ms;
-	int n;
 
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	ms = (long long)(now.tv_sec - log_start.tv_sec) * 1000 +
 	     (now.tv_nsec - log_start.tv_nsec) / 1000000;
-	if (ms < 0)
-		ms = 0;
+	return ms < 0 ? 0 : ms;
+}
 
-	n = fitted(snprintf(buf, cap, "[%03lld.%03lld] %s > ", ms / 1000, ms % 1000, tag),
-		   0, cap);
+static int prefix(char *buf, size_t cap, const char *tag, long long ms)
+{
+	int n = fitted(snprintf(buf, cap, "[%03lld.%03lld] %s > ", ms / 1000, ms % 1000, tag),
+		       0, cap);
+
 	return n > LOG_PREFIX_MAX ? LOG_PREFIX_MAX : n;
+}
+
+// copies the line at *at into buf, which holds LOG_LINE bytes, and advances *at.
+// a reader the ring has overtaken gets a notice instead. returns 0 at the end
+size_t log_line(uint64_t *at, char *buf)
+{
+	uint64_t end;
+	size_t off, n, k;
+	int p;
+
+	if (*at < ring_tail) {
+		p = prefix(buf, LOG_LINE, tag_plain[LOG_WARN], log_elapsed_ms());
+		p = fitted(snprintf(buf + p, LOG_LINE - (size_t)p, "log: skipped %llu bytes\n",
+				    (unsigned long long)(ring_tail - *at)), p, LOG_LINE);
+		*at = ring_tail;
+		return (size_t)p;
+	}
+	if (*at >= ring_head)
+		return 0;
+	end = ring_eol(*at);
+	n = (size_t)(end - *at);
+	off = (size_t)(*at & (LOG_RING - 1));
+	k = LOG_RING - off < n ? LOG_RING - off : n;
+	memcpy(buf, log_ring + off, k);
+	memcpy(buf + k, log_ring, n - k);
+	*at = end;
+	return n;
 }
 
 static int log_report_dropped(unsigned long lost)
@@ -193,7 +248,7 @@ static int log_report_dropped(unsigned long lost)
 	char buf[160];
 	int n, ret;
 
-	n = prefix(buf, sizeof(buf), tags[LOG_WARN]);
+	n = prefix(buf, sizeof(buf), tags[LOG_WARN], log_elapsed_ms());
 	ret = snprintf(buf + n, sizeof(buf) - n, "console: dropped %lu message%s",
 		       lost, lost == 1 ? "" : "s");
 	n = fitted(ret, n, sizeof(buf));
@@ -206,13 +261,28 @@ static int log_report_dropped(unsigned long lost)
 
 void ninit_log(int level, const char *fmt, ...)
 {
-	char buf[1024];
-	const char *const *tags = log_color ? tag_color : tag_plain;
+	char buf[LOG_LINE], con[LOG_LINE + 16];
+	int nocon = level & LOG_NOCON, n, p = 0, c, ret;
+	long long ms = log_elapsed_ms();
 	va_list ap;
-	int n, ret;
 
+	level &= ~LOG_NOCON;
 	if ((unsigned)level >= LOG_N)
 		level = LOG_INFO;
+	if (level != LOG_INFO)
+		p = prefix(buf, sizeof(buf), tag_plain[level], ms);
+
+	va_start(ap, fmt);
+	ret = vsnprintf(buf + p, sizeof(buf) - p, fmt, ap);
+	va_end(ap);
+
+	n = fitted(ret, p, sizeof(buf));
+	if (n > (int)sizeof(buf) - 2)
+		n = (int)sizeof(buf) - 2;
+	buf[n++] = '\n';
+	ring_put(buf, (size_t)n);
+	if (nocon)
+		return;
 
 	if (log_dropped) {
 		unsigned long lost = log_dropped;
@@ -220,22 +290,13 @@ void ninit_log(int level, const char *fmt, ...)
 		if (log_report_dropped(lost))
 			log_dropped -= lost;
 	}
-
-	n = level == LOG_INFO ? 0 : prefix(buf, sizeof(buf), tags[level]);
-
-	va_start(ap, fmt);
-	ret = vsnprintf(buf + n, sizeof(buf) - n, fmt, ap);
-	va_end(ap);
-
-	n = fitted(ret, n, sizeof(buf));
-	if (n > (int)sizeof(buf) - 2)
-		n = (int)sizeof(buf) - 2;
-	buf[n++] = '\n';
-
-	if (level == LOG_FAIL || level == LOG_WARN)
-		log_keep(buf, (size_t)n);
-
-	log_write(buf, (size_t)n);
+	if (!log_color || !p) {
+		log_write(buf, (size_t)n);
+		return;
+	}
+	c = prefix(con, sizeof(con), tag_color[level], ms);
+	memcpy(con + c, buf + p, (size_t)(n - p));
+	log_write(con, (size_t)(c + n - p));
 }
 
 #define LOG_CONT	"         "
@@ -258,13 +319,10 @@ void log_raw(int level, const char *buf, size_t len)
 
 void print_welcome(void)
 {
-#ifdef NINIT_QUIET
-	return;
-#else
 	FILE *file = fopen("/etc/os-release", "r");
-	char line[128];
-	int found = 0;
-	const char *b = log_color ? "\033[1m" : "", *r = log_color ? "\033[0m" : "";
+	char line[128], buf[LOG_LINE];
+	const char *os = "Linux";
+	int n;
 
 	if (!file)
 		file = fopen("/usr/lib/os-release", "r");
@@ -284,14 +342,19 @@ void print_welcome(void)
 			name[--len] = '\0';
 		if (quote && len && name[len - 1] == quote)
 			name[--len] = '\0';
-
-		log_info("\n" LOG_CONT "Welcome to %s%s%s!\n", b, name, r);
-		found = 1;
+		os = name;
 		break;
 	}
 	if (file)
 		fclose(file);
-	if (!found)
-		log_info("\n" LOG_CONT "Welcome to %s%s%s!\n", b, "Linux", r);
+
+	// the ring gets it without the bold
+	n = fitted(snprintf(buf, sizeof(buf), "\n" LOG_CONT "Welcome to %s!\n\n", os), 0, sizeof(buf));
+	ring_put(buf, (size_t)n);
+#ifndef NINIT_QUIET
+	if (log_color)
+		n = fitted(snprintf(buf, sizeof(buf), "\n" LOG_CONT "Welcome to \033[1m%s\033[0m!\n\n", os),
+			   0, sizeof(buf));
+	log_write(buf, (size_t)n);
 #endif
 }

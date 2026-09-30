@@ -1,5 +1,5 @@
 '\" t
-.TH NINIT.D 5 2026-09-24 "ninit @PACKAGE_VERSION@"
+.TH NINIT.D 5 2026-09-30 "ninit @PACKAGE_VERSION@"
 .SH NAME
 ninit.d \- ninit service directory, service files and compiled graph
 .SH SYNOPSIS
@@ -356,7 +356,10 @@ lines beginning with
 .B #
 are comments and a later assignment overrides an earlier one
 .SH OUTPUT
-each line a service writes is printed on the console, prefixed with the service name.
+each line a service writes is logged as a
+.B NOTE
+line prefixed with the service name, see
+.BR ninit (8).
 lines longer than 256 bytes are split.
 the last 1024 bytes are retained and printed when the service fails to start or exits after being ready
 .SH DEPGRAPH
@@ -482,7 +485,7 @@ exec mount \-a \-t nonfs,nfs4,cifs,smb3 \-O no_netdev
 .PP
 a daemon with a readiness probe.
 the probe runs in a background subshell and writes the newline to descriptor 3.
-the main shell closes its copy of descriptor 3 before it executes the daemon, so the pipe reaches end of file if the probe exits without reporting:
+the main shell closes its copy of descriptor 3 before it executes the daemon:
 .PP
 .EX
 #!/bin/bash
