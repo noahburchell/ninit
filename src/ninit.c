@@ -2836,9 +2836,9 @@ int main(int argc, char **argv)
 		fail_emergency_shell(msg);
 	}
 
-	pfds = calloc(3 + CTL_MAX + 2 * (size_t)n_svc, sizeof(*pfds));
-	pf_idx = calloc(3 + CTL_MAX + 2 * (size_t)n_svc, sizeof(*pf_idx));
-	pf_kind = calloc(3 + CTL_MAX + 2 * (size_t)n_svc, sizeof(*pf_kind));
+	pfds = calloc(4 + CTL_MAX + 2 * (size_t)n_svc, sizeof(*pfds));
+	pf_idx = calloc(4 + CTL_MAX + 2 * (size_t)n_svc, sizeof(*pf_idx));
+	pf_kind = calloc(4 + CTL_MAX + 2 * (size_t)n_svc, sizeof(*pf_kind));
 	degraded = !pfds || !pf_idx || !pf_kind;
 	if (degraded) {
 		free(pfds);
@@ -2927,6 +2927,13 @@ int main(int argc, char **argv)
 			}
 		}
 
+		if (!degraded && log_pending_fd() >= 0) {
+			pfds[nfds].fd = log_pending_fd();
+			pfds[nfds].events = POLLOUT;
+			pf_idx[nfds] = 0;
+			pf_kind[nfds++] = 6;
+		}
+
 		wait = n_active && !shutting_down ? STALL_MS : -1;
 		due = restarts_due();
 		if (due >= 0 && (wait < 0 || due < wait))
@@ -2979,6 +2986,10 @@ int main(int argc, char **argv)
 			}
 			if (pf_kind[k] == 4) {
 				ctl_accept();
+				continue;
+			}
+			if (pf_kind[k] == 6) {
+				log_flush();
 				continue;
 			}
 			if (pf_kind[k] == 5) {

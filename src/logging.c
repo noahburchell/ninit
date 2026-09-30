@@ -12,6 +12,7 @@
 
 #define LOG_WRITE_MS	100
 #define LOG_BATCH_MS	250
+#define LOG_CON		(LOG_LINE + 16)
 
 static int log_fd = 2;
 static int log_color;
@@ -19,6 +20,10 @@ static struct timespec log_start;
 static unsigned long log_dropped;
 static int log_stalled;
 static long long log_wait_until;
+
+// the rest of a line the console took in part, written before any later line
+static char log_pend[LOG_CON];
+static size_t pend_at, pend_len;
 
 static const char *const tag_color[] = {
 	"\033[32mDONE\033[0m",
@@ -136,6 +141,7 @@ void log_reopen_console(void)
 	log_fd = fd;
 	log_color = isatty(log_fd);
 	log_set_nonblock();
+	pend_at = pend_len = 0;
 }
 
 void log_adopt_fd(int fd)
@@ -143,46 +149,92 @@ void log_adopt_fd(int fd)
 	log_fd = fd;
 	log_color = isatty(fd);
 	log_set_nonblock();
+	pend_at = pend_len = 0;
 }
 
-static int log_write(const char *buf, size_t len)
+// the bytes the console accepts, waiting only as the batch allows. -1 on a hard error
+static ssize_t log_push(const char *buf, size_t len, int wait)
 {
 	long long deadline = 0, now;
+	size_t done = 0;
 
-	while (len) {
+	while (done < len) {
 		struct pollfd p = { .fd = log_fd, .events = POLLOUT };
-		ssize_t w = write(log_fd, buf, len);
+		ssize_t w = write(log_fd, buf + done, len - done);
 
 		if (w > 0) {
-			buf += w;
-			len -= (size_t)w;
+			done += (size_t)w;
 			log_stalled = 0;
 			continue;
 		}
 		if (w < 0 && errno == EINTR)
 			continue;
-		if (w < 0 && errno != EAGAIN) {
-			log_dropped++;
-			return 0;
-		}
+		if (w < 0 && errno != EAGAIN)
+			return -1;
+		if (!wait)
+			break;
 		now = log_now_ms();
-		if (log_stalled || now >= log_wait_until) {
-			log_dropped++;
-			return 0;
-		}
+		if (log_stalled || now >= log_wait_until)
+			break;
 		if (!deadline) {
 			deadline = now + LOG_WRITE_MS;
 			if (deadline > log_wait_until)
 				deadline = log_wait_until;
 		} else if (now >= deadline) {
 			log_stalled = 1;
-			log_dropped++;
-			return 0;
+			break;
 		}
 		poll(&p, 1, 10);
 	}
+	return (ssize_t)done;
+}
 
+// a line reaches the console whole or not at all
+static int log_write(const char *buf, size_t len)
+{
+	ssize_t n;
+
+	if (pend_len) {
+		n = log_push(log_pend + pend_at, pend_len - pend_at, 1);
+		if (n < 0 || pend_at + (size_t)n < pend_len) {
+			if (n < 0)
+				pend_at = pend_len = 0;
+			else
+				pend_at += (size_t)n;
+			log_dropped++;
+			return 0;
+		}
+		pend_at = pend_len = 0;
+	}
+	n = log_push(buf, len, 1);
+	if (n == (ssize_t)len)
+		return 1;
+	if (n <= 0 || len - (size_t)n > sizeof(log_pend)) {
+		log_dropped++;
+		return 0;
+	}
+	pend_len = len - (size_t)n;
+	memcpy(log_pend, buf + n, pend_len);
 	return 1;
+}
+
+int log_pending_fd(void)
+{
+	return pend_len ? log_fd : -1;
+}
+
+// called when the console is writable. a wakeup that writes nothing gives up the line
+void log_flush(void)
+{
+	ssize_t n = log_push(log_pend + pend_at, pend_len - pend_at, 0);
+
+	if (n > 0)
+		pend_at += (size_t)n;
+	if (n <= 0 || pend_at == pend_len) {
+		if (n <= 0)
+			log_dropped++;
+		pend_at = pend_len = 0;
+	}
 }
 
 #define LOG_PREFIX_MAX	64
@@ -261,7 +313,7 @@ static int log_report_dropped(unsigned long lost)
 
 void ninit_log(int level, const char *fmt, ...)
 {
-	char buf[LOG_LINE], con[LOG_LINE + 16];
+	char buf[LOG_LINE], con[LOG_CON];
 	int nocon = level & LOG_NOCON, n, p = 0, c, ret;
 	long long ms = log_elapsed_ms();
 	va_list ap;
@@ -284,7 +336,8 @@ void ninit_log(int level, const char *fmt, ...)
 	if (nocon)
 		return;
 
-	if (log_dropped) {
+	// reporting before the console has caught up would take the place of real lines
+	if (log_dropped && !pend_len) {
 		unsigned long lost = log_dropped;
 
 		if (log_report_dropped(lost))

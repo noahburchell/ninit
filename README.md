@@ -87,9 +87,9 @@ emerge --ask sys-apps/ninit
 download and unpack the release archive:
 
 ```sh
-curl -LO https://github.com/noahburchell/ninit/releases/download/v1.0.2/ninit-1.0.2.tar.xz
-tar xf ninit-1.0.2.tar.xz
-cd ninit-1.0.2
+curl -LO https://github.com/noahburchell/ninit/releases/download/v1.0.3/ninit-1.0.3.tar.xz
+tar xf ninit-1.0.3.tar.xz
+cd ninit-1.0.3
 ```
 
 the "source code" archives github generates for each tag contain no `configure` script. a git checkout needs `./autogen.sh` first, which requires autoconf 2.69 and automake 1.16 or later
@@ -584,7 +584,7 @@ every line is printed on the console and appended to a 128 KiB ring in memory, w
 
 on a terminal the tags are coloured. with `--enable-quiet` only `WARN` and `FAIL` lines are printed on the console. the ring receives every line
 
-ninit never blocks on the console. output the console does not accept within 100 ms is dropped and counted, and the count is printed as `console: dropped N messages` once output resumes. the ring retains dropped lines
+ninit never blocks on the console. a line the console does not accept within 100 ms is dropped whole and counted, and the count is printed as `console: dropped N messages` once output resumes. a line is never cut short. the ring retains dropped lines
 
 ## 6 runtime control
 
