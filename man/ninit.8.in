@@ -184,7 +184,8 @@ and
 lines are printed on the console.
 the ring receives every line.
 the console is written without blocking.
-output the console does not accept within 100 ms is dropped and counted, and the count is printed once output resumes.
+a line the console does not accept within 100 ms is dropped whole and counted, and the count is printed once output resumes.
+a line is never cut short.
 the ring retains dropped lines
 .SH CONTROL SOCKET
 .I /run/ninit/control
