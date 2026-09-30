@@ -32,6 +32,8 @@ ninitctl \- compile, inspect and control the ninit service graph
 .RI [ name ]
 .br
 .B ninitctl log
+.RB [ \-e ]
+.RB [ \-w ]
 .br
 .BR "ninitctl start" | stop | restart
 .I name
@@ -146,11 +148,9 @@ print the state of every service, or of
 .I name
 .TP
 .B log
-print the retained
-.B WARN
-and
-.B FAIL
-lines, oldest first, up to 64
+print the log ring of
+.BR ninit ,
+oldest first
 .TP
 .B start
 clear the hold on
@@ -238,6 +238,24 @@ mode, marked
 if the file sets any of them and
 .B (default)
 otherwise, followed by its script as stored, without comments
+.TP
+.BR \-e ", " \-\-error
+with
+.BR log ,
+print only
+.B WARN
+and
+.B FAIL
+lines
+.TP
+.BR \-w ", " \-\-watch
+with
+.BR log ,
+then print each line as it is logged, until interrupted.
+lines overwritten before they are read are replaced by one
+.B WARN
+line,
+.BI "log: skipped " n " bytes"
 .TP
 .BR \-h ", " \-\-help
 print a summary of the commands
@@ -352,7 +370,7 @@ ninitctl init
 retry everything that failed during boot:
 .PP
 .EX
-ninitctl log
+ninitctl log \-e
 ninitctl resume
 .EE
 .SH SEE ALSO

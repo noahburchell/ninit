@@ -180,6 +180,37 @@ done:
 	return table;
 }
 
+// the tag of a "[sss.mmm] TAG > text" line, or NULL
+static const char *log_tag(const char *l)
+{
+	const char *p = l[0] == '[' ? strchr(l, ']') : NULL;
+
+	if (!p || p[1] != ' ' || strnlen(p + 2, 7) < 7 || memcmp(p + 6, " > ", 3))
+		return NULL;
+	return p + 2;
+}
+
+// the tag in the colour ninit gives it on the console
+static void log_print(const char *l, int errors, int tty)
+{
+	static const char *const col[][2] = {
+		{ "DONE", "\033[32m" }, { "NOTE", "\033[36m" }, { "WAIT", "\033[1;34m" },
+		{ "WARN", "\033[33m" }, { "FAIL", "\033[31m" },
+	};
+	const char *t = log_tag(l);
+	size_t k;
+
+	if (errors && (!t || (memcmp(t, "WARN", 4) && memcmp(t, "FAIL", 4))))
+		return;
+	if (tty && t)
+		for (k = 0; k < sizeof(col) / sizeof(*col); k++)
+			if (!memcmp(t, col[k][0], 4)) {
+				printf("%.*s%s%.4s\033[0m%s\n", (int)(t - l), l, col[k][1], t, t + 4);
+				return;
+			}
+	puts(l);
+}
+
 static int ctl_connect(void)
 {
 	struct sockaddr_un sa = { .sun_family = AF_UNIX };
@@ -226,12 +257,21 @@ int cmd_ctl(const char *verb, int argc, char **argv)
 	struct stab tab = { 0 };
 	size_t held = 0, at;
 	int fd, k, endopts = 0, rc = NCTL_EXIT_USAGE, seen_end = 0;
-	int tabular = !strcmp(verb, "status");
+	int tabular = !strcmp(verb, "status"), log = !strcmp(verb, "log");
+	int errors = 0, watch = 0, tty = isatty(STDOUT_FILENO);
 	ssize_t n;
 
 	for (k = 0; k < argc; k++) {
 		if (!endopts && !strcmp(argv[k], "--")) {
 			endopts = 1;
+			continue;
+		}
+		if (!endopts && log && (!strcmp(argv[k], "-e") || !strcmp(argv[k], "--error"))) {
+			errors = 1;
+			continue;
+		}
+		if (!endopts && log && (!strcmp(argv[k], "-w") || !strcmp(argv[k], "--watch"))) {
+			watch = 1;
 			continue;
 		}
 		if (!endopts && argv[k][0] == '-' && argv[k][1]) {
@@ -256,6 +296,8 @@ int cmd_ctl(const char *verb, int argc, char **argv)
 		return NCTL_EXIT_USAGE;
 	}
 
+	if (watch)
+		name = "watch";
 	at = (size_t)snprintf(line, sizeof(line), "%s%s%s\n", verb, name ? " " : "",
 			      name ? name : "");
 	if (at >= sizeof(line)) {
@@ -285,13 +327,15 @@ int cmd_ctl(const char *verb, int argc, char **argv)
 		while ((nl = memchr(p, '\n', held - (size_t)(p - buf))) != NULL) {
 			*nl = '\0';
 			if (NCTL_IS_DATA(p)) {
-				if (!tabular || !stab_add(&tab, p + NCTL_TAG_LEN))
+				if (log)
+					log_print(p + NCTL_TAG_LEN, errors, tty);
+				else if (!tabular || !stab_add(&tab, p + NCTL_TAG_LEN))
 					printf("%s\n", p + NCTL_TAG_LEN);
 			} else if (NCTL_IS_OK(p)) {
 				int shown = stab_print(&tab);
 
 				// for one service the trailing line only repeats its name
-				if (!tabular || !name)
+				if (!log && (!tabular || !name))
 					printf("%s%s\n", shown ? "\n" : "",
 					       p + NCTL_TAG_LEN);
 				rc = NCTL_EXIT_OK;
@@ -306,6 +350,8 @@ int cmd_ctl(const char *verb, int argc, char **argv)
 			}
 			p = nl + 1;
 		}
+		if (watch)
+			fflush(stdout);
 		held -= (size_t)(p - buf);
 		memmove(buf, p, held);
 		if (held >= sizeof(buf) - 1) {

@@ -51,6 +51,7 @@
 #define CTL_MAX		8
 #define CTL_BUF		NCTL_REQ_MAX
 #define CTL_OUT		8192
+#define CTL_WATCH	4
 #define CHILD_NOFILE_CUR	1024
 #define CHILD_NOFILE_MAX	524288
 
@@ -111,8 +112,10 @@ struct ctl {
 	int fd;
 	uint32_t svc;
 	uint32_t list_at;
+	uint64_t log_at;
 	uint8_t listing;
 	uint8_t done;
+	uint8_t watch;
 	uint16_t in_len;
 	uint16_t out_at, out_len;
 	char in[CTL_BUF];
@@ -705,13 +708,11 @@ static void maybe_free(uint32_t i)
 
 static void flush_line(uint32_t i)
 {
-#ifndef NINIT_QUIET
 	struct run *r = &runs[i];
 
 	if (r->line_len)
 		log_note("%s: %.*s", ng_name(map, i), (int)r->line_len, r->line);
-#endif
-	runs[i].line_len = 0;
+	r->line_len = 0;
 }
 
 static void absorb(uint32_t i, const char *buf, size_t len)
@@ -732,7 +733,6 @@ static void absorb(uint32_t i, const char *buf, size_t len)
 		r->tail_len += (uint16_t)len;
 	}
 
-#ifndef NINIT_QUIET
 	for (size_t k = 0; k < len; k++) {
 		if (buf[k] == '\n') {
 			flush_line(i);
@@ -742,7 +742,6 @@ static void absorb(uint32_t i, const char *buf, size_t len)
 			flush_line(i);
 		r->line[r->line_len++] = buf[k];
 	}
-#endif
 }
 
 static void drain_out(uint32_t i, unsigned chunks, int budgeted)
@@ -1198,7 +1197,7 @@ static void drain_notify(uint32_t i, unsigned chunks)
 
 		if (k > 0) {
 			if (r->starting && !r->timedout && !r->hup && memchr(buf, '\n', (size_t)k)) {
-				[[maybe_unused]] long long ms = now_ms() - r->started;
+				long long ms = now_ms() - r->started;
 
 				r->starting = 0;
 				if (state[i] == NG_ST_RUNNING || state[i] == NG_ST_DONE)
@@ -1247,7 +1246,7 @@ static void drain_exec(uint32_t i)
 		if (k > 0 || !r->starting)
 			return;
 
-		[[maybe_unused]] long long ms = now_ms() - r->started;
+		long long ms = now_ms() - r->started;
 
 		r->starting = 0;
 		if (state[i] == NG_ST_RUNNING || state[i] == NG_ST_DONE)
@@ -1508,7 +1507,7 @@ static void child_exited(uint32_t i, int status)
 
 	if (ng_svcs(map)[i].type == NG_TYPE_ONESHOT) {
 		if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-			[[maybe_unused]] long long ms = now_ms() - r->started;
+			long long ms = now_ms() - r->started;
 
 			complete(i);
 			log_done("%s (%lld ms)", name, ms);
@@ -2261,16 +2260,20 @@ static void ctl_fill(struct ctl *c)
 		uint32_t i = c->list_at;
 
 		if (c->listing == 2) {
-			const char *l = log_kept_line(i);
+			size_t n;
 
-			if (!l) {
-				c->listing = 0;
-				ctl_end(c, 1, "%u retained failure line%s", i,
-					i == 1 ? "" : "s");
+			if (c->out_len > CTL_OUT - LOG_LINE - NCTL_TAG_LEN)
+				return;
+			n = log_line(&c->log_at, c->out + c->out_len + NCTL_TAG_LEN);
+			if (!n) {
+				if (!c->watch) {
+					c->listing = 0;
+					ctl_end(c, 1, "end of log");
+				}
 				return;
 			}
-			c->list_at++;
-			ctl_out(c, NCTL_DATA "%s\n", l);
+			memcpy(c->out + c->out_len, NCTL_DATA, NCTL_TAG_LEN);
+			c->out_len += (uint16_t)(n + NCTL_TAG_LEN);
 			continue;
 		}
 		if (i >= n_svc) {
@@ -2303,6 +2306,23 @@ static int ctl_flush(struct ctl *c)
 	}
 	c->out_at = c->out_len = 0;
 	return 1;
+}
+
+// a burst can outrun the poll loop, so a watcher half a ring behind is written now.
+// a full socket is left to the poll loop and nothing is dropped here
+static void ctl_feed(void)
+{
+	if (shutting_down)
+		return;
+	for (int k = 0; k < n_ctl; k++) {
+		struct ctl *c = &ctl_conn[k];
+
+		if (!c->watch || c->out_at < c->out_len || log_end() - c->log_at < LOG_RING / 2)
+			continue;
+		do
+			ctl_fill(c);
+		while (ctl_flush(c) == 1 && c->log_at < log_end());
+	}
 }
 
 static void ctl_pump(struct ctl *c)
@@ -2530,12 +2550,21 @@ static void ctl_cmd(struct ctl *c, char *line)
 	}
 
 	if (!strcmp(line, "log")) {
-		if (!log_kept()) {
-			ctl_end(c, 1, "no failures recorded");
+		int watching = 0;
+
+		if (arg && strcmp(arg, "watch")) {
+			ctl_end(c, 0, "unknown log mode '%s'", arg);
 			return;
 		}
+		for (int k = 0; k < n_ctl; k++)
+			watching += ctl_conn[k].watch;
+		if (arg && watching >= CTL_WATCH) {
+			ctl_end(c, 0, "too many log watchers");
+			return;
+		}
+		c->watch = arg != NULL;
 		c->listing = 2;
-		c->list_at = 0;
+		c->log_at = log_first();
 		return;
 	}
 
@@ -2774,6 +2803,7 @@ int main(int argc, char **argv)
 	seed_dev();
 	cgroup_init();
 	ctl_init();
+	log_feed(ctl_feed);
 
 	// keep it off the oom victim list
 	ninit_oom_score_adj("-1000\n", 6);
@@ -2888,7 +2918,9 @@ int main(int argc, char **argv)
 
 				pfds[nfds].fd = cc->fd;
 				pfds[nfds].events = POLLIN;
-				if (cc->out_at < cc->out_len || cc->listing)
+				// a watcher that has caught up waits for new lines
+				if (cc->out_at < cc->out_len ||
+				    (cc->listing && (cc->listing != 2 || cc->log_at < log_end())))
 					pfds[nfds].events |= POLLOUT;
 				pf_idx[nfds] = (uint32_t)c;
 				pf_kind[nfds++] = 5;

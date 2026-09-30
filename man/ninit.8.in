@@ -140,7 +140,7 @@ startup ends when no service is starting and no restart is pending.
 then prints the failed and skipped services and the number of services up
 .PP
 processes reparented to process 1 are reaped
-.SH CONSOLE
+.SH LOG
 each log line has the form
 .PP
 .RS
@@ -171,22 +171,21 @@ a problem that was recovered from
 .B FAIL
 a failure
 .PP
+every line is printed on the console and appended to a 128 KiB ring in memory, which overwrites its oldest lines.
+.B ninitctl log
+reads the ring
+.PP
 when built with
 .BR \-\-enable\-quiet ,
 only
 .B WARN
 and
 .B FAIL
-lines are printed.
+lines are printed on the console.
+the ring receives every line.
 the console is written without blocking.
-output the console does not accept within 100 ms is dropped and counted, and the count is printed once output resumes
-.PP
-the last 64
-.B WARN
-and
-.B FAIL
-lines, up to 199 bytes each, are also kept in memory and returned by
-.B ninitctl log
+output the console does not accept within 100 ms is dropped and counted, and the count is printed once output resumes.
+the ring retains dropped lines
 .SH CONTROL SOCKET
 .I /run/ninit/control
 is a stream socket in the unix domain.
@@ -215,6 +214,16 @@ with the meanings given in
 .BR ninitctl (8).
 .B reload
 is always refused
+.PP
+the request
+.B "log watch"
+is answered with the ring, then with each line as it is logged, and has no final line.
+a watcher the ring overtakes receives one
+.B WARN
+line,
+.BI "log: skipped " n " bytes" ,
+in place of the lines it lost.
+at most 4 connections watch at once
 .PP
 an operation belongs to the service, not to the connection.
 a client that disconnects before the final line is dropped and its operation continues.
@@ -388,23 +397,17 @@ a root account without a usable hash, or a system on which
 .B sulogin
 cannot be executed, still receives an unauthenticated shell
 .PP
-shutdown writes the system time to the hardware clock as utc unless
-.I /etc/adjtime
-says
-.BR LOCAL .
 a hardware clock that keeps local time needs
 .B LOCAL
-on the third line of that file
+on the third line of
+.I /etc/adjtime
 .PP
+.B ninit
+must be started through a path whose last component is
+.BR ninit .
 .BR ninit\-shutdown (8)
-recognises
-.B ninit
-by
-.IR /proc/1/comm ,
-which the kernel derives from the name of the executed file.
-.B ninit
-must therefore be started through a path whose last component is
-.B ninit
+identifies it by
+.I /proc/1/comm
 .SH SEE ALSO
 .BR ninitctl (8),
 .BR ninit\-shutdown (8),
