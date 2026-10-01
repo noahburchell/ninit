@@ -73,7 +73,6 @@ emerge --ask sys-apps/ninit
 
 | use flag | configure option |
 |---|---|
-| `native` | `--enable-native` |
 | `hardened` | `--enable-hardened` |
 | `quiet` | `--enable-quiet` |
 | `sulogin` | `--with-sulogin` |
@@ -111,7 +110,7 @@ mkdir build && cd build && ../configure && make
 
 `make` prefixes each compile and link command with a progress counter. `make V=1` prints the plain automake commands instead. `./configure LDFLAGS=-static` links statically
 
-`configure` starts from an empty `CFLAGS`. its optimisation flags, `-O2` and link time optimisation, come before the `CFLAGS` and `LDFLAGS` given to `configure` or `make`, so `-O3` or `-fno-lto` there take effect. the language standard, the warnings, `--enable-native` and the hardening flags come after them and cannot be overridden
+`configure` starts from an empty `CFLAGS`. its optimisation flags, `-O2` and link time optimisation, come before the `CFLAGS` and `LDFLAGS` given to `configure` or `make`, so `-O3` or `-fno-lto` there take effect. the language standard, the warnings and the hardening flags come after them and cannot be overridden
 
 every build is hardened with `_FORTIFY_SOURCE=2`, `-fstack-protector-strong`, `-fstack-clash-protection`, `-fPIE -pie`, `-z relro -z now` and `-z noexecstack`. `-pie` is left out when `LDFLAGS` contains `-static`
 
@@ -119,7 +118,6 @@ every build is hardened with `_FORTIFY_SOURCE=2`, `-fstack-protector-strong`, `-
 
 | option | effect |
 |---|---|
-| `--enable-native` | `-march=native -mtune=native` |
 | `--enable-hardened` | `_FORTIFY_SOURCE=3`, `-fcf-protection=full` on x86 or `-mbranch-protection=standard` on arm64, `-ftrivial-auto-var-init=zero`, `-fstrict-flex-arrays=3`, `-fno-delete-null-pointer-checks` and `-fno-strict-overflow` |
 | `--enable-quiet` | only `WARN` and `FAIL` lines are printed on the console. `ninitctl log` is unaffected |
 | `--with-sulogin` | run sulogin in front of the emergency shell, see [8](#8-emergency-shell) |
