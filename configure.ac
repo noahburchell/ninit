@@ -138,10 +138,6 @@ AC_ARG_ENABLE([debug],
     [build unoptimised with ASan and UBSan, not for booting])],
   [], [enable_debug=no])
 
-AC_ARG_ENABLE([native],
-  [AS_HELP_STRING([--enable-native], [tune for this cpu (-march=native)])],
-  [], [enable_native=no])
-
 AC_ARG_ENABLE([hardened],
   [AS_HELP_STRING([--enable-hardened],
     [_FORTIFY_SOURCE=3, control-flow protection and further hardening])],
@@ -190,10 +186,6 @@ AS_IF([test "x$enable_debug" = xyes], [
   CFLAGS=$ninit_lto_CFLAGS
   AS_IF([test -n "$ninit_lto"], [ninit_have_lto=yes])
   NINIT_OPT_CFLAGS="$NINIT_OPT_CFLAGS$ninit_lto"
-])
-
-AS_IF([test "x$enable_native" = xyes], [
-  NINIT_TRY_CFLAGS([-march=native -mtune=native], [NINIT_CFLAGS])
 ])
 
 AS_IF([test "x$enable_debug" != xyes], [
@@ -324,7 +316,6 @@ AC_MSG_NOTICE([
     interpreter ..... $with_shell (argv[0] $with_shell_name)
 
     lto ............. $ninit_have_lto
-    march=native .... $enable_native
     hardened ........ $enable_hardened
     sanitisers ...... $enable_debug
     quiet boot ...... $enable_quiet

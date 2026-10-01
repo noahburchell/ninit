@@ -9,7 +9,7 @@ AM_CPPFLAGS = \
 AM_CFLAGS  = @NINIT_OPT_CFLAGS@
 AM_LDFLAGS = @NINIT_OPT_LDFLAGS@
 
-# user flags may override optimisation but not warnings, -march=native or hardening
+# user flags may override optimisation but not warnings or hardening
 COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) \
 	$(AM_CFLAGS) $(CFLAGS) $(NINIT_CPPFLAGS) $(NINIT_CFLAGS)
 LINK = $(CCLD) $(AM_CFLAGS) $(CFLAGS) $(NINIT_CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) $(NINIT_LDFLAGS) -o $@
