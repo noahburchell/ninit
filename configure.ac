@@ -17,7 +17,12 @@ AC_USE_SYSTEM_EXTENSIONS
 AC_PROG_INSTALL
 AC_PROG_LN_S
 AC_PROG_MKDIR_P
+AC_PROG_AWK
 AC_CANONICAL_HOST
+
+AC_REQUIRE_AUX_FILE([tap-driver.sh])
+AC_PATH_PROG([BASH_PROG], [bash], [/bin/bash])
+AC_ARG_VAR([NINIT_TEST_KERNEL], [kernel image the qemu tests boot])
 
 AS_CASE([$host_os], [linux*], [], [AC_MSG_ERROR([ninit requires linux, not $host_os])])
 
