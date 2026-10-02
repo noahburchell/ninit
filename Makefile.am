@@ -107,7 +107,8 @@ EXTRA_DIST = \
     LICENSE \
 	$(NINIT_MANS:=.in)
 
-unit_tests =
+unit_tests = \
+	tests/unit/t-ngraph
 
 ctl_tests =
 
@@ -115,8 +116,9 @@ qemu_tests =
 
 check_PROGRAMS = $(unit_tests)
 
-unit_headers = tests/unit/tap.h
+unit_headers = tests/unit/tap.h tests/unit/gbuild.h
 
+tests_unit_t_ngraph_SOURCES = tests/unit/t-ngraph.c $(unit_headers)
 	-DNINIT_BUSYBOX='"/bin/busybox"'
 
 TESTS = $(unit_tests) $(ctl_tests) $(qemu_tests)
