@@ -110,7 +110,9 @@ EXTRA_DIST = \
 unit_tests = \
 	tests/unit/t-ngraph \
 	tests/unit/t-logging \
-	tests/unit/t-logging-quiet
+	tests/unit/t-logging-quiet \
+	tests/unit/t-fail \
+	tests/unit/t-fail-sulogin
 
 ctl_tests =
 
@@ -124,6 +126,9 @@ tests_unit_t_ngraph_SOURCES = tests/unit/t-ngraph.c $(unit_headers)
 tests_unit_t_logging_SOURCES = tests/unit/t-logging.c $(unit_headers)
 tests_unit_t_logging_quiet_SOURCES = $(tests_unit_t_logging_SOURCES)
 tests_unit_t_logging_quiet_CPPFLAGS = $(AM_CPPFLAGS) -DNINIT_QUIET=1
+tests_unit_t_fail_SOURCES = tests/unit/t-fail.c src/logging.c src/ngraph.c $(unit_headers)
+tests_unit_t_fail_sulogin_SOURCES = $(tests_unit_t_fail_SOURCES)
+tests_unit_t_fail_sulogin_CPPFLAGS = $(AM_CPPFLAGS) -DNINIT_SULOGIN=1 \
 	-DNINIT_BUSYBOX='"/bin/busybox"'
 
 TESTS = $(unit_tests) $(ctl_tests) $(qemu_tests)
