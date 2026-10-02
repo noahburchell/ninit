@@ -107,14 +107,44 @@ EXTRA_DIST = \
     LICENSE \
 	$(NINIT_MANS:=.in)
 
+unit_tests =
+
+ctl_tests =
+
+qemu_tests =
+
+check_PROGRAMS = $(unit_tests)
+
+unit_headers = tests/unit/tap.h
+
+	-DNINIT_BUSYBOX='"/bin/busybox"'
+
+TESTS = $(unit_tests) $(ctl_tests) $(qemu_tests)
+
+TEST_EXTENSIONS = .test
+LOG_DRIVER = env AM_TAP_AWK='$(AWK)' $(SHELL) $(top_srcdir)/build-aux/tap-driver.sh
+TEST_LOG_DRIVER = $(LOG_DRIVER)
+TEST_LOG_COMPILER = $(BASH_PROG)
+# a sanitizer build reports the memory a short lived ninitctl leaves to exit as a failure
+AM_TESTS_ENVIRONMENT = \
+	top_srcdir='$(abs_top_srcdir)'; top_builddir='$(abs_top_builddir)'; \
+	NINIT_SHELL='$(ninit_shell)'; NINIT_SVCDIR='$(ninit_svcdir)'; \
+	ASAN_OPTIONS=$${ASAN_OPTIONS:-detect_leaks=0}; \
+	export top_srcdir top_builddir NINIT_SHELL NINIT_SVCDIR ASAN_OPTIONS;
+
 NINIT_RUN   := $(abs_top_builddir)/.ninit-progress/$(shell echo $$PPID)
 NINIT_STEPS  = $(sort $(ninit_OBJECTS) $(ninitctl_OBJECTS) $(ninit_shutdown_OBJECTS)) \
-	       ninit$(EXEEXT) ninitctl$(EXEEXT) ninit-shutdown$(EXEEXT)
+	       ninit$(EXEEXT) ninitctl$(EXEEXT) ninit-shutdown$(EXEEXT) \
+	       $(if $(filter check,$(MAKECMDGOALS)),$(ninit_check_steps))
 NINIT_TOTAL  = $(words $(NINIT_STEPS))
 NINIT_SAY    = $(SHELL) $(top_srcdir)/build-aux/progress '$(NINIT_RUN)' '$(NINIT_TOTAL)' '$@'
 
+ninit_canon       = $(subst /,_,$(subst -,_,$(1)))
+ninit_check_steps = $(sort $(foreach p,$(check_PROGRAMS),$($(call ninit_canon,$(p))_OBJECTS))) \
+		    $(check_PROGRAMS:=$(EXEEXT))
+
 ninit_v_dep  = $(dir $@)$(DEPDIR)/$(basename $(notdir $@)).Tpo
-ninit_v_prog = $(subst -,_,$(basename $@))
+ninit_v_prog = $(call ninit_canon,$(basename $@))
 
 am__v_CC_0   = @$(NINIT_SAY) $(COMPILE) -MT $@ -MD -MP -MF $(ninit_v_dep) -c -o $@ $<;
 am__v_CCLD_0 = @$(NINIT_SAY) $(LINK) $($(ninit_v_prog)_OBJECTS) $($(ninit_v_prog)_LDADD) $(LIBS);
