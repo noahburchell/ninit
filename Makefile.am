@@ -108,7 +108,9 @@ EXTRA_DIST = \
 	$(NINIT_MANS:=.in)
 
 unit_tests = \
-	tests/unit/t-ngraph
+	tests/unit/t-ngraph \
+	tests/unit/t-logging \
+	tests/unit/t-logging-quiet
 
 ctl_tests =
 
@@ -116,9 +118,12 @@ qemu_tests =
 
 check_PROGRAMS = $(unit_tests)
 
-unit_headers = tests/unit/tap.h tests/unit/gbuild.h
+unit_headers = tests/unit/tap.h tests/unit/gbuild.h tests/unit/logcap.h
 
 tests_unit_t_ngraph_SOURCES = tests/unit/t-ngraph.c $(unit_headers)
+tests_unit_t_logging_SOURCES = tests/unit/t-logging.c $(unit_headers)
+tests_unit_t_logging_quiet_SOURCES = $(tests_unit_t_logging_SOURCES)
+tests_unit_t_logging_quiet_CPPFLAGS = $(AM_CPPFLAGS) -DNINIT_QUIET=1
 	-DNINIT_BUSYBOX='"/bin/busybox"'
 
 TESTS = $(unit_tests) $(ctl_tests) $(qemu_tests)
