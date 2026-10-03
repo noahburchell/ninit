@@ -1,0 +1,150 @@
+# ninitctl show, README 4.2
+
+. "$top_srcdir/tests/lib.sh"
+
+d=$T/g
+mkdir -p "$d"
+printf '#%%onfail: shell\nfsck -a /\n' >"$d/fs"
+printf '#%%type: daemon\n#%%notify: 3\n#%%restart: always\n#%%start-timeout: 10s\nexec udevd\n' >"$d/udev"
+printf '#%%depon: fs\n#%%start-tries: 3\n#%%start-delay: 500ms\nmount -a   # all\n' >"$d/mounts"
+printf '#%%depon: mounts, udev\n' >"$d/basic"
+printf '#%%depon: basic\n#%%type: daemon\n#%%restart: always\n#%%stop-timeout: 1s\nexec agetty tty1\n' >"$d/getty-console-long-name"
+printf '#%%depon: udev\n#%%deps: order\n#%%type: daemon\nexec dbus-daemon --nofork\n' >"$d/dbus"
+printf '#%%depon: dbus\necho ready\n' >"$d/after-dbus"
+run "$NINITCTL" init -d "$d"
+t_is "$rc" 0 "the reference graph builds"
+g=$d/depgraph
+
+mask() {
+	sed -E "s|$T|@T@|g; s/[0-9]+ bytes, crc [0-9a-f]{8}/@SIZE@ bytes, crc @CRC@/"
+}
+
+same() {
+	local got=$1 want=$2 what=$3
+	if [ "$got" = "$want" ]; then
+		t_ok 0 "$what"
+	else
+		t_ok 1 "$what"
+		t_diag "$(diff <(echo "$want") <(echo "$got"))"
+	fi
+}
+
+want=$(cat <<'EOF'
+depgraph  @T@/g/depgraph
+7 services, 6 edges, 2 roots, 4 levels, @SIZE@ bytes, crc @CRC@
+
+  #  service                  type     lvl  kills  onfail  rdy  rst  depends on
+  ----------------------------------------------------------------------------------
+  0  fs                       oneshot    1      3  shell     -    -  -
+  1  udev                     daemon     1      4  stop      3  yes  -
+  2  mounts                   oneshot    2      2  stop      -    -  fs
+  3  basic                    target     3      1  stop      -    -  udev mounts
+  4  dbus                     daemon     2      1  stop      -    -  udev
+  5  after-dbus               oneshot    3      0  warn      -    -  dbus
+  6  getty-console-long-name  daemon     4      0  warn      -  yes  basic
+
+deepest dependency chain (4 services)
+  fs -> mounts -> basic -> getty-console-long-name
+EOF
+)
+run "$NINITCTL" show "$g"
+t_is "$rc" 0 "show succeeds"
+same "$(mask <<<"$out")" "$want" "show prints the table as documented"
+t_is "$err" "" "show prints nothing on stderr"
+
+want_v=$(cat <<'EOF'
+depgraph  @T@/g/depgraph
+7 services, 6 edges, 2 roots, 4 levels, @SIZE@ bytes, crc @CRC@
+
+  #  service                  type     lvl  kills  onfail  rdy  rst  depends on
+  ----------------------------------------------------------------------------------
+  0  fs                       oneshot    1      3  shell     -    -  -
+     | start-timeout 90000 ms, stop-timeout 5000 ms, start-tries 1, start-delay 0 ms, deps uptime (default)
+     | fsck -a /
+  1  udev                     daemon     1      4  stop      3  yes  -
+     | start-timeout 10000 ms, stop-timeout 5000 ms, start-tries 2, start-delay 0 ms, deps uptime (set)
+     | exec udevd
+  2  mounts                   oneshot    2      2  stop      -    -  fs
+     | start-timeout 90000 ms, stop-timeout 5000 ms, start-tries 3, start-delay 500 ms, deps uptime (set)
+     | mount -a
+  3  basic                    target     3      1  stop      -    -  udev mounts
+     | start-timeout 90000 ms, stop-timeout 5000 ms, start-tries 1, start-delay 0 ms, deps uptime (default)
+  4  dbus                     daemon     2      1  stop      -    -  udev
+     | start-timeout 90000 ms, stop-timeout 5000 ms, start-tries 2, start-delay 0 ms, deps order (set)
+     | exec dbus-daemon --nofork
+  5  after-dbus               oneshot    3      0  warn      -    -  dbus
+     | start-timeout 90000 ms, stop-timeout 5000 ms, start-tries 1, start-delay 0 ms, deps uptime (default)
+     | echo ready
+  6  getty-console-long-name  daemon     4      0  warn      -  yes  basic
+     | start-timeout 90000 ms, stop-timeout 1000 ms, start-tries 2, start-delay 0 ms, deps uptime (set)
+     | exec agetty tty1
+
+deepest dependency chain (4 services)
+  fs -> mounts -> basic -> getty-console-long-name
+EOF
+)
+run "$NINITCTL" show -v "$g"
+same "$(mask <<<"$out")" "$want_v" "show -v adds the effective policy and the stored script"
+run "$NINITCTL" show --verbose "$g"
+same "$(mask <<<"$out")" "$want_v" "--verbose is -v"
+run "$NINITCTL" show -f "$g" -v
+same "$(mask <<<"$out")" "$want_v" "-f FILE names the graph"
+run "$NINITCTL" show --file "$g"
+same "$(mask <<<"$out")" "$want" "--file FILE names the graph"
+
+size=$(stat -c %s "$g")
+crc=$(od -An -tx4 -j8 -N4 "$g" | tr -d ' ')
+run "$NINITCTL" show "$g"
+t_has "$out" "$size bytes, crc $crc" "the size and crc are those of the file"
+
+# a graph that fails verification is refused
+cp "$g" "$T/flip"
+printf '\x58' | dd of="$T/flip" bs=1 seek=$((size - 3)) conv=notrunc status=none
+run "$NINITCTL" show "$T/flip"
+t_is "$rc" 1 "a corrupted graph is refused"
+t_is "$err" "ninitctl: $T/flip: crc mismatch" "with the verifier's reason"
+
+cp "$g" "$T/ver"
+printf '\x06' | dd of="$T/ver" bs=1 seek=4 conv=notrunc status=none
+run "$NINITCTL" show "$T/ver"
+t_is "$err" "ninitctl: $T/ver: version mismatch" "a graph of another version is refused"
+
+head -c $((size - 1)) "$g" >"$T/short"
+run "$NINITCTL" show "$T/short"
+t_is "$err" "ninitctl: $T/short: length mismatch" "a truncated graph is refused"
+
+head -c 63 "$g" >"$T/tiny"
+run "$NINITCTL" show "$T/tiny"
+t_is "$err" "ninitctl: $T/tiny: shorter than header" "a file shorter than the header is refused"
+
+printf 'not a graph at all, but long enough to hold a header of sixty-four bytes\n' >"$T/text"
+run "$NINITCTL" show "$T/text"
+t_is "$err" "ninitctl: $T/text: bad magic" "a text file is refused"
+
+: >"$T/empty"
+run "$NINITCTL" show "$T/empty"
+t_is "$rc" 1 "an empty file is refused"
+t_is "$err" "ninitctl: $T/empty: not a regular file" "as not a regular file"
+
+run "$NINITCTL" show "$T/missing"
+t_is "$rc" 1 "a missing file is refused"
+t_is "$err" "ninitctl: open $T/missing: No such file or directory" "with the open error"
+
+run "$NINITCTL" show -x "$g"
+t_is "$rc" 2 "an unknown option is a usage error"
+t_is "$err" "ninitctl: show: unexpected argument '-x'" "and is named"
+run "$NINITCTL" show -f
+t_is "$rc" 2 "-f without a file is a usage error"
+
+# colour only on a terminal
+if command -v script >/dev/null 2>&1; then
+	tty_out=$(script -qec "'$NINITCTL' show '$g'" /dev/null 2>/dev/null)
+	t_has "$tty_out" $'\e[' "a terminal gets colour"
+	t_has "$tty_out" "─" "and box drawing rules"
+	t_has "$tty_out" "→" "and arrows in the chain"
+	t_unlike "$(mask <<<"$out")" $'\e' "a pipe gets none"
+else
+	t_skip "script(1) is not installed"
+fi
+
+t_done

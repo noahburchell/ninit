@@ -1,0 +1,139 @@
+# ninitctl add and del, README 4.3
+
+. "$top_srcdir/tests/lib.sh"
+
+d=$T/svc
+mkdir -p "$d"
+for s in a b c keep; do printf ':\n' >"$d/$s"; done
+
+run "$NINITCTL" del -d "$d" a
+t_is "$rc" 0 "del succeeds"
+[ -f "$d/unused/a" ] && [ ! -e "$d/a" ]
+t_ok $? "del moves the file into unused/"
+t_is "$(stat -c %a "$d/unused")" 755 "unused/ is created with mode 0755"
+t_is "$out" "removed a
+run: ninitctl init -d '$d'" "del reports the move and the rebuild command"
+
+run "$NINITCTL" add -d "$d" a
+t_is "$rc" 0 "add succeeds"
+[ -f "$d/a" ] && [ ! -e "$d/unused/a" ]
+t_ok $? "add moves the file back"
+t_is "$out" "added a
+run: ninitctl init -d '$d'" "add reports the move and the rebuild command"
+
+run "$NINITCTL" del --dir "$d" a b c
+t_is "$rc" 0 "del takes several names"
+t_is "$(ls "$d/unused" | tr '\n' ' ')" "a b c " "all of them are moved"
+t_is "$(grep -c '^run:' <<<"$out")" 1 "the rebuild command is printed once"
+run "$NINITCTL" add -d "$d" -- a b c
+t_is "$(ls "$d/unused" | wc -l)" 0 "add takes several names after --"
+
+# no file is ever replaced
+printf 'old copy\n' >"$d/unused/b"
+run "$NINITCTL" del -d "$d" b
+t_is "$rc" 1 "del onto an existing unused file fails"
+t_is "$err" "ninitctl: b: already in $d/unused" "and says where"
+t_is "$(cat "$d/unused/b")" "old copy" "the file in unused/ is untouched"
+[ -f "$d/b" ]
+t_ok $? "the service stays enabled"
+run "$NINITCTL" add -d "$d" b
+t_is "$rc" 1 "add onto an existing service fails"
+t_is "$err" "ninitctl: b: already in $d" "and says where"
+rm -f "$d/unused/b"
+
+run "$NINITCTL" del -d "$d" nothere
+t_is "$rc" 1 "del of a missing service fails"
+t_is "$err" "ninitctl: nothere: not in $d" "and says where it looked"
+run "$NINITCTL" add -d "$d" nothere
+t_is "$err" "ninitctl: nothere: not in $d/unused" "add looks in unused/"
+
+run "$NINITCTL" del -d "$d" a nothere c
+t_is "$rc" 1 "a partly failed del exits 1"
+[ -f "$d/unused/a" ] && [ -f "$d/unused/c" ]
+t_ok $? "the names that could be moved are moved"
+t_has "$out" "removed a" "and reported"
+"$NINITCTL" add -d "$d" a c >/dev/null
+
+mkdir -p "$d/sub"
+run "$NINITCTL" del -d "$d" sub
+t_is "$err" "ninitctl: sub: is a directory" "a directory is not moved"
+mkfifo "$d/pipe"
+run "$NINITCTL" del -d "$d" pipe
+t_is "$err" "ninitctl: pipe: is a special file" "a fifo is not moved"
+
+# names are checked before any path is built from them
+for bad in "depgraph:'depgraph' is a reserved name" "unused:'unused' is a reserved name" \
+	"depgraph.old:'depgraph.old' is a reserved name" "../keep:'../keep' starts with a dot" \
+	"x/../keep:'x/../keep' contains a slash" "a,b:'a,b' contains a comma" ".a:'.a' starts with a dot" \
+	"a~:'a~' is an editor backup file"; do
+	name=${bad%%:*}
+	run "$NINITCTL" del -d "$d" "$name"
+	t_is "$rc" 1 "del '$name' fails"
+	t_is "$err" "ninitctl: ${bad#*:}" "del '$name' is refused by name"
+done
+[ -f "$d/keep" ] && [ ! -e "$T/keep" ]
+t_ok $? "no name escapes the service directory"
+
+# symlinks keep their target
+mkdir -p "$T/lib"
+printf ':\n' >"$T/lib/rel"
+printf ':\n' >"$T/lib/abs"
+ln -s ../lib/rel "$d/rel"
+ln -s "$T/lib/abs" "$d/abs"
+printf ':\n' >"$d/real"
+ln -s real "$d/sibling"
+before=$(readlink -f "$d/rel")
+"$NINITCTL" del -d "$d" rel abs sibling >/dev/null
+t_is "$(readlink "$d/unused/rel")" "../../lib/rel" "a relative link one level up is rewritten for unused/"
+t_is "$(readlink -f "$d/unused/rel")" "$before" "and resolves to the same file"
+t_is "$(readlink "$d/unused/abs")" "$T/lib/abs" "an absolute link is unchanged"
+t_is "$(readlink "$d/unused/sibling")" "../real" "a link to a sibling is rewritten"
+t_is "$(readlink -f "$d/unused/sibling")" "$(readlink -f "$d/real")" "and resolves to the same file"
+"$NINITCTL" add -d "$d" rel abs sibling >/dev/null
+t_is "$(readlink "$d/rel")" "../lib/rel" "add restores the original relative link"
+t_is "$(readlink "$d/sibling")" "real" "and the sibling link"
+t_is "$(readlink "$d/abs")" "$T/lib/abs" "and leaves the absolute one"
+
+printf ':\n' >"$d/unused/inner"
+ln -s inner "$d/unused/viainner"
+"$NINITCTL" add -d "$d" viainner >/dev/null
+t_is "$(readlink "$d/viainner")" "unused/inner" "a link to a file inside unused/ is rewritten on add"
+t_is "$(readlink -f "$d/viainner")" "$(readlink -f "$d/unused/inner")" "and resolves to the same file"
+
+ln -s "$T/nowhere" "$d/dangling"
+run "$NINITCTL" del -d "$d" dangling
+t_is "$err" "ninitctl: dangling: not in $d" "a dangling link is not moved"
+
+# options and usage
+run "$NINITCTL" del -d "$d"
+t_is "$rc" 2 "del without names is a usage error"
+t_is "$err" "ninitctl: del needs at least one service name" "and says so"
+run "$NINITCTL" add
+t_is "$rc" 2 "add without names is a usage error"
+t_is "$err" "ninitctl: add needs at least one service name" "and says so"
+run "$NINITCTL" del -d
+t_is "$rc" 2 "-d without a directory is a usage error"
+t_is "$err" "ninitctl: del: -d needs a directory" "and says so"
+run "$NINITCTL" add -d "$d" -x a
+t_is "$rc" 2 "an unknown option is a usage error"
+t_is "$err" "ninitctl: add: unknown option '-x'" "and is named"
+run "$NINITCTL" del -d "$d" -- -x
+t_is "$rc" 1 "after -- a leading dash is a name"
+t_is "$err" "ninitctl: -x: not in $d" "and is looked up"
+run "$NINITCTL" del -d "$T/none" a
+t_is "$rc" 1 "a missing directory fails"
+t_has "$err" "ninitctl: mkdir $T/none/unused: No such file or directory" "with the mkdir error"
+run "$NINITCTL" add -d "$T/none" a
+t_has "$err" "ninitctl: open $T/none: No such file or directory" "add reports the open error"
+
+# the rebuild command quotes the directory for the shell
+q="$T/it's here"
+mkdir -p "$q"
+printf ':\n' >"$q/a"
+run "$NINITCTL" del -d "$q" a
+hint=$(tail -n1 <<<"$out")
+t_is "$hint" "run: ninitctl init -d '$T/it'\\''s here'" "a quote in the directory is escaped"
+eval "set -- ${hint#run: }"
+t_is "$4" "$q" "and the printed command parses back to the directory"
+
+t_done

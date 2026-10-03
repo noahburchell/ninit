@@ -1,0 +1,46 @@
+# graph size limits, README 10
+
+. "$top_srcdir/tests/lib.sh"
+
+d=$T/many
+mkdir -p "$d"
+(cd "$d" && for ((k = 0; k < 8192; k++)); do : >"t$k"; done)
+run "$NINITCTL" init -d "$d" --no-check
+t_is "$rc" 0 "8192 services build"
+t_has "$out" ": 8192 services, 0 edges, 8192 roots," "all of them are counted"
+run "$NINITCTL" show "$d/depgraph"
+t_is "$rc" 0 "a graph of 8192 services verifies"
+: >"$d/t8192"
+run "$NINITCTL" init -d "$d" --no-check
+t_is "$rc" 1 "8193 services fail the build"
+t_has "$err" "ninitctl: 8193 services in $d, the maximum is 8192" "with the count and the maximum"
+
+d=$T/chain
+mkdir -p "$d"
+(cd "$d" && printf ':\n' >c0 && for ((k = 1; k < 8192; k++)); do printf '#%%depon: c%d\n:\n' $((k - 1)) >"c$k"; done)
+run "$NINITCTL" init -d "$d" --no-check
+t_is "$rc" 0 "a chain of 8192 services builds"
+t_has "$out" ": 8192 services, 8191 edges, 1 roots," "with 8191 edges"
+run "$NINITCTL" show "$d/depgraph"
+t_has "$out" "8192 levels" "8192 levels deep"
+t_like "$(grep -m1 '  c0 ' <<<"$out")" ' c0 +oneshot +1 +8191 +stop ' "the head of the chain kills 8191"
+t_has "$out" "deepest dependency chain (8192 services)" "the deepest chain covers all of it"
+
+d=$T/fan
+mkdir -p "$d"
+(cd "$d" && printf ':\n' >hub && for ((k = 0; k < 4000; k++)); do printf '#%%depon: hub\n:\n' >"f$k"; done &&
+	printf '#%%depon: %s\n' f{0..3999} >sink)
+run "$NINITCTL" init -d "$d" --no-check
+t_is "$rc" 0 "a service with 4000 prerequisites builds"
+t_has "$out" ": 4002 services, 8000 edges, 1 roots," "with every edge"
+
+d=$T/name
+mkdir -p "$d"
+long=$(printf 'n%.0s' {1..255})
+printf ':\n' >"$d/$long"
+run "$NINITCTL" init -d "$d" --no-check
+t_is "$rc" 0 "a 255 byte name builds"
+run "$NINITCTL" show "$d/depgraph"
+t_has "$out" "$long" "and is shown whole"
+
+t_done
