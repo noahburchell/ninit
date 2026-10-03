@@ -135,6 +135,8 @@ static long parse_when(const char *s)
 	if (*s == '+') {
 		long secs;
 
+		if (s[1] < '0' || s[1] > '9')
+			return -1;
 		errno = 0;
 		v = strtol(s + 1, &end, 10);
 		if (errno || end == s + 1 || *end || v < 0 || ckd_mul(&secs, v, 60L))
@@ -147,12 +149,15 @@ static long parse_when(const char *s)
 		time_t now = time(NULL);
 		long hh, mm, delta;
 
+		// strtol takes a missing number for 0 and skips blanks and signs
+		if (*s < '0' || *s > '9')
+			return -1;
 		errno = 0;
 		hh = strtol(s, &end, 10);
-		if (errno || *end != ':' || hh < 0 || hh > 23)
+		if (errno || *end != ':' || hh > 23 || end[1] < '0' || end[1] > '9')
 			return -1;
 		mm = strtol(end + 1, &end, 10);
-		if (errno || *end || mm < 0 || mm > 59)
+		if (errno || *end || mm > 59)
 			return -1;
 
 		if (!localtime_r(&now, &tm))
