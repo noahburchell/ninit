@@ -618,7 +618,7 @@ runtime commands go to ninit over `/run/ninit/control`. the socket has mode 0600
 - an operation belongs to the service, not to the connection. closing the client does not cancel it
 - a service accepts one operation at a time. a second is refused with `NAME is busy`
 - `start` is refused if the service is running or its previous instance has not exited
-- `start` is refused with `waiting on a prerequisite` if a prerequisite is not up. the service is left pending and starts when its prerequisites are up
+- `start` is refused with `waiting on a prerequisite` if a prerequisite is not up. the service is left pending and starts when its prerequisites are up. a service that was up goes down
 - `start` on a oneshot that has completed runs it again
 - `start` reports failure if the service is neither ready nor failed within `start-timeout` plus 2 s
 - `stop` reports failure if the service has not stopped 2 s after SIGKILL
