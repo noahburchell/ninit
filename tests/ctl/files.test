@@ -217,13 +217,15 @@ t_ok $? "a relative output path is written relative to the working directory"
 d=$T/syntax
 put "$d" good ':\n'
 put "$d" bad1 '#!/bin/bash\n# comment\nif true\nthen\n'
-put "$d" bad2 'echo (\n'
+put "$d" bad2 'echo )\n'
 build "$d"
 t_is "$rc" 1 "a syntax error fails the build"
 t_has "$err" "ninitctl: $d/bad1: " "the failing service is named"
 t_like "$err" "ninitctl: $d/bad1: [^:]*: line [0-9]+: syntax error" "with the shell's message and line"
 t_has "$err" "ninitctl: $d/bad2: " "every failing service is reported"
 t_has "$err" "ninitctl: 2 service scripts failed the $NINIT_SHELL syntax check" "with a count"
+order=$(grep -v ': warning: ' <<<"$err" | grep -oF -e "$d/bad1: " -e "$d/bad2: " -e "failed the" | uniq | tr '\n' ,)
+t_is "$order" "$d/bad1: ,$d/bad2: ,failed the," "failures print in service order, the count last"
 build "$d" --no-check
 t_is "$rc" 0 "--no-check skips the syntax check"
 
