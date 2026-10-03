@@ -1,0 +1,34 @@
+# a large graph boots and shuts down
+
+. "$top_srcdir/tests/lib.sh"
+. "$top_srcdir/tests/qemu/lib.sh"
+q_require
+
+q_new scale
+Q_TIMEOUT=120
+d=$Q/root/etc/ninit.d
+# 10 chains of 40 oneshots, 400 independent oneshots, 100 daemons on the chain ends, targets over them
+for ((c = 0; c < 10; c++)); do
+	printf ':\n' >"$d/c$c-0"
+	for ((k = 1; k < 40; k++)); do
+		printf '#%%depon: c%d-%d\n:\n' $c $((k - 1)) >"$d/c$c-$k"
+	done
+	printf '#%%depon: c%d-39\n' $c >"$d/t$c"
+done
+for ((k = 0; k < 400; k++)); do printf 'true\n' >"$d/o$k"; done
+for ((k = 0; k < 100; k++)); do
+	printf '#%%type: daemon\n#%%notify: 3\n#%%depon: t%d\necho >&3\nexec 3>&- sleep 1000\n' $((k % 10)) >"$d/d$k"
+done
+printf '#%%depon: %s\n' t0 t1 t2 t3 t4 t5 t6 t7 t8 t9 >"$d/all"
+q_check <<'EOF'
+log_has "boot: 912 of 912 services up in" "every service of a 912 service graph comes up" 90000
+out=$(ninitctl status | tail -n1)
+is "$out" "912 services, 912 up" "status counts them"
+is "$(ninitctl status | grep -c ' up ')" 912 "status lists every one"
+EOF
+q_boot
+q_import
+q_poweroff_ok
+q_has "NOTE > shutdown: stopping 101 services in dependency order" "the daemons are stopped in order"
+q_lacks "did not stop in order" "within the 30 s limit"
+t_done

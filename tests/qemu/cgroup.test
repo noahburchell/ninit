@@ -1,0 +1,71 @@
+# containment, README 3.8 and 5.3
+
+. "$top_srcdir/tests/lib.sh"
+. "$top_srcdir/tests/qemu/lib.sh"
+q_require
+
+q_new cgroup
+q_svc daemon <<'EOF'
+#%type: daemon
+sleep 1000 &
+echo $! >/run/daemon.child
+exec sleep 1000
+EOF
+q_svc lefty <<'EOF'
+sleep 1000 &
+echo $! >/run/lefty.child
+EOF
+q_svc hard <<'EOF'
+#%type: daemon
+#%stop-timeout: 300ms
+bash -c 'trap "" TERM; exec sleep 1000' &
+echo $! >/run/hard.child
+exec sleep 1000
+EOF
+q_svc failing <<'EOF'
+#%start-tries: 1
+sleep 1000 &
+echo $! >/run/failing.child
+exit 1
+EOF
+q_svc orphans <<'EOF'
+for k in 1 2 3 4 5; do
+	( sleep 0.3 & )
+done
+EOF
+q_check <<'EOF'
+st_is daemon up
+st_is lefty up
+st_is hard up
+st_is failing failed
+st_is orphans up
+
+cg=$(cg_of "$(idx_of daemon)")
+procs=$(cat $cg/cgroup.procs)
+has "$procs" "$(pid_of daemon)" "the main process is in the service cgroup"
+has "$procs" "$(cat /run/daemon.child)" "and so are its children"
+
+lcg=$(cg_of "$(idx_of lefty)")
+child=$(cat /run/lefty.child)
+has "$(cat $lcg/cgroup.procs)" "$child" "a process a oneshot leaves behind stays in its cgroup"
+is "$(st lefty)" up "the oneshot is up"
+out=$(ninitctl stop lefty)
+is "$?:$out" "0:lefty stopped" "stop signals what the oneshot left behind"
+check "the leftover process is gone" wait_for 2000 test ! -e /proc/$child
+check "an empty cgroup is removed" wait_for 2000 test ! -d "$lcg"
+
+hchild=$(cat /run/hard.child)
+out=$(ninitctl stop hard)
+is "$?:$out" "0:hard stopped after SIGKILL" "a child ignoring SIGTERM keeps the service from stopping until SIGKILL"
+check "SIGKILL reaches every process in the cgroup" test ! -e /proc/$hchild
+
+check "a failed start kills what the attempt left behind" wait_for 2000 test ! -e /proc/$(cat /run/failing.child)
+
+sleep 0.6
+zombies=$(grep -l '^State:.*Z' /proc/[0-9]*/status 2>/dev/null | wc -l)
+is "$zombies" 0 "orphans reparented to pid 1 are reaped"
+EOF
+q_boot
+q_import
+q_poweroff_ok
+t_done

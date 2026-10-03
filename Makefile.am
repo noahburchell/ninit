@@ -141,7 +141,12 @@ qemu_tests = \
 	tests/qemu/ctl.test \
 	tests/qemu/output.test \
 	tests/qemu/shutdown.test \
-	tests/qemu/signals.test
+	tests/qemu/signals.test \
+	tests/qemu/emergency.test \
+	tests/qemu/select.test \
+	tests/qemu/cgroup.test \
+	tests/qemu/scale.test \
+	tests/qemu/console.test
 
 check_PROGRAMS = $(unit_tests) tests/helpers/czdump tests/helpers/nctl-raw tests/helpers/fakectl
 
