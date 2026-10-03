@@ -112,7 +112,8 @@ unit_tests = \
 	tests/unit/t-logging \
 	tests/unit/t-logging-quiet \
 	tests/unit/t-fail \
-	tests/unit/t-fail-sulogin
+	tests/unit/t-fail-sulogin \
+	tests/unit/t-shutdown
 
 ctl_tests =
 
@@ -130,6 +131,7 @@ tests_unit_t_fail_SOURCES = tests/unit/t-fail.c src/logging.c src/ngraph.c $(uni
 tests_unit_t_fail_sulogin_SOURCES = $(tests_unit_t_fail_SOURCES)
 tests_unit_t_fail_sulogin_CPPFLAGS = $(AM_CPPFLAGS) -DNINIT_SULOGIN=1 \
 	-DNINIT_BUSYBOX='"/bin/busybox"'
+tests_unit_t_shutdown_SOURCES = tests/unit/t-shutdown.c $(unit_headers)
 
 TESTS = $(unit_tests) $(ctl_tests) $(qemu_tests)
 
