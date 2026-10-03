@@ -390,7 +390,7 @@ is written by
 the previous graph is kept as
 .IR depgraph.old .
 .BR ninit (8)
-loads a graph only if its version equals the one it was built with, currently 7.
+loads a graph only if its version equals the one it was built with, currently 8.
 the graph must be rebuilt after
 .B ninit
 is upgraded
@@ -407,7 +407,7 @@ header|8|64
 service table|8|16 \(mu n_svc
 dependent offsets|4|4 \(mu (n_svc + 1)
 dependent indices|4|4 \(mu n_edges
-policy table|4|12 \(mu n_svc
+policy table|4|16 \(mu n_svc
 string table|1|blob_len
 .TE
 .PP
@@ -419,7 +419,7 @@ lB lB lB lB
 l n l l.
 offset|size|field|content
 0x00|4|magic|0x4744494e, the bytes NIDG
-0x04|4|version|7
+0x04|4|version|8
 0x08|4|crc32|crc32c of the file with this field 0
 0x0c|4|total_len|file size
 0x10|4|n_svc|services, at most 8192
@@ -444,7 +444,7 @@ l n l l.
 offset|size|field|content
 0x0|2|unmet|number of prerequisites
 0x2|1|type|0 oneshot, 1 daemon, 2 target
-0x3|1|flags|bits 1:0 onfail, bit 2 restart
+0x3|1|flags|bits 1:0 onfail, bit 2 restart, bit 3 interpreter
 0x4|2|n_desc|number of transitive dependents
 0x6|2|notify_fd|0 or 3 to 255
 0x8|4|script_off|string offset, 0xffffffff for a target
@@ -463,6 +463,7 @@ offset|size|field|content
 0x8|2|retry_ms|start-delay
 0xa|1|start_tries|start-tries, 0 for the type default
 0xb|1|pflags|bit 0 deps: order
+0xc|4|exec_off|string offset of the interpreter argv, 0xffffffff without bit 3
 .TE
 .PP
 the onfail field is 0 for warn, 1 for stop and 2 for shell.
@@ -476,6 +477,9 @@ up to but excluding
 of the dependent indices, ascending and each greater than
 .IR i .
 the string table holds NUL-terminated names and scripts.
+an interpreter argv is two lists of NUL-terminated strings, each ended by an empty string.
+the script is run by the first string of the first list, with the first list, the script and the second list as arguments.
+the first string is an absolute path of at most 255 bytes, the lists hold at most 16 strings and each string is at most 4096 bytes.
 unused bits and the reserved word are 0
 .SH LIMITS
 .TS

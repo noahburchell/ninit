@@ -107,6 +107,17 @@ void write_image(const struct build *b, const char *out, int dry, int srclock)
 		pl[i].retry_ms = s->retry_ms;
 		pl[i].start_tries = s->start_tries;
 		pl[i].pflags = s->pflags;
+		pl[i].exec_off = NG_NO_EXEC;
+		if (s->exec_pre.n) {
+			sv[i].flags |= NG_FLAG_INTERP;
+			pl[i].exec_off = blob_add(&blob, s->exec_pre.v[0]);
+			for (j = 1; j < s->exec_pre.n; j++)
+				blob_add(&blob, s->exec_pre.v[j]);
+			blob_add(&blob, "");
+			for (j = 0; j < s->exec_suf.n; j++)
+				blob_add(&blob, s->exec_suf.v[j]);
+			blob_add(&blob, "");
+		}
 	}
 
 	off = sizeof(struct ng_hdr);

@@ -5,25 +5,33 @@
 #include <assert.h>
 
 #define NG_MAGIC	0x4744494eu // 'NIDG'
-#define NG_VERSION	7u
+#define NG_VERSION	8u
 
 #define NG_TYPE_ONESHOT	0
 #define NG_TYPE_DAEMON	1
 #define NG_TYPE_TARGET	2
 
-// flags: bits 0..1 are the onfail policy, bit 2 restarts a completed daemon
+// flags bits 0 and 1 are the onfail policy, bit 2 restarts a completed daemon, bit 3 runs
+// the script with the argv in its policy record instead of the configured shell
 #define NG_ONFAIL_MASK	0x03
 #define NG_ONFAIL_WARN	0
 #define NG_ONFAIL_STOP	1
 #define NG_ONFAIL_SHELL	2
 
 #define NG_FLAG_RESTART	0x04
-#define NG_FLAG_MASK	(NG_ONFAIL_MASK | NG_FLAG_RESTART)
+#define NG_FLAG_INTERP	0x08
+#define NG_FLAG_MASK	(NG_ONFAIL_MASK | NG_FLAG_RESTART | NG_FLAG_INTERP)
 
 #define NG_PF_ORDER_ONLY 0x01
 #define NG_PF_MASK	0x01
 
 #define NG_NO_SCRIPT	UINT32_MAX
+#define NG_NO_EXEC	UINT32_MAX
+
+// an interpreter argv is its path and at most NG_MAX_EXEC_ARGS strings around the script
+#define NG_MAX_INTERP	255u
+#define NG_MAX_EXEC_ARGS	16u
+#define NG_MAX_EXEC_ARG	4096u
 
 #define NG_NOTIFY_NONE	0
 #define NG_NOTIFY_MIN	3
@@ -104,6 +112,7 @@ struct ng_pol {
 	uint16_t retry_ms;
 	uint8_t start_tries;
 	uint8_t pflags;
+	uint32_t exec_off;
 };
 
 struct ng_svc {
@@ -118,7 +127,7 @@ struct ng_svc {
 
 static_assert(sizeof(struct ng_hdr) == 64, "header must be one cache line");
 static_assert(sizeof(struct ng_svc) == 16, "four services per cache line");
-static_assert(sizeof(struct ng_pol) == 12, "policy records must stay compact");
+static_assert(sizeof(struct ng_pol) == 16, "policy records must stay compact");
 static_assert(sizeof(struct ng_pol) % 4 == 0, "policy table must not misalign the blob");
 static_assert(sizeof(struct ng_hdr) % 8 == 0, "header must not misalign what follows");
 static_assert(sizeof(struct ng_svc) % 4 == 0, "service table must not misalign the rdep arrays");
@@ -187,6 +196,17 @@ static inline const char *ng_name(const void *m, uint32_t i)
 static inline const char *ng_script(const void *m, uint32_t i)
 {
 	return ng_blob(m) + ng_svcs(m)[i].script_off;
+}
+
+static inline int ng_interp(const void *m, uint32_t i)
+{
+	return ng_svcs(m)[i].flags & NG_FLAG_INTERP;
+}
+
+// the strings before the script, an empty string, the strings after it, an empty string
+static inline const char *ng_exec(const void *m, uint32_t i)
+{
+	return ng_blob(m) + ng_pol(m, i)->exec_off;
 }
 
 static inline uint16_t ng_notify(const void *m, uint32_t i)

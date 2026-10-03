@@ -33,6 +33,8 @@ static_assert(sizeof(struct ninit_clone_args) == 88, "clone_args v2 is 88 bytes"
 
 static int clone3_ok = 1;
 
+static_assert(sizeof(NG_SHELL) <= NG_MAX_INTERP + 1, "the exec failure message holds the shell path");
+
 static void child_exec(uint32_t i, int out_w, int ntf_w, const char *cg) __attribute__((noreturn));
 
 static size_t put_str(char *dst, size_t at, const char *s)
@@ -60,9 +62,10 @@ static void child_exec(uint32_t i, int out_w, int ntf_w, const char *cg)
 	static char env_path[] = NG_PATH, env_home[] = "HOME=/", env_term[] = "TERM=linux";
 	static char *envp[4 + NG_LOCALE_MAX];
 	static char arg_shell[] = NG_SHELL_ARGV0, arg_c[] = "-c";
-	char *argv[5];
+	char *argv[NG_MAX_EXEC_ARGS + 2];
+	const char *prog = NG_SHELL;
 	int e = 0;
-	char msg[128];
+	char msg[NG_MAX_INTERP + 64];
 	struct sigaction dfl = { .sa_handler = SIG_DFL };
 	sigset_t none;
 	int sig, nfd = ng_notify(map, i), err;
@@ -121,15 +124,30 @@ static void child_exec(uint32_t i, int out_w, int ntf_w, const char *cg)
 	(void)!chdir("/");
 	umask(022);
 
-	argv[0] = arg_shell;
-	argv[1] = arg_c;
-	argv[2] = (char *)(uintptr_t)ng_script(map, i);
-	argv[3] = (char *)(uintptr_t)ng_name(map, i);
-	argv[4] = NULL;
-	execve(NG_SHELL, argv, envp);
+	if (ng_interp(map, i)) {
+		const char *p = ng_exec(map, i);
+		size_t k = 0;
+
+		for (; *p; p += strlen(p) + 1)
+			argv[k++] = (char *)(uintptr_t)p;
+		argv[k++] = (char *)(uintptr_t)ng_script(map, i);
+		for (p++; *p; p += strlen(p) + 1)
+			argv[k++] = (char *)(uintptr_t)p;
+		argv[k] = NULL;
+		prog = argv[0];
+	} else {
+		argv[0] = arg_shell;
+		argv[1] = arg_c;
+		argv[2] = (char *)(uintptr_t)ng_script(map, i);
+		argv[3] = (char *)(uintptr_t)ng_name(map, i);
+		argv[4] = NULL;
+	}
+	execve(prog, argv, envp);
 	err = errno;
 
-	at = put_str(msg, 0, "ninit: exec " NG_SHELL ": errno ");
+	at = put_str(msg, 0, "ninit: exec ");
+	at = put_str(msg, at, prog);
+	at = put_str(msg, at, ": errno ");
 	at = put_num(msg, at, (unsigned)err);
 	at = put_str(msg, at, "\n");
 	(void)!write(2, msg, at);

@@ -25,6 +25,28 @@ static const struct style style_plain = {
 	"-", "|", "->", "-",
 };
 
+// one argument, in single quotes when a shell would split or expand it
+static void print_arg(const char *a)
+{
+	const char *p = a;
+
+	while (*p && (strchr("_@%+=:,./-", *p) || (*p >= '0' && *p <= '9') ||
+		      ((*p | 0x20) >= 'a' && (*p | 0x20) <= 'z')))
+		p++;
+	if (!*p && *a) {
+		printf(" %s", a);
+		return;
+	}
+	fputs(" '", stdout);
+	for (p = a; *p; p++) {
+		if (*p == '\'')
+			fputs("'\\''", stdout);
+		else
+			putchar(*p);
+	}
+	putchar('\'');
+}
+
 int cmd_show(int argc, char **argv)
 {
 	const char *path = NG_DEFAULT_FILE, *why;
@@ -177,6 +199,18 @@ int cmd_show(int argc, char **argv)
 			       pl->start_ms || pl->stop_ms || pl->start_tries ||
 			       pl->retry_ms || pl->pflags ? " (set)" : " (default)",
 			       st->reset);
+
+			if (ng_interp(map, i)) {
+				const char *a = ng_exec(map, i);
+
+				printf("%s     %s runs", st->dim, st->vbar);
+				for (; *a; a += strlen(a) + 1)
+					print_arg(a);
+				fputs(" SCRIPT", stdout);
+				for (a++; *a; a += strlen(a) + 1)
+					print_arg(a);
+				printf("%s\n", st->reset);
+			}
 
 			if (sv[i].type == NG_TYPE_TARGET)
 				continue;

@@ -365,6 +365,34 @@ static int str_fits(const char *blob, uint32_t blob_len, uint32_t off, uint32_t 
 	return memchr(blob + off, '\0', left) != NULL;
 }
 
+// the two string lists of an interpreter argv, each ended by an empty string
+static const char *exec_problem(const char *blob, uint32_t blob_len, uint32_t off)
+{
+	uint32_t args = 0, list;
+
+	if (off >= blob_len)
+		return "exec offset out of range";
+	if (blob[off] != '/')
+		return "interpreter is not an absolute path";
+	if (!str_fits(blob, blob_len, off, NG_MAX_INTERP))
+		return "interpreter path longer than the supported maximum";
+	for (list = 0; list < 2; list++) {
+		while (blob[off]) {
+			if (++args > NG_MAX_EXEC_ARGS)
+				return "too many interpreter arguments";
+			if (!str_fits(blob, blob_len, off, NG_MAX_EXEC_ARG))
+				return "interpreter argument longer than the supported maximum";
+			off += (uint32_t)strlen(blob + off) + 1;
+			if (off >= blob_len)
+				return "interpreter arguments run past the string table";
+		}
+		off++;
+		if (list == 0 && off >= blob_len)
+			return "interpreter arguments run past the string table";
+	}
+	return NULL;
+}
+
 static uint32_t name_hash(const char *s)
 {
 	uint32_t h = 2166136261u;
@@ -516,6 +544,17 @@ const char *ng_verify(const void *map, size_t len)
 				return "policy start_tries out of range";
 			if (p->pflags & ~NG_PF_MASK)
 				return "unknown policy flag bits are set";
+			if (s->flags & NG_FLAG_INTERP) {
+				const char *why;
+
+				if (s->type == NG_TYPE_TARGET)
+					return "a target has an interpreter";
+				why = exec_problem(blob, h->blob_len, p->exec_off);
+				if (why)
+					return why;
+			} else if (p->exec_off != NG_NO_EXEC) {
+				return "exec offset set without the interpreter flag";
+			}
 		}
 	}
 
