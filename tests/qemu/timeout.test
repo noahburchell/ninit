@@ -1,0 +1,71 @@
+# start-timeout and the stall report, README 3.4 and 5.3
+
+. "$top_srcdir/tests/lib.sh"
+. "$top_srcdir/tests/qemu/lib.sh"
+q_require
+
+q_new timeout
+q_svc slow <<'EOF'
+#%start-timeout: 800ms
+echo $$ >/run/slow.pid
+exec sleep 1000
+EOF
+q_svc mute <<'EOF'
+#%type: daemon
+#%notify: 3
+#%start-timeout: 400ms
+#%start-delay: 100ms
+echo $$ >>/run/mute.pids
+exec sleep 1000
+EOF
+q_svc kid <<'EOF'
+#%start-timeout: 500ms
+sleep 1000 &
+echo $! >/run/kid.child
+wait
+EOF
+q_svc stall <<'EOF'
+#%start-timeout: 60s
+sleep 26
+EOF
+q_check <<'EOF'
+st_is slow failed 5000
+log_has "FAIL > slow: start timed out after 800 ms" "a oneshot past its start-timeout is reported"
+log_has "FAIL > slow: failed 1 time (timed out and was killed)" "and fails as timed out"
+pid=$(cat /run/slow.pid)
+check "the timed out process is killed" wait_for 2000 test ! -e /proc/$pid
+st_is mute failed 5000
+log_has "WARN > mute: failed (timed out and was killed), retrying (1 of 2)" "a silent daemon is retried after its timeout"
+log_has "FAIL > mute: failed 2 times (timed out and was killed)" "and fails on the last attempt"
+is "$(wc -l </run/mute.pids)" 2 "the daemon was started twice"
+st_is kid failed 5000
+child=$(cat /run/kid.child)
+check "a timeout kills every process of the service" wait_for 2000 test ! -e /proc/$child
+# the stall report needs 10 s without events, so nothing may contact ninit meanwhile
+sleep 12
+r=$(ring)
+like "$r" "WAIT > stall: still running after [0-9]+ s" "a service still starting after 10 quiet seconds is reported"
+sleep 10
+log_has "WAIT > stall: still running after" "a stalled service is reported after 20 quiet seconds at the latest"
+st_is stall up 10000
+EOF
+q_boot
+q_import
+q_poweroff_ok
+
+# with no other timer having expired, the first quiet 10 s already count
+q_new stall-first
+q_svc quiet <<'EOF'
+#%start-timeout: 60s
+sleep 25
+EOF
+q_check <<'EOF'
+sleep 13
+r=$(ring)
+like "$r" "WAIT > quiet: still running after [0-9]+ s" "the first stall report comes after 10 quiet seconds"
+st_is quiet up 20000
+EOF
+q_boot
+q_import
+q_poweroff_ok
+t_done

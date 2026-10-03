@@ -1,0 +1,78 @@
+# deps: uptime and order at runtime, README 3.5 and 6.3
+
+. "$top_srcdir/tests/lib.sh"
+. "$top_srcdir/tests/qemu/lib.sh"
+q_require
+
+q_new deps
+q_svc db <<'EOF'
+#%type: daemon
+#%restart: always
+exec sleep 1000
+EOF
+q_svc web <<'EOF'
+#%type: daemon
+#%depon: db
+echo $$ >/run/web.pid
+exec sleep 1000
+EOF
+q_svc ready <<'EOF'
+#%depon: db
+EOF
+q_svc behind <<'EOF'
+#%depon: ready
+echo behind ran
+EOF
+q_svc job <<'EOF'
+#%depon: db
+echo job ran >>/run/job
+EOF
+q_svc net <<'EOF'
+#%type: daemon
+#%deps: order
+exec sleep 1000
+EOF
+q_svc client <<'EOF'
+#%depon: net
+echo client ran >>/run/client
+EOF
+q_check <<'EOF'
+for s in db web ready behind job net client; do
+	st_is $s up 5000
+done
+webpid=$(cat /run/web.pid)
+
+out=$(ninitctl stop db)
+is "$?:$out" "0:db stopped" "stop reports the service stopped"
+is "$(st db)" down "a stopped daemon is down"
+like "$(st_line db)" '^\. db down stopped pid 0$' "and held"
+is "$(st ready)" down "a target goes down with a deps uptime prerequisite"
+is "$(st behind)" up "a completed dependent of the target stays up"
+is "$(st web)" up "a running dependent is never stopped"
+is "$(pid_of web)" "$webpid" "and keeps its process"
+
+out=$(ninitctl start job 2>&1)
+is "$?:$out" "1:ninitctl: job waiting on a prerequisite" "start is refused while a deps uptime prerequisite is down"
+is "$(st job)" pending "the refused service is left pending"
+
+out=$(ninitctl start db)
+is "$?:$out" "0:db up" "start reports the service up"
+st_is ready up 3000 "the target comes back up with its prerequisite"
+two() {
+	[ "$(wc -l </run/job)" -ge 2 ]
+}
+check "the pending service starts once its prerequisite is up" wait_for 3000 two
+is "$(wc -l </run/job)" 2 "job ran at boot and once more"
+log_has "DONE > ready" "the target is DONE again"
+is "$(grep -c 'DONE > ready$' <(ring))" 2 "the target became ready twice"
+
+ninitctl stop net >/dev/null
+is "$(st net)" down "a deps order prerequisite can be stopped"
+out=$(ninitctl restart client)
+is "$?:$out" "0:client up" "its dependents still start while it is down"
+is "$(wc -l </run/client)" 2 "the dependent ran again"
+EOF
+q_boot
+q_import
+q_poweroff_ok
+t_done

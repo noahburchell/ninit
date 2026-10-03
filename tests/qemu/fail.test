@@ -1,0 +1,118 @@
+# start failures, retries and onfail, README 3.4, 3.6 and 5.3
+
+. "$top_srcdir/tests/lib.sh"
+. "$top_srcdir/tests/qemu/lib.sh"
+q_require
+
+q_new fail
+q_svc flaky <<'EOF'
+#%start-tries: 3
+#%start-delay: 300ms
+n=$(cat /run/flaky 2>/dev/null || echo 0)
+echo $((n + 1)) >/run/flaky
+echo "attempt $n at $EPOCHREALTIME" >>/run/flaky.times
+[ "$n" -ge 2 ] || { echo "attempt $n fails"; exit 3; }
+EOF
+q_svc bad <<'EOF'
+#%start-tries: 2
+[ -e /run/fix-bad ] && exit 0
+for ((k = 0; k < 40; k++)); do echo "noise line $k padded to be long enough to push the head out of the tail"; done
+echo "the last words of bad"
+exit 7
+EOF
+q_svc dep1 <<'EOF'
+#%depon: bad
+echo dep1 ran
+EOF
+q_svc dep2 <<'EOF'
+#%depon: dep1
+EOF
+q_svc dep3 <<'EOF'
+#%depon: dep2, flaky
+echo dep3 ran
+EOF
+q_svc seg <<'EOF'
+kill -SEGV $$
+EOF
+q_svc early <<'EOF'
+#%type: daemon
+#%notify: 3
+echo "early exits before it is ready"
+exit 0
+EOF
+q_svc hup <<'EOF'
+#%type: daemon
+#%notify: 3
+#%start-tries: 1
+exec 3>&- sleep 100000
+EOF
+q_svc partial <<'EOF'
+#%type: daemon
+#%notify: 4
+#%start-tries: 1
+printf 'not a newline' >&4
+exec 4>&- sleep 100000
+EOF
+q_svc indep <<'EOF'
+echo indep ran
+EOF
+q_check <<'EOF'
+st_is flaky up 10000 "flaky succeeds on its third attempt"
+is "$(cat /run/flaky)" 3 "flaky ran three times"
+mapfile -t times < <(awk '{ print $4 }' /run/flaky.times)
+gap=$(awk -v a="${times[0]}" -v b="${times[1]}" 'BEGIN { printf "%d", (b - a) * 1000 }')
+ok $((gap < 300)) "a start-delay of 300 ms separates the attempts ($gap ms)"
+log_has "WARN > flaky: failed (exit 3), retrying (1 of 3)" "the first failure is retried"
+log_has "WARN > flaky: failed (exit 3), retrying (2 of 3)" "and the second"
+
+st_is bad failed 10000
+log_has "FAIL > bad: failed 2 times (exit 7)" "the last failure is reported with its count"
+log_has "FAIL > the last words of bad" "the output tail follows it"
+r=$(ring)
+is "$(grep -c 'FAIL > noise line 0 ' <<<"$r")" 0 "only the last 1024 bytes of output are in the tail"
+log_has "FAIL > bad: 3 services depend on it, stopping" "onfail stop reports the dependents"
+log_has "WARN > bad: 3 dependent services will not start" "and how many are skipped"
+st_is dep1 skipped 1000 "a direct dependent is skipped"
+st_is dep2 skipped 1000 "a target behind it is skipped"
+st_is dep3 skipped 1000 "a dependent with another prerequisite is skipped too"
+
+st_is seg failed 10000
+log_has "FAIL > seg: failed 1 time (killed by SIGSEGV)" "a signal is reported by name"
+log_has "WARN > seg: no dependent services, continuing" "onfail warn is the default without dependents"
+
+st_is early failed 10000
+log_has "FAIL > early: failed 2 times (exit 0)" "a daemon that exits before ready fails, twice by default"
+st_is hup failed 10000
+log_has "FAIL > hup: failed 1 time (closed its notify fd before reporting ready)" "closing the notify fd fails the start"
+st_is partial failed 10000
+log_has "FAIL > partial: failed 1 time (closed its notify fd before reporting ready)" "bytes without a newline are not readiness"
+st_is indep up 1000 "services outside the failed set continue"
+
+log_has "FAIL > boot: 5 services failed, 3 never started" "the boot summary counts failures and skips"
+log_has "FAIL > boot: bad failed" "and names each failure"
+log_has "WARN > boot: skipped dep2" "and each skip"
+log_has "boot: 3 of 11 services up in" "and counts what is up"
+
+out=$(ninitctl status)
+like "$(grep ' bad ' <<<"$out")" ' bad +failed +-$' "status shows failed"
+like "$(grep ' dep1 ' <<<"$out")" ' dep1 +skipped +-$' "status shows skipped"
+
+out=$(ninitctl start seg 2>&1)
+is "$?:$out" "1:ninitctl: seg failed" "start of a service that fails again reports the failure"
+
+touch /run/fix-bad
+out=$(ninitctl resume)
+rc=$?
+is "$rc:$out" "0:resuming 8 services, 5 started" "resume returns failed and skipped services to pending and starts what it can"
+st_is bad up 5000 "bad starts once fixed"
+st_is dep1 up 5000 "its dependents follow"
+st_is dep2 up 5000 "including the target"
+st_is dep3 up 5000 "and the service behind it"
+log_has "NOTE > control: resuming 8 services, 5 started" "resume is logged"
+st_is early failed 10000 "a service that still fails is failed again"
+EOF
+q_boot
+q_import
+q_poweroff_ok
+q_order "flaky: failed (exit 3), retrying (2 of 3)" "DONE > flaky (" "flaky is DONE after its retries"
+t_done

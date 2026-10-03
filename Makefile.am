@@ -133,7 +133,11 @@ ctl_tests = \
 
 qemu_tests = \
 	tests/qemu/boot.test \
-	tests/qemu/env.test
+	tests/qemu/env.test \
+	tests/qemu/fail.test \
+	tests/qemu/timeout.test \
+	tests/qemu/restart.test \
+	tests/qemu/deps.test
 
 check_PROGRAMS = $(unit_tests) tests/helpers/czdump tests/helpers/nctl-raw tests/helpers/fakectl
 
