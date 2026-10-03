@@ -132,8 +132,11 @@ does nothing
 the request was delivered
 .TP
 .B 1
-an invalid argument, a request that could not be delivered, or a failure to execute
+a request that could not be delivered, or a failure to execute
 .IB name .old
+.TP
+.B 2
+an invalid option or operand
 .SH FILES
 .TP
 .I /proc/1/comm
