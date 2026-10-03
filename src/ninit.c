@@ -2408,6 +2408,7 @@ static void svc_op_start(uint32_t i)
 		if (!shutting_down && r->pid <= 0 && !r->stale_pid) {
 			r->attempt = 0;
 			r->burst = 0;
+			go_down(i);
 			svc_mark_pending(i);
 		}
 		svc_op_done(i, 0, why);
