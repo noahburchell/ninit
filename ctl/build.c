@@ -911,6 +911,17 @@ static int graph_image(const char *path)
 	return h.magic == NG_MAGIC && h.total_len == (uint32_t)st.st_size;
 }
 
+// outside the service directory the scan does not see the output, so it is checked here
+static void refuse_nongraph(const char *path)
+{
+	struct stat st;
+
+	if (stat(path, &st) < 0)
+		return;
+	if (!S_ISREG(st.st_mode) || !graph_image(path))
+		die("%s: the output would replace this, and it is not a depgraph", path);
+}
+
 static int cmp_dirent(const struct dirent **a, const struct dirent **b)
 {
 	return strcmp((*a)->d_name, (*b)->d_name);
@@ -1444,6 +1455,15 @@ int cmd_init(int argc, char **argv)
 	}
 
 	srclock = lock_dir(dir);
+
+	if (!out_base) {
+		char old[4104];
+
+		if (snprintf(old, sizeof(old), "%s.old", out) >= (int)sizeof(old))
+			usage_die("init: output path is too long: %s", out);
+		refuse_nongraph(out);
+		refuse_nongraph(old);
+	}
 
 	ne = scandir(dir, &ents, keep, cmp_dirent);
 	if (ne < 0)

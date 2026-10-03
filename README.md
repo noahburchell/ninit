@@ -408,7 +408,7 @@ ninitctl init [-d DIR] [-o FILE] [-n] [--no-check]
 7. build the image and verify it with the checks ninit applies at boot
 8. write it to a temporary file in the output directory and fsync it, hard link the current graph to `FILE.old`, rename the new file over FILE, fsync the directory
 
-a failed build writes nothing and leaves the existing graph in place. if FILE exists and is not a graph, the build fails instead of replacing it. the output mode is 0644 less the umask, and less group or other read permission if any service file lacks it
+a failed build writes nothing and leaves the existing graph in place. if FILE or `FILE.old` exists and is not a graph, the build fails instead of replacing it. the output mode is 0644 less the umask, and less group or other read permission if any service file lacks it
 
 on success `init` prints `FILE: N services, E edges, R roots, B bytes`. `-n` prints `FILE: would write` followed by the same figures and the mode
 
