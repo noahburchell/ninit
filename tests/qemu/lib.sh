@@ -23,6 +23,8 @@ q_require() {
 	Q_BUSYBOX=${NINIT_TEST_BUSYBOX:-$(command -v busybox)}
 	[ -x "$Q_BUSYBOX" ] || t_skip_all "busybox is not installed"
 	[ -x "$NINIT_SHELL" ] || t_skip_all "$NINIT_SHELL is not executable"
+	# the asan runtime reads /proc before pid 1 can mount it, and gcc links it as a shared library
+	grep -qa __asan_init "$NINIT" && t_skip_all "ninit is built with a sanitizer, it cannot run as pid 1"
 
 	Q_ACCEL=${NINIT_TEST_ACCEL:-}
 	if [ -z "$Q_ACCEL" ]; then
