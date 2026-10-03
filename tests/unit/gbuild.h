@@ -19,6 +19,9 @@ struct gb_svc {
 	uint16_t notify;
 	const char *script;
 	struct ng_pol pol;
+	// the encoded interpreter argv, a string literal through GB_EXEC, NULL for the shell
+	const char *exec;
+	size_t exec_len;
 };
 
 struct gb_edge {
@@ -61,6 +64,7 @@ static inline struct gb_img gb_build(const struct gb_svc *sv, uint32_t n,
 		blob_len += strlen(sv[i].name) + 1;
 		if (sv[i].type != NG_TYPE_TARGET)
 			blob_len += strlen(sv[i].script ? sv[i].script : "") + 1;
+		blob_len += sv[i].exec ? sv[i].exec_len : 0;
 	}
 	for (i = 0; i < m; i++) {
 		roff[e[i].a + 1]++;
@@ -138,6 +142,13 @@ static inline struct gb_img gb_build(const struct gb_svc *sv, uint32_t n,
 			off += strlen(sc) + 1;
 		}
 		*p = sv[i].pol;
+		p->exec_off = NG_NO_EXEC;
+		if (sv[i].exec) {
+			s->flags |= NG_FLAG_INTERP;
+			p->exec_off = (uint32_t)off;
+			memcpy(blob + off, sv[i].exec, sv[i].exec_len);
+			off += sv[i].exec_len;
+		}
 	}
 	h->crc32 = ng_image_crc32c(buf, total);
 
@@ -199,3 +210,5 @@ static inline char *gb_blob(struct gb_img *g)
 #define GB_ONESHOT(n, sc)	{ .name = (n), .type = NG_TYPE_ONESHOT, .onfail = GB_DEFAULT, .script = (sc) }
 #define GB_DAEMON(n, sc)	{ .name = (n), .type = NG_TYPE_DAEMON, .onfail = GB_DEFAULT, .script = (sc) }
 #define GB_TARGET(n)		{ .name = (n), .type = NG_TYPE_TARGET, .onfail = GB_DEFAULT }
+// the trailing NUL of the literal ends the second list
+#define GB_EXEC(lit)		.exec = (lit), .exec_len = sizeof(lit)

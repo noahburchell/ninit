@@ -436,7 +436,7 @@ ninitctl show [-f FILE | FILE] [-v]
 ```
 $ ninitctl show
 depgraph  /etc/ninit.d/depgraph
-31 services, 33 edges, 8 roots, 5 levels, 4527 bytes, crc 44b8e8ee
+31 services, 33 edges, 8 roots, 5 levels, 4651 bytes, crc ea286463
 
   #  service         type     lvl  kills  onfail  rdy  rst  depends on
   ─────────────────────────────────────────────────────────────────────────
@@ -738,7 +738,7 @@ when the shell exits it is started again. ninit stops restarting it after 5 cons
 
 ## 9 depgraph format
 
-a graph is loaded only if its version equals the `NG_VERSION` ninit was built with, defined in `src/ngraph.h`, currently 7. after upgrading ninit, run `ninitctl init` before rebooting. an older graph is refused and the boot ends in the emergency shell
+a graph is loaded only if its version equals the `NG_VERSION` ninit was built with, defined in `src/ngraph.h`, currently 8. after upgrading ninit, run `ninitctl init` before rebooting. an older graph is refused and the boot ends in the emergency shell
 
 ninit reads the whole graph into private read-only memory and verifies it before use. every offset and length is bounds checked, sections must not overlap, the checksum must match, every edge must point to a higher index, stored counts must agree with the edge list, names must be valid and unique, and every field must be in range. a graph that fails any check is not used. `ninitctl show` applies the same checks
 
@@ -750,7 +750,7 @@ all integers are in host byte order. `ninitctl` writes the sections in the order
 | service table | 8 | 16 × n_svc |
 | dependent offsets | 4 | 4 × (n_svc + 1) |
 | dependent indices | 4 | 4 × n_edges |
-| policy table | 4 | 12 × n_svc |
+| policy table | 4 | 16 × n_svc |
 | string table | 1 | blob_len |
 
 header:
@@ -779,7 +779,7 @@ service record:
 |---|---|---|---|
 | 0x0 | 2 | unmet | number of prerequisites. 0 for roots and only for roots |
 | 0x2 | 1 | type | 0 oneshot, 1 daemon, 2 target |
-| 0x3 | 1 | flags | bits 1:0 onfail, 0 warn, 1 stop, 2 shell. bit 2 restart. other bits 0 |
+| 0x3 | 1 | flags | bits 1:0 onfail, 0 warn, 1 stop, 2 shell. bit 2 restart. bit 3 interpreter, the script runs with the argv at exec_off instead of the configured shell. other bits 0 |
 | 0x4 | 2 | n_desc | number of dependents, direct or not |
 | 0x6 | 2 | notify_fd | 0 for none, otherwise 3 to 255. daemons only |
 | 0x8 | 4 | script_off | string table offset of the script. `0xffffffff` for a target |
@@ -794,8 +794,11 @@ policy record:
 | 0x8 | 2 | retry_ms | `start-delay` |
 | 0xa | 1 | start_tries | `start-tries`. 0 means 1 for a oneshot and 2 for a daemon |
 | 0xb | 1 | pflags | bit 0 `deps: order`. other bits 0 |
+| 0xc | 4 | exec_off | string table offset of the interpreter argv when flags bit 3 is set, otherwise `0xffffffff` |
 
 services are stored in topological order, roots first at indices 0 to n_roots - 1. the dependents of service i are entries `rdep_off[i]` up to but not including `rdep_off[i + 1]` of the dependent indices, sorted ascending, each greater than i. the string table holds the NUL-terminated names and scripts and ends in a NUL
+
+an interpreter argv is two lists of NUL-terminated strings, each ended by an empty string. ninit runs the first string of the first list with the first list, the script and the second list as its arguments. the first string is an absolute path of at most 255 bytes, the lists hold at most 16 strings together and each string is at most 4096 bytes
 
 ## 10 limits
 

@@ -25,6 +25,8 @@ struct src {
 	const struct lang *lang;
 	const char *interp;
 	int stripped;
+	struct strv exec_pre;
+	struct strv exec_suf;
 };
 
 size_t compact(char *s, size_t n, size_t code_off, const char *fname);
