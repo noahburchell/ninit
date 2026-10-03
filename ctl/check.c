@@ -14,6 +14,21 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+// the shell saw a memfd, so each line gets the path of the service
+static void print_failure(const char *dir, const char *name, char *msg)
+{
+	char *q = msg, *nl;
+
+	while (q) {
+		nl = strchr(q, '\n');
+		if (nl)
+			*nl++ = '\0';
+		if (*q)
+			fprintf(stderr, "ninitctl: %s/%s: %s\n", dir, name, q);
+		q = nl;
+	}
+}
+
 void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 {
 	static char argv0[] = NG_SHELL_ARGV0, dashn[] = "-n", dasho[] = "-O", extglob[] = "extglob";
@@ -30,6 +45,7 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 	pid_t *pids;
 	int *errfd;
 	uint32_t *who;
+	char **failed;
 	int devnull;
 
 	if (access(NG_SHELL, X_OK) != 0) {
@@ -42,6 +58,8 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 	pids = xmalloc(slots * sizeof(*pids));
 	errfd = xmalloc(slots * sizeof(*errfd));
 	who = xmalloc(slots * sizeof(*who));
+	// checks end in any order, their messages print in service order
+	failed = xmalloc(n * sizeof(*failed));
 	devnull = open("/dev/null", O_WRONLY | O_CLOEXEC);
 
 	for (i = 0; i <= n; i++) {
@@ -74,25 +92,15 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 			if (!WIFEXITED(st) || WEXITSTATUS(st)) {
 				char msg[4096];
 				ssize_t mn;
+				size_t ml;
 
 				bad++;
 				lseek(errfd[k], 0, SEEK_SET);
 				mn = read(errfd[k], msg, sizeof(msg) - 1);
-				if (mn > 0) {
-					char *q = msg, *nl;
-
-					msg[mn] = '\0';
-					// bash saw a memfd so name the service here
-					while (q) {
-						nl = strchr(q, '\n');
-						if (nl)
-							*nl++ = '\0';
-						if (*q)
-							fprintf(stderr, "ninitctl: %s/%s: %s\n",
-								dir, srcs[who[k]].name, q);
-						q = nl;
-					}
-				}
+				ml = mn > 0 ? (size_t)mn : 0;
+				msg[ml] = '\0';
+				failed[who[k]] = xmalloc(ml + 1);
+				memcpy(failed[who[k]], msg, ml + 1);
 			}
 			close(errfd[k]);
 			live--;
@@ -154,6 +162,12 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 
 	if (devnull >= 0)
 		close(devnull);
+	for (i = 0; i < n; i++) {
+		if (failed[i])
+			print_failure(dir, srcs[i].name, failed[i]);
+		free(failed[i]);
+	}
+	free(failed);
 	free(pids);
 	free(errfd);
 	free(who);
