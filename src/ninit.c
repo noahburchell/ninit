@@ -76,6 +76,7 @@ struct run {
 	long long restart_at;
 	uint8_t burst;
 	uint8_t cg_killed;
+	uint8_t stale_hold;
 
 	uint8_t attempt;
 	uint8_t hup;
@@ -1166,6 +1167,7 @@ static void service_failed(uint32_t i, int status)
 	case FAIL_RETRY:
 		if (!live_has(i))
 			live_add(i);
+		r->stale_hold = r->stale_pid != 0;
 		r->restart_at = now_ms() + (r->stale_pid ? KILL_GRACE_MS : retry_delay_ms(i));
 		return;
 	case FAIL_SHELL:
@@ -1320,6 +1322,7 @@ static void restart_schedule(uint32_t i, int status)
 	close_fds(i);
 	svc_abandon(i);
 	r->restart_at = now_ms() + d;
+	r->stale_hold = 0;
 
 	fail_describe(status, how, sizeof(how));
 	log_warn("%s: exited (%s) after %lld ms up, restarting in %u ms",
@@ -1366,8 +1369,10 @@ static void fire_restart(uint32_t i, long long now)
 			give_up(i, FAIL_ST_TIMEOUT);
 			return;
 		}
-		if (r->stale_pid || r->pid > 0 || state[i] == NG_ST_RUNNING)
+		if (r->stale_pid || r->pid > 0 || state[i] == NG_ST_RUNNING) {
 			r->restart_at = now + KILL_GRACE_MS;
+			r->stale_hold = r->stale_pid != 0;
+		}
 		return;
 	}
 
@@ -1566,8 +1571,11 @@ static void stale_reaped(uint32_t i, pid_t pid)
 	pid_del(pid);
 	if (r->stale_pid == pid)
 		r->stale_pid = 0;
-	if (r->restart_at)
+	// a start that only waited for this pid goes ahead, a restart backoff runs its course
+	if (r->restart_at && r->stale_hold) {
 		r->restart_at = now_ms() + retry_delay_ms(i);
+		r->stale_hold = 0;
+	}
 	maybe_free(i);
 }
 
