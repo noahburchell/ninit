@@ -1,0 +1,16 @@
+echo $(echo    inner    # comment inside
+)
+echo "$(echo "nested $(echo "deep   # x")")"
+echo `echo back  #tick`
+echo `echo 'single in tick'`
+v=$(
+	# a comment line in a substitution
+	echo   multi
+	echo   line
+)
+echo "$v"
+cat <(echo "process   sub")
+echo $(echo $(echo  a  b) c)
+echo $( (echo subshell) )
+echo $((1))$(echo x)
+echo $LINENO

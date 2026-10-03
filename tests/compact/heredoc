@@ -1,0 +1,36 @@
+cat <<EOF2
+  keep   spacing # and this
+	tab
+$((1 + 2)) $LINENO
+EOF2
+cat <<-EOF2
+	leading tabs go # kept
+		two tabs
+	EOF2
+cat <<'Q'
+$HOME is not expanded   # kept
+Q
+cat << "E2" ; echo after   # comment after the redirection
+x    y
+E2
+cat <<A <<B
+first   one
+A
+second   two
+B
+echo "$(cat <<IN
+inner   # kept
+IN
+)"
+cat <<\ESC
+back\slash   $x
+ESC
+cat <<E\
+X
+not a continuation of the tag
+EX
+X
+cat <<EOF3 | tr a-z A-Z
+piped   body
+EOF3
+echo $LINENO

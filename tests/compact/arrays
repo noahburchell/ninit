@@ -1,0 +1,13 @@
+a=(one   two # three
+	four)
+echo "${a[@]}"
+a[1+1]=five
+echo "${a[2]}"
+a+=(six   seven)
+echo "${#a[@]}"
+declare -A m=([k]=v [x y]=z)
+echo "${m[k]} ${m[x y]}"
+b=( "q  q" 'r  r' )
+printf '<%s>' "${b[@]}"; echo
+i=1; a[i]=x; echo "${a[1]}"
+echo $LINENO

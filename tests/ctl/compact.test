@@ -1,0 +1,86 @@
+# the script ninitctl init stores behaves exactly like the file it came from
+
+. "$top_srcdir/tests/lib.sh"
+
+[ -x "$NINIT_SHELL" ] || t_skip_all "$NINIT_SHELL is not executable"
+
+mkdir -p "$T/run"
+
+# bash with nothing inherited, in an empty directory, as ninit runs a service
+sh_run() {
+	(cd "$T/run" && env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/ LC_ALL=C \
+		"$NINIT_SHELL" -c "$1" "$2" </dev/null 2>&1)
+}
+
+lines() {
+	local n=0 l
+	while IFS= read -r l || [ -n "$l" ]; do
+		n=$((n + 1))
+	done <<<"$1"
+	echo "$n"
+}
+
+for f in "$top_srcdir"/tests/compact/*; do
+	n=${f##*/}
+	case $n in
+	*.want) continue ;;
+	esac
+
+	run "$HELPERS/czdump" "$f" "$n"
+	t_is "$rc" 0 "$n: is accepted" || { t_diag "$err"; continue; }
+	stripped=$out
+	orig=$(<"$f")
+
+	a=$(sh_run "$orig" "$n")
+	ra=$?
+	b=$(sh_run "$stripped" "$n")
+	rb=$?
+	t_is "$rb" "$ra" "$n: stripped script exits like the original"
+	if [ "$a" = "$b" ]; then
+		t_ok 0 "$n: stripped script prints exactly what the original prints"
+	else
+		t_ok 1 "$n: stripped script prints exactly what the original prints"
+		t_diag "$(diff <(echo "$a") <(echo "$b"))"
+	fi
+	t_ok $((${#stripped} > ${#orig})) "$n: stripping does not grow the script (${#orig} to ${#stripped} bytes)"
+	lo=$(lines "$orig")
+	ls=$(lines "$stripped")
+	t_ok $((ls > lo)) "$n: stripping adds no lines ($lo to $ls)"
+	"$NINIT_SHELL" -n <<<"$orig" 2>/dev/null
+	ro=$?
+	"$NINIT_SHELL" -n <<<"$stripped" 2>"$T/syn"
+	t_is "$?" "$ro" "$n: stripped script gets the bash -n result of the original" ||
+		t_diag "$(<"$T/syn")"
+
+	if [ -f "$f.want" ]; then
+		want=$(<"$f.want")
+		if [ "$stripped" = "$want" ]; then
+			t_ok 0 "$n: stored text is as specified"
+		else
+			t_ok 1 "$n: stored text is as specified"
+			t_diag "$(diff <(echo "$want") <(echo "$stripped"))"
+		fi
+	fi
+done
+
+# a #% line after the header is a comment, and warned about outside quotes and here-documents
+cat >"$T/late" <<'EOF'
+#%type: oneshot
+echo one
+#%depon: nothing
+echo "
+#%in a string
+"
+cat <<X
+#%in a here-document
+X
+EOF
+run "$HELPERS/czdump" "$T/late" late
+t_is "$rc" 0 "a #% line after the header is not a directive"
+t_has "$err" "warning: ./late: '#%depon: nothing' follows a command, treating it as a comment" \
+	"a #% line after the header is warned about"
+t_unlike "$err" "in a string" "a #% line inside a quoted string is not warned about"
+t_unlike "$err" "in a here-document" "a #% line inside a here-document is not warned about"
+t_has "$out" "#%in a here-document" "a here-document keeps its #% line"
+
+t_done

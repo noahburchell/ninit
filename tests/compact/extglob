@@ -1,0 +1,11 @@
+shopt -s extglob
+case foo in
+	@(foo|bar)) echo extglob   ;;
+esac
+case x.c in
+	!(*.h)) echo "not a header" ;;
+esac
+v=aaab
+echo "${v##+(a)}"
+[[ abc == @(a|x)* ]] && echo match
+echo $LINENO

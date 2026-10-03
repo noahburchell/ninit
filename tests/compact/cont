@@ -1,0 +1,13 @@
+echo one \
+     two \
+     three
+echo "quoted \
+continuation"
+x=a\
+b
+echo "$x"
+echo $LINENO
+ec\
+ho "continuation inside a word"   # comment after a bail
+echo   after   bail   # kept as written
+echo $LINENO
