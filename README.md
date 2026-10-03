@@ -401,7 +401,7 @@ ninitctl init [-d DIR] [-o FILE] [-n] [--no-check]
 
 1. take an exclusive `flock` on DIR. `add` and `del` take the same lock
 2. read and parse every service file, see [3](#3-service-files), and strip the comments from its script. the first error stops the build
-3. check every stripped script with `bash -n`, up to 32 in parallel. every syntax error is reported with its service name, and any error stops the build
+3. check every stripped script with `bash -n`, up to 32 in parallel. bash runs the check with `extglob` on, since `-n` never runs the `shopt` that would turn it on. every syntax error is reported with its service name, and any error stops the build
 4. resolve `depon` and `depof`, merge duplicate edges, reject cycles
 5. order the services topologically. among the services ready to be placed, roots come first, then the service with the longest chain of dependents, then the first by name
 6. resolve the default `onfail` of each service and count its dependents

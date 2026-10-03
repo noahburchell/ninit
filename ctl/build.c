@@ -1121,10 +1121,13 @@ static uint32_t *schedule(struct graph *g)
 
 static void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 {
-	static char argv0[] = NG_SHELL_ARGV0, dashn[] = "-n";
+	static char argv0[] = NG_SHELL_ARGV0, dashn[] = "-n", dasho[] = "-O", extglob[] = "extglob";
 	static char path[] = NG_PATH;
 	static char *const envp[] = { path, NULL };
 	static char *const cargv[] = { argv0, dashn, NULL };
+	// -n never runs the shopt that turns extglob on, so bash would refuse its patterns
+	static char *const bargv[] = { argv0, dasho, extglob, dashn, NULL };
+	char *const *args = strcmp(strrchr(NG_SHELL, '/') + 1, "bash") ? cargv : bargv;
 	long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
 	uint32_t slots = ncpu > 1 ? (uint32_t)ncpu : 1;
 	uint32_t i, live = 0, bad = 0, unchecked = 0;
@@ -1244,7 +1247,7 @@ static void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 			if (devnull >= 0)
 				dup2(devnull, 1);
 			dup2(efd, 2);
-			execve(NG_SHELL, cargv, envp);
+			execve(NG_SHELL, args, envp);
 			_exit(127);
 		}
 		close(sfd);
