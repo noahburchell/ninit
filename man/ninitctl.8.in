@@ -81,7 +81,10 @@ the first error ends the command
 .IP 3. 4
 check every stripped script with
 .BR "@ninit_shell@ \-n" ,
-up to 32 in parallel, and report every syntax error
+up to 32 in parallel, and report every syntax error.
+bash checks with
+.B extglob
+on
 .IP 4. 4
 resolve dependencies and reject unknown names, self dependencies and cycles
 .IP 5. 4
