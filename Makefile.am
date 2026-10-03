@@ -242,6 +242,8 @@ tools-uninstall:
 				rm -f "$$t" && mv "$$t.old" "$$t"; \
 			fi; \
 			echo "restored $$n"; \
+		elif test "`readlink "$$t"`" = ninit-shutdown; then \
+			rm -f "$$t" && echo "removed $$n"; \
 		fi; \
 	done; \
 	rm -f "$$d/ninit-shutdown"
