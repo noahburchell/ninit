@@ -16,3 +16,4 @@ void *xmalloc(size_t n);
 void *xrealloc(void *p, size_t n);
 void strv_push(struct strv *s, char *v);
 char *slurp(const char *path, size_t *len);
+char *xstrndup(const char *s, size_t n);

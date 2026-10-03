@@ -8,6 +8,7 @@
 |---|---|---|---|
 | unit | `tests/unit/t-*.c` | nothing | graph verifier, crc32c, names, `/etc/locale.conf`, log ring and console, failure reporting, emergency shell state machine, `ninit-shutdown` argument handling, comment stripper, pid table, scheduler simulation |
 | ninitctl | `tests/ctl/*.test` | bash, coreutils | `init`, `show`, `add`, `del`, directives, ordering, limits, locking, `make tools-install`, the examples in `docs/ninit.d` against README 4.2 |
+| interpreters | `tests/ctl/interp.test`, `tests/qemu/interp.test` | python3, lua and perl, each part skips without its interpreter | `#!` selection, build time resolution, argv, syntax checks, and python, lua and perl services run by ninit |
 | client | `tests/ctl/client.test` | `unshare(1)`, unprivileged user namespaces | the `ninitctl` client against a fake control socket in a private mount namespace |
 | qemu | `tests/qemu/*.test` | qemu, a static busybox, a kernel image | ninit as pid 1 of a virtual machine: boot, readiness, failures, restart, dependencies, control socket, output, shutdown, signals, emergency shell, cgroups, console stalls |
 
@@ -58,7 +59,7 @@ each boot leaves `console.log` (the serial console without colour), `tap.log` (t
 
 ### guest layout
 
-the initramfs is `tests/qemu/base.cpio`, built once per build tree from `ninit`, `ninitctl`, `ninit-shutdown`, the configured shell and its libraries, busybox and `tests/qemu/guest.sh`, followed by the files of the scenario. ninit is started with `rdinit=/sbin/ninit`. a dynamically linked musl build cannot be copied into the guest, link it statically with `LDFLAGS=-static`
+the initramfs is `tests/qemu/base.cpio`, built once per build tree from `ninit`, `ninitctl`, `ninit-shutdown`, the configured shell and its libraries, busybox and `tests/qemu/guest.sh`, followed by the files of the scenario. `interp.test` adds python with the modules its startup loads, lua and perl to its scenario, at the paths `ninitctl init` resolves on the build system. ninit is started with `rdinit=/sbin/ninit`. a dynamically linked musl build cannot be copied into the guest, link it statically with `LDFLAGS=-static`
 
 ## writing tests
 

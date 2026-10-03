@@ -27,6 +27,9 @@ static jmp_buf die_jb;
 #include "../../ctl/parser/directives.c"
 #include "../../ctl/parser/lang.c"
 #include "../../ctl/parser/shell.c"
+#include "../../ctl/parser/python.c"
+#include "../../ctl/parser/lua.c"
+#include "../../ctl/parser/perl.c"
 #include "../../ctl/output.c"
 #include "../../ctl/sources.c"
 #include "../../ctl/graph.c"
@@ -492,9 +495,9 @@ static void test_shebang(void)
 	rc = capture(call_parse, &a);
 	ok(!rc && a.s.script && !strstr(a.s.script, "(#i)"), "the sh stripper would cut the zsh glob flag");
 
-	a.text = "#!/usr/bin/python3\n:\n";
+	a.text = "#!/usr/bin/ruby\n:\n";
 	rc = capture(call_parse, &a);
-	snprintf(want, sizeof(want), "ninitctl: warning: /d/svc: '#!/usr/bin/python3' is ignored, "
+	snprintf(want, sizeof(want), "ninitctl: warning: /d/svc: '#!/usr/bin/ruby' is ignored, "
 		 "the script runs under %s\n", NG_SHELL);
 	ok(!rc && !strcmp(errtext, want), "a #! line naming another interpreter is warned about");
 	a.text = "#!/usr/bin/env -S ninitctl stop foo  \r\n:\n";
@@ -523,11 +526,158 @@ static void test_shebang(void)
 	}
 }
 
+// an executable named NAME in DIR, standing in for an interpreter the host may lack
+static void fake_interp(const char *dir, const char *name)
+{
+	char path[512];
+	int fd;
+
+	snprintf(path, sizeof(path), "%s/%s", dir, name);
+	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+	if (fd >= 0) {
+		(void)!write(fd, "#!/bin/sh\nexit 0\n", 17);
+		close(fd);
+	}
+}
+
+static void test_languages(void)
+{
+	char dir[] = "/tmp/ninit-t-build-interp.XXXXXX", text[1024], want[512];
+	struct src_arg a;
+	struct shebang sb;
+	const char *line;
+	int rc;
+
+	ok(lang_python.claims("python", 6) && lang_python.claims("python3", 7) &&
+	   lang_python.claims("python3.14", 10), "python, python3 and python3.14 are python");
+	ok(!lang_python.claims("python3-config", 14) && !lang_python.claims("pythonw", 7) &&
+	   !lang_python.claims("pyth", 4), "python3-config, pythonw and pyth are not");
+	ok(lang_lua.claims("lua", 3) && lang_lua.claims("lua5.4", 6) && lang_lua.claims("luajit", 6) &&
+	   lang_lua.claims("luajit-2.1", 10), "lua, lua5.4, luajit and luajit-2.1 are lua");
+	ok(!lang_lua.claims("luac", 4) && !lang_lua.claims("luarocks", 8), "luac and luarocks are not");
+	ok(lang_perl.claims("perl", 4) && lang_perl.claims("perl5.40.0", 10), "perl and perl5.40.0 are perl");
+	ok(!lang_perl.claims("perldoc", 7) && !lang_perl.claims("perl-x", 6), "perldoc and perl-x are not");
+
+	{
+		char b[] = "#!/usr/bin/python3\n#%type: oneshot\n# c\nprint(1)  # t\n\n";
+		size_t off = (size_t)(strstr(b, "print") - b), n = blank_header(NULL, b, strlen(b), off);
+
+		is_str(b, "\n\n\nprint(1)  # t\n\n", "header lines become empty lines, the body stays as written");
+		is_int(n, strlen(b), "and the returned length is the stored length");
+	}
+
+	{
+		static char name[] = "a\"b\\c";
+		struct src s = { .name = name, .interp = "/usr/bin/lua" };
+
+		lang_lua.exec_args(&s);
+		ok(s.exec_pre.n == 4 && s.exec_suf.n == 0 && !strcmp(s.exec_pre.v[0], "/usr/bin/lua") &&
+		   !strcmp(s.exec_pre.v[1], "-e") && !strcmp(s.exec_pre.v[3], "-e"),
+		   "lua runs as INTERP -e CHUNK -e SCRIPT");
+		is_str(s.exec_pre.v[2], "io.stdout:setvbuf(\"line\") arg = { [0] = \"a\\\"b\\\\c\" }",
+		       "the lua chunk escapes the name");
+	}
+	{
+		static char name[] = "it's\\x";
+		struct src s = { .name = name, .interp = "/usr/bin/perl" };
+
+		lang_perl.exec_args(&s);
+		ok(s.exec_pre.n == 6 && s.exec_suf.n == 0 && !strcmp(s.exec_pre.v[3], "-e") &&
+		   !strcmp(s.exec_pre.v[4], "#line 1") && !strcmp(s.exec_pre.v[5], "-e"),
+		   "perl runs as INTERP -e LINE -e '#line 1' -e SCRIPT");
+		is_str(s.exec_pre.v[2], "$| = 1; $0 = 'it\\'s\\\\x';", "the perl line escapes the name");
+	}
+	{
+		static char x[] = "-X", dev[] = "dev", name[] = "svc";
+		struct src s = { .name = name, .interp = "/usr/bin/python3" };
+
+		strv_push(&s.iargs, x);
+		strv_push(&s.iargs, dev);
+		lang_python.exec_args(&s);
+		ok(s.exec_pre.n == 7 && !strcmp(s.exec_pre.v[1], "-I") && !strcmp(s.exec_pre.v[2], "-B") &&
+		   !strcmp(s.exec_pre.v[3], "-u") && !strcmp(s.exec_pre.v[4], "-X") &&
+		   !strcmp(s.exec_pre.v[5], "dev") && !strcmp(s.exec_pre.v[6], "-c"),
+		   "python runs as INTERP -I -B -u #!-ARGS -c SCRIPT");
+		ok(s.exec_suf.n == 1 && !strcmp(s.exec_suf.v[0], "svc"), "with the name after the script");
+	}
+
+	g_dir = "/d";
+	line = "#!/usr/bin/env -S true -x  y";
+	ok(parse_shebang(line, strlen(line), &sb) && sb.len == 4 && !memcmp(sb.prog, "true", 4),
+	   "env -S names the program after its options");
+	{
+		char *p = resolve("svc", &sb), *slash = strrchr(p, '/'), *real;
+
+		ok(p[0] == '/' && !strcmp(slash, "/true") && runnable(p), "env finds true in PATH");
+		*slash = '\0';
+		real = realpath(p, NULL);
+		ok(real && !strcmp(real, p), "in a directory without links, %s", p);
+		free(real);
+		free(p);
+	}
+
+	if (!mkdtemp(dir)) {
+		ok(0, "mkdtemp: %s", strerror(errno));
+		return;
+	}
+	fake_interp(dir, "python3");
+	fake_interp(dir, "lua5.4");
+	fake_interp(dir, "perl");
+
+	snprintf(text, sizeof(text), "#!%s/python3 -X dev\n#%%type: oneshot\n# c\nprint(1)\n", dir);
+	a.text = text;
+	rc = capture(call_parse, &a);
+	if (!ok(!rc && a.s.lang == &lang_python && !strncmp(a.s.interp, dir, strlen(dir)),
+		"a #! line naming python selects python"))
+		tap_diag("%s", errtext);
+	is_str(a.s.script, "\n\n\nprint(1)\n", "its header is blanked, its body stored as written");
+	ok(a.s.exec_pre.n == 7 && a.s.exec_suf.n == 1, "the #! arguments reach its argv");
+	ok(!a.s.stripped, "its script is not stripped");
+
+	snprintf(text, sizeof(text), "#!%s/lua5.4\nprint(1) -- c\n", dir);
+	rc = capture(call_parse, &a);
+	ok(!rc && a.s.lang == &lang_lua, "a #! line naming lua5.4 selects lua");
+	snprintf(text, sizeof(text), "#!%s/perl -w\nprint 1;\n", dir);
+	rc = capture(call_parse, &a);
+	ok(!rc && a.s.lang == &lang_perl && a.s.iargs.n == 1, "a #! line naming perl selects perl");
+
+	snprintf(text, sizeof(text), "#!%s/python3 -a -b -c -d -e -f -g -h -i -j -k\nprint(1)\n", dir);
+	rc = capture(call_parse, &a);
+	if (!ok(rc == 1001 && !strcmp(errtext, "ninitctl: /d/svc: 17 interpreter arguments, the maximum is 16\n"),
+		"more than 16 interpreter arguments are refused"))
+		tap_diag("%d %s", rc, errtext);
+
+	snprintf(text, sizeof(text), "#!%s/missing/python3\nprint(1)\n", dir);
+	rc = capture(call_parse, &a);
+	snprintf(want, sizeof(want), "ninitctl: /d/svc: %s/missing/python3: No such file or directory\n", dir);
+	if (!ok(rc == 1001 && !strcmp(errtext, want), "a missing interpreter fails the build"))
+		tap_diag("%d %s", rc, errtext);
+	a.text = "#!/usr/bin/env python9.99\nprint(1)\n";
+	rc = capture(call_parse, &a);
+	if (!ok(rc == 1001 && strstr(errtext, "ninitctl: /d/svc: 'python9.99' is not in /"),
+		"an interpreter env cannot find fails the build"))
+		tap_diag("%d %s", rc, errtext);
+	a.text = "#!bin/python3\nprint(1)\n";
+	rc = capture(call_parse, &a);
+	if (!ok(rc == 1001 && !strcmp(errtext, "ninitctl: /d/svc: 'bin/python3' is not an absolute path\n"),
+		"a relative interpreter path fails the build"))
+		tap_diag("%d %s", rc, errtext);
+
+	snprintf(text, sizeof(text), "%s/python3", dir);
+	unlink(text);
+	snprintf(text, sizeof(text), "%s/lua5.4", dir);
+	unlink(text);
+	snprintf(text, sizeof(text), "%s/perl", dir);
+	unlink(text);
+	rmdir(dir);
+}
+
 int main(void)
 {
 	test_parse_ms();
 	test_helpers();
 	test_shebang();
+	test_languages();
 	test_compact_corpus();
 	test_compact_fuzz();
 	test_compact_syntax();

@@ -96,3 +96,12 @@ char *slurp(const char *path, size_t *len)
 	*len = (size_t)pos;
 	return buf;
 }
+
+char *xstrndup(const char *s, size_t n)
+{
+	char *d = xmalloc(n + 1);
+
+	memcpy(d, s, n);
+	d[n] = '\0';
+	return d;
+}

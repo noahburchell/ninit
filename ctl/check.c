@@ -36,6 +36,8 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 	long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
 	uint32_t slots = ncpu > 1 ? (uint32_t)ncpu : 1;
 	uint32_t i, live = 0, bad = 0, unchecked = 0;
+	const char *what = NULL;
+	int shell_ok = 1;
 	int giveup = 0;
 	pid_t *pids;
 	int *errfd;
@@ -43,10 +45,11 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 	char **failed;
 	int devnull;
 
+	// an interpreter #! names was found runnable when the file was read, the shell was not
 	if (access(NG_SHELL, X_OK) != 0) {
 		fprintf(stderr, "ninitctl: warning: %s is not executable, "
-			"skipping the syntax check\n", NG_SHELL);
-		return;
+			"skipping the syntax check of shell scripts\n", NG_SHELL);
+		shell_ok = 0;
 	}
 	if (slots > 32)
 		slots = 32;
@@ -107,7 +110,7 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 		}
 		if (i == n)
 			break;
-		if (!srcs[i].script)
+		if (!srcs[i].script || (srcs[i].lang == &lang_shell && !shell_ok))
 			continue;
 		if (giveup) {
 			unchecked++;
@@ -161,17 +164,22 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 	if (devnull >= 0)
 		close(devnull);
 	for (i = 0; i < n; i++) {
-		if (failed[i])
-			print_failure(dir, srcs[i].name, failed[i]);
+		if (!failed[i])
+			continue;
+		print_failure(dir, srcs[i].name, failed[i]);
 		free(failed[i]);
+		if (!what)
+			what = srcs[i].interp;
+		else if (strcmp(what, srcs[i].interp))
+			what = "";
 	}
 	free(failed);
 	free(pids);
 	free(errfd);
 	free(who);
 	if (bad)
-		die("%u service script%s failed the %s syntax check",
-		    bad, bad == 1 ? "" : "s", NG_SHELL);
+		die("%u service script%s failed the %s%ssyntax check", bad, bad == 1 ? "" : "s",
+		    what && *what ? what : "", what && *what ? " " : "");
 	if (unchecked)
 		die("%u service script%s could not be checked, use --no-check to skip", unchecked,
 		    unchecked == 1 ? "" : "s");

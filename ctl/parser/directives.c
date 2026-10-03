@@ -239,6 +239,10 @@ void parse_src(struct src *s, const char *fname, char *body, size_t len)
 		if (len > NG_MAX_SCRIPT)
 			die("%s/%s: script is %zu bytes%s, the maximum is %u", g_dir, fname, len,
 			    s->stripped ? " without comments" : "", NG_MAX_SCRIPT);
+		if (s->lang->exec_args) {
+			s->lang->exec_args(s);
+			check_exec_args(s, fname);
+		}
 		s->script = body;
 	}
 }
