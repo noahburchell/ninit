@@ -114,7 +114,8 @@ unit_tests = \
 	tests/unit/t-fail \
 	tests/unit/t-fail-sulogin \
 	tests/unit/t-shutdown \
-	tests/unit/t-build
+	tests/unit/t-build \
+	tests/unit/t-ninit
 
 ctl_tests = \
 	tests/ctl/compact.test \
@@ -146,6 +147,7 @@ tests_unit_t_fail_sulogin_CPPFLAGS = $(AM_CPPFLAGS) -DNINIT_SULOGIN=1 \
 	-DNINIT_BUSYBOX='"/bin/busybox"'
 tests_unit_t_shutdown_SOURCES = tests/unit/t-shutdown.c $(unit_headers)
 tests_unit_t_build_SOURCES = tests/unit/t-build.c src/ngraph.c $(unit_headers)
+tests_unit_t_ninit_SOURCES = tests/unit/t-ninit.c src/logging.c src/ngraph.c $(unit_headers)
 tests_helpers_czdump_SOURCES = tests/helpers/czdump.c src/ngraph.c
 tests_helpers_fakectl_SOURCES = tests/helpers/fakectl.c
 
