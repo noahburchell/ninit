@@ -1469,7 +1469,9 @@ static void child_exited(uint32_t i, int status)
 		r->starting = 0;
 		r->restart_at = 0;
 		go_down(i);
-		kill_group(i);
+		// the stop operation sends SIGKILL to what is left once stop-timeout passes
+		if (!cg_ok || r->op == SVC_OP_NONE)
+			kill_group(i);
 		drain_out(i, DRAIN_FINAL_CHUNKS, 0);
 		close_fds(i);
 		if (state[i] == NG_ST_RUNNING) {
