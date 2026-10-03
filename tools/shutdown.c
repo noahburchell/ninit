@@ -72,7 +72,7 @@ static void usage(const char *me, FILE *f)
 		"\n"
 		"TIME is now, +MINUTES or HH:MM.\n"
 		"reboot, poweroff and halt accept the same options.\n",
-		me, strcmp(base(me), "shutdown") ? "" : " TIME");
+		me, strcmp(base(me), "shutdown") && strcmp(base(me), "ninit-shutdown") ? "" : " TIME");
 }
 
 static int pid1_is_ninit(void)
