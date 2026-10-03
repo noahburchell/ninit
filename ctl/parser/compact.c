@@ -509,20 +509,3 @@ size_t compact(char *s, size_t n, size_t code_off, const char *fname)
 	s[e.keep] = '\0';
 	return e.keep;
 }
-
-int g_sh_lexed = 1;
-
-// the stripper follows sh lexing, under zsh it would cut glob flags such as (#i)
-int sh_lexed(const char *argv0)
-{
-	static const char *const names[] = {
-		"sh", "bash", "dash", "ash", "ksh", "mksh", "oksh", "loksh", "yash", "posh",
-	};
-	const char *base = strrchr(argv0, '/');
-
-	base = base ? base + 1 : argv0;
-	for (size_t k = 0; k < sizeof(names) / sizeof(*names); k++)
-		if (!strcmp(base, names[k]))
-			return 1;
-	return 0;
-}
