@@ -190,7 +190,7 @@ static ssize_t log_push(const char *buf, size_t len, int wait)
 	return (ssize_t)done;
 }
 
-// a line reaches the console whole or not at all
+// a line reaches the console whole or not at all, the caller counts a line that does not
 static int log_write(const char *buf, size_t len)
 {
 	ssize_t n;
@@ -202,7 +202,6 @@ static int log_write(const char *buf, size_t len)
 				pend_at = pend_len = 0;
 			else
 				pend_at += (size_t)n;
-			log_dropped++;
 			return 0;
 		}
 		pend_at = pend_len = 0;
@@ -210,10 +209,8 @@ static int log_write(const char *buf, size_t len)
 	n = log_push(buf, len, 1);
 	if (n == (ssize_t)len)
 		return 1;
-	if (n <= 0 || len - (size_t)n > sizeof(log_pend)) {
-		log_dropped++;
+	if (n <= 0 || len - (size_t)n > sizeof(log_pend))
 		return 0;
-	}
 	pend_len = len - (size_t)n;
 	memcpy(log_pend, buf + n, pend_len);
 	return 1;
@@ -345,12 +342,14 @@ void ninit_log(int level, const char *fmt, ...)
 			log_dropped -= lost;
 	}
 	if (!log_color || !p) {
-		log_write(buf, (size_t)n);
+		if (!log_write(buf, (size_t)n))
+			log_dropped++;
 		return;
 	}
 	c = prefix(con, sizeof(con), tag_color[level], ms);
 	memcpy(con + c, buf + p, (size_t)(n - p));
-	log_write(con, (size_t)(c + n - p));
+	if (!log_write(con, (size_t)(c + n - p)))
+		log_dropped++;
 }
 
 void log_raw(int level, const char *buf, size_t len)
@@ -410,6 +409,7 @@ void print_welcome(void)
 	if (log_color)
 		n = fitted(snprintf(buf, sizeof(buf), "Welcome to \033[1m%s\033[0m! (%s)\n\n",
 				    os, u.release), 0, sizeof(buf));
-	log_write(buf, (size_t)n);
+	if (!log_write(buf, (size_t)n))
+		log_dropped++;
 #endif
 }
