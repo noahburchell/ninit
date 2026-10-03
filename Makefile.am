@@ -117,7 +117,15 @@ unit_tests = \
 	tests/unit/t-build
 
 ctl_tests = \
-	tests/ctl/compact.test
+	tests/ctl/compact.test \
+	tests/ctl/directives.test \
+	tests/ctl/graph.test \
+	tests/ctl/files.test \
+	tests/ctl/show.test \
+	tests/ctl/adddel.test \
+	tests/ctl/usage.test \
+	tests/ctl/limits.test \
+	tests/ctl/lock.test
 
 qemu_tests =
 

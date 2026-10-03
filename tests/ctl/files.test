@@ -1,0 +1,246 @@
+# service directory reading and graph writing, README 3.1, 4.1 and 10
+
+. "$top_srcdir/tests/lib.sh"
+
+put() {
+	mkdir -p "$1"
+	printf '%b' "$3" >"$1/$2"
+}
+
+build() {
+	run "$NINITCTL" init -d "$1" "${@:2}"
+}
+
+names() {
+	"$NINITCTL" show "$1" | awk '/^ *[0-9]+  /{ print $2 }' | sort | tr '\n' ' ' | sed 's/ $//'
+}
+
+ino() {
+	stat -c %i "$1"
+}
+
+umask 022
+
+# what is read and what is skipped
+d=$T/skip
+put "$d" a ':\n'
+put "$d" .hidden 'this is not a script ((\n'
+mkdir -p "$d/sub" "$d/unused"
+put "$d/sub" b ':\n'
+put "$d/unused" c ':\n'
+mkfifo "$d/fifo"
+build "$d" --no-check
+t_is "$rc" 0 "a directory with a dotfile, subdirectories and a fifo builds"
+t_is "$(names "$d/depgraph")" "a" "only the regular file is a service"
+t_unlike "$err" 'warning: .*(sub|unused|fifo)' "skipped directories and special files are not warned about"
+
+d=$T/reserved
+put "$d" a ':\n'
+put "$d" unused 'not a directory\n'
+build "$d" --no-check
+t_is "$rc" 0 "a regular file named unused does not fail the build"
+t_has "$err" "ninitctl: warning: $d/unused has a reserved name, skipping it" "a regular file named unused is warned about"
+t_is "$(names "$d/depgraph")" "a" "reserved names are not services"
+build "$d" --no-check
+build "$d" --no-check
+t_is "$rc" 0 "a rebuild with depgraph and depgraph.old present works"
+t_unlike "$err" "depgraph" "real graphs in depgraph and depgraph.old are skipped quietly"
+
+d=$T/reserved-tmp
+put "$d" a ':\n'
+put "$d" depgraph.tmp ':\n'
+build "$d" --no-check
+t_is "$rc" 0 "a non-graph depgraph.tmp does not fail the build"
+t_has "$err" "ninitctl: warning: $d/depgraph.tmp has a reserved name, skipping it" "a non-graph depgraph.tmp is warned about"
+
+d=$T/reserved-old
+put "$d" a ':\n'
+put "$d" depgraph.old 'notes\n'
+build "$d" --no-check
+t_is "$(cat "$d/depgraph.old")" "notes" "a non-graph depgraph.old is never replaced"
+
+d=$T/stray
+put "$d" a ':\n'
+build "$d" --no-check
+cp "$d/depgraph" "$d/backup"
+build "$d" --no-check
+t_is "$rc" 0 "a compiled graph under another name does not fail the build"
+t_has "$err" "ninitctl: warning: $d/backup is a compiled depgraph, skipping it" "it is warned about"
+t_is "$(names "$d/depgraph")" "a" "and is not a service"
+
+d=$T/link
+mkdir -p "$T/elsewhere"
+put "$T/elsewhere" target '#%type: daemon\nexec sleep 1\n'
+put "$d" a ':\n'
+ln -s "$T/elsewhere/target" "$d/linked"
+build "$d" --no-check
+t_is "$(names "$d/depgraph")" "a linked" "a symlink is followed and named after the link"
+"$NINITCTL" show "$d/depgraph" | grep -q ' linked  *daemon '
+t_ok $? "the link target's directives are used"
+ln -s "$T/nowhere" "$d/dangling"
+build "$d" --no-check
+t_is "$rc" 1 "a dangling symlink fails the build"
+t_has "$err" "ninitctl: stat $d/dangling: No such file or directory" "with the stat error"
+
+for bad in 'foo~:is an editor backup file' '#foo#:is an editor autosave file' 'a,b:contains a comma' \
+	'a b:contains whitespace or a control character' $'a\tb:contains whitespace or a control character'; do
+	name=${bad%%:*}
+	why=${bad#*:}
+	d=$T/badname$((++nb))
+	put "$d" ok ':\n'
+	put "$d" "$name" ':\n'
+	build "$d" --no-check
+	t_is "$rc" 1 "a file named '$name' fails the build"
+	t_has "$err" "ninitctl: $d/$name: filename $why" "with 'filename $why'"
+done
+
+d=$T/empty
+mkdir -p "$d"
+build "$d"
+t_is "$rc" 1 "an empty directory fails the build"
+t_has "$err" "ninitctl: no services in $d" "with no services"
+
+build "$T/does-not-exist"
+t_is "$rc" 1 "a missing directory fails the build"
+t_has "$err" "ninitctl: open $T/does-not-exist: No such file or directory" "with the open error"
+
+# size limits
+d=$T/size
+put "$d" a ':\n'
+{
+	printf 'echo x\n'
+	head -c $((135167 - 7 - 1)) /dev/zero | tr '\0' '#'
+	printf '\n'
+} >"$d/max"
+t_is "$(stat -c %s "$d/max")" 135167 "the largest service file is 135167 bytes"
+build "$d" --no-check
+t_is "$rc" 0 "a 135167 byte service file is read"
+printf '#' >>"$d/max"
+build "$d" --no-check
+t_is "$rc" 1 "a 135168 byte service file fails the build"
+t_has "$err" "ninitctl: $d/max: is 135168 bytes, the maximum is 135167" "with its size and the maximum"
+rm -f "$d/max"
+
+{
+	for ((k = 0; k < 65535; k++)); do printf ':\n'; done
+	printf ':'
+} >"$d/script"
+build "$d" --no-check
+t_is "$rc" 0 "a script of 131071 bytes without comments fits"
+printf ':' >>"$d/script"
+build "$d" --no-check
+t_is "$rc" 1 "a script of 131072 bytes without comments fails the build"
+t_has "$err" "ninitctl: $d/script: script is 131072 bytes without comments, the maximum is 131071" \
+	"with its stored size and the maximum"
+rm -f "$d/script"
+
+# output file
+d=$T/out
+put "$d" a ':\n'
+put "$d" b '#%depon: a\n:\n'
+build "$d" --no-check
+t_like "$out" "^$d/depgraph: 2 services, 1 edges, 1 roots, [0-9]+ bytes$" "the summary line names the file and counts"
+bytes=$(sed 's/.* \([0-9]*\) bytes$/\1/' <<<"$out")
+t_is "$(stat -c %s "$d/depgraph")" "$bytes" "the reported size is the file size"
+t_is "$(stat -c %a "$d/depgraph")" 644 "the graph is mode 0644 under umask 022"
+[ ! -e "$d/depgraph.old" ]
+t_ok $? "a first build leaves no depgraph.old"
+first=$(ino "$d/depgraph")
+build "$d" --no-check
+t_is "$(ino "$d/depgraph.old")" "$first" "a rebuild hard links the previous graph to depgraph.old"
+t_unlike "$(ls -A "$d")" '\.depgraph\.' "no temporary file is left behind"
+cmp -s "$d/depgraph" "$d/depgraph.old"
+t_ok $? "an unchanged directory rebuilds byte for byte"
+
+second=$(ino "$d/depgraph")
+put "$d" c '#%depon: ghost\n:\n'
+build "$d" --no-check
+t_is "$rc" 1 "a broken service fails the rebuild"
+t_is "$(ino "$d/depgraph")" "$second" "a failed build leaves the graph in place"
+t_is "$(ino "$d/depgraph.old")" "$first" "and leaves depgraph.old in place"
+rm -f "$d/c"
+
+(umask 077 && "$NINITCTL" init -d "$d" --no-check >/dev/null 2>&1)
+t_is "$(stat -c %a "$d/depgraph")" 600 "umask 077 gives mode 0600"
+chmod 640 "$d/a"
+build "$d" --no-check
+t_is "$(stat -c %a "$d/depgraph")" 640 "a service file without other read drops other read from the graph"
+chmod 600 "$d/a"
+build "$d" --no-check
+t_is "$(stat -c %a "$d/depgraph")" 600 "a service file without group read drops group read too"
+build "$d" --no-check -n
+t_like "$out" "^$d/depgraph: would write 2 services, 1 edges, 1 roots, [0-9]+ bytes, mode 0600$" \
+	"-n reports the size and the mode it would write"
+chmod 644 "$d/a"
+
+d=$T/dry
+put "$d" a ':\n'
+build "$d" --no-check --dry-run
+t_is "$rc" 0 "--dry-run succeeds"
+[ ! -e "$d/depgraph" ]
+t_ok $? "--dry-run writes nothing"
+
+d=$T/nongraph
+put "$d" a ':\n'
+put "$d" depgraph 'notes\n'
+build "$d" --no-check
+t_is "$rc" 1 "a non-graph file at the output path fails the build"
+t_has "$err" "ninitctl: $d/depgraph: the output would replace this, and it is not a depgraph" "and says why"
+t_is "$(cat "$d/depgraph")" "notes" "the file is not replaced"
+
+mkdir -p "$T/outside"
+printf 'notes\n' >"$T/outside/file"
+build "$d" --no-check -o "$T/outside/file"
+t_is "$rc" 1 "a non-graph file at an output path outside the directory fails the build"
+t_is "$(cat "$T/outside/file" 2>/dev/null)" "notes" "and is not replaced"
+rm -f "$d/depgraph"
+
+d=$T/custom
+put "$d" a ':\n'
+build "$d" --no-check -o "$d/mygraph"
+t_is "$rc" 0 "-o into the service directory under another name works"
+build "$d" --no-check -o "$d/mygraph"
+t_is "$rc" 0 "the custom output and its .old are not read as services on rebuild"
+t_unlike "$err" "mygraph" "and are not warned about"
+t_is "$(names "$d/mygraph")" "a" "the custom output holds only the service"
+
+(cd "$d" && "$NINITCTL" init -d . --no-check -o rel >/dev/null 2>&1)
+"$NINITCTL" show "$d/rel" >/dev/null 2>&1
+t_ok $? "a relative output path is written relative to the working directory"
+
+# syntax check
+d=$T/syntax
+put "$d" good ':\n'
+put "$d" bad1 '#!/bin/bash\n# comment\nif true\nthen\n'
+put "$d" bad2 'echo (\n'
+build "$d"
+t_is "$rc" 1 "a syntax error fails the build"
+t_has "$err" "ninitctl: $d/bad1: " "the failing service is named"
+t_like "$err" "ninitctl: $d/bad1: [^:]*: line [0-9]+: syntax error" "with the shell's message and line"
+t_has "$err" "ninitctl: $d/bad2: " "every failing service is reported"
+t_has "$err" "ninitctl: 2 service scripts failed the $NINIT_SHELL syntax check" "with a count"
+build "$d" --no-check
+t_is "$rc" 0 "--no-check skips the syntax check"
+
+d=$T/extglob
+put "$d" a 'shopt -s extglob\ncase x in\n@(x|y)) echo match ;;\nesac\n[[ ab == +(a|b) ]]\n'
+build "$d"
+t_is "$rc" 0 "a service using extglob patterns passes the syntax check" || t_diag "$err"
+
+d=$T/syntax-line
+put "$d" a '#!/bin/bash\n# one\n# two\n\necho ok\nfi\n'
+build "$d"
+t_has "$err" "line 6: syntax error" "the reported line is the line in the file"
+
+d=$T/many
+for ((k = 0; k < 100; k++)); do put "$d" "s$k" ':\n'; done
+put "$d" s57 'case\n'
+build "$d"
+t_is "$rc" 1 "one bad script among 100 is found"
+t_has "$err" "ninitctl: 1 service script failed the" "and counted in the singular"
+t_has "$err" "$d/s57: " "and named"
+put "$d" s57 ':\n'
+build "$d"
+t_is "$rc" 0 "100 good scripts pass the parallel check"
+
+t_done

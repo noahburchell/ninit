@@ -1,0 +1,171 @@
+# service file header parsing in ninitctl init, README 3.2 and 3.3
+
+. "$top_srcdir/tests/lib.sh"
+
+n_case=0
+
+# a service named a with TEXT must fail to build with MSG
+refuse() {
+	local what=$1 msg=$2 text=$3 d
+	n_case=$((n_case + 1))
+	d=$T/r$n_case
+	mkdir -p "$d"
+	printf '%b' "$text" >"$d/a"
+	run "$NINITCTL" init -d "$d" --no-check
+	t_is "$rc" 1 "$what: the build fails" || t_diag "$err"
+	t_has "$err" "ninitctl: $d/a: $msg" "$what: reported as '$msg'"
+	[ ! -e "$d/depgraph" ]
+	t_ok $? "$what: no graph is written"
+}
+
+# a service named a with TEXT builds, show -v output lands in $row $pol $script, init stderr in $init_err
+accept() {
+	local what=$1 text=$2 d
+	n_case=$((n_case + 1))
+	d=$T/a$n_case
+	mkdir -p "$d"
+	printf '%s' "$text" >"$d/a"
+	run "$NINITCTL" init -d "$d" --no-check
+	init_err=$err
+	t_is "$rc" 0 "$what: builds" || { t_diag "$err"; pol= script= row=; return 1; }
+	run "$NINITCTL" show -v "$d/depgraph"
+	row=$(sed -n 's/^ *0  //p' <<<"$out")
+	pol=$(grep -m1 '| start-timeout' <<<"$out")
+	script=$(grep '^     | ' <<<"$out" | grep -v '| start-timeout' | sed 's/^     | //')
+	return 0
+}
+
+accept "a file with commands and no type" $':\n'
+t_like "$row" '^a +oneshot ' "with commands the default type is oneshot"
+t_has "$pol" "start-timeout 90000 ms, stop-timeout 5000 ms, start-tries 1, start-delay 0 ms, deps uptime (default)" \
+	"oneshot defaults are 90 s, 5 s, 1 try, no delay, uptime"
+
+accept "a file of comments only" $'#!/bin/bash\n# nothing\n\n'
+t_like "$row" '^a +target ' "without commands the default type is target"
+
+accept "a daemon" $'#%type: daemon\nexec sleep 1\n'
+t_like "$row" '^a +daemon ' "type daemon is stored"
+t_has "$pol" "start-tries 2" "a daemon defaults to 2 start tries"
+
+accept "every policy directive" $'#%type: daemon\n#%start-timeout: 2m\n#%stop-timeout: 3s\n#%start-tries: 7\n#%start-delay: 250ms\n#%deps: order\n#%notify: 9\n#%restart: always\n#%onfail: shell\nexec sleep 1\n'
+t_has "$pol" "start-timeout 120000 ms, stop-timeout 3000 ms, start-tries 7, start-delay 250 ms, deps order (set)" \
+	"set policies are stored and marked (set)"
+t_like "$row" 'daemon +1 +0 +shell +9 +yes ' "onfail, notify and restart are stored"
+
+accept "one policy directive" $'#%start-delay: 1\n:\n'
+t_has "$pol" "start-delay 1 ms, deps uptime (set)" "a single policy marks the service (set)"
+
+accept "deps uptime" $'#%deps: uptime\n:\n'
+t_has "$pol" "deps uptime (default)" "deps uptime is the default"
+
+accept "blanks around key and value" $'#%   type   :    daemon   \t\n#%\tstart-tries:3\r\nexec sleep 1\n'
+t_like "$row" '^a +daemon ' "blanks around the key and the value are ignored"
+t_has "$pol" "start-tries 3" "a cr at the end of a directive is ignored"
+
+accept "an indented directive" $'   #%type: daemon\nexec sleep 1\n'
+t_like "$row" '^a +daemon ' "a directive may be indented"
+
+accept "a repeated directive" $'#%type: oneshot\n#%start-tries: 3\n#%type: daemon\n#%start-tries: 5\nexec sleep 1\n'
+t_like "$row" '^a +daemon ' "a repeated type takes the last value"
+t_has "$pol" "start-tries 5" "a repeated start-tries takes the last value"
+
+accept "a #! line and blank lines in the header" $'#!/bin/bash\n\n#%type: daemon\n\n# comment\n\nexec sleep 1\n'
+t_like "$row" '^a +daemon ' "directives after a #! line and blank lines are read"
+
+accept "a comment that is not a directive" $'# %type: target\n:\n'
+t_like "$row" '^a +oneshot ' "# %key is a plain comment"
+
+accept "#% with nothing after it" $'#%\n#%   \n:\n'
+t_like "$row" '^a +oneshot ' "an empty #% line is ignored"
+
+accept "a directive after the first command" $':\n#%type: target\n'
+t_like "$row" '^a +oneshot ' "a #% line after a command is not a directive"
+t_has "$init_err" "warning: $T/a$n_case/a: '#%type: target' follows a command, treating it as a comment" \
+	"and draws a warning"
+
+accept "restart never" $'#%type: daemon\n#%restart: never\nexec sleep 1\n'
+t_like "$row" 'daemon .* - +- +-$' "restart never means no"
+accept "restart no" $'#%type: daemon\n#%restart: always\n#%restart: no\nexec sleep 1\n'
+t_like "$row" 'daemon .* - +- +-$' "restart no clears an earlier always"
+
+accept "notify 3" $'#%type: daemon\n#%notify: 3\nexec sleep 1\n'
+t_like "$row" ' +3 +- ' "notify 3 is the lowest fd"
+accept "notify 255" $'#%type: daemon\n#%notify: 255\nexec sleep 1\n'
+t_like "$row" ' 255 +- ' "notify 255 is the highest fd"
+accept "notify before type" $'#%notify: 4\n#%type: daemon\nexec sleep 1\n'
+t_like "$row" ' +4 +- ' "directive order does not matter"
+
+accept "start-tries 250" $'#%start-tries: 250\n:\n'
+t_has "$pol" "start-tries 250" "250 start tries is the maximum"
+accept "start-delay 65535" $'#%start-delay: 65535\n:\n'
+t_has "$pol" "start-delay 65535 ms" "a start-delay of 65535 ms is the maximum"
+accept "start-delay 1m" $'#%start-delay: 1m\n:\n'
+t_has "$pol" "start-delay 60000 ms" "start-delay takes units"
+accept "start-timeout 24h" $'#%start-timeout: 24h\n:\n'
+t_has "$pol" "start-timeout 86400000 ms" "a 24 h start-timeout is the maximum"
+accept "stop-timeout 1" $'#%stop-timeout: 1\n:\n'
+t_has "$pol" "stop-timeout 1 ms" "a duration without a unit is in milliseconds"
+
+accept "name matching the file" $'#%name: a\n:\n'
+t_like "$row" '^a ' "name equal to the filename is accepted"
+
+accept "a script with comments" $'#!/bin/bash\n# header\necho   one    # trailing\n\n\t\techo two\n'
+t_is "$script" $'echo one\n\necho two' "show -v lists the stored script without comments or indentation"
+
+refuse "a directive without a colon" "directive without a key: #%type daemon" $'#%type daemon\n:\n'
+refuse "an unknown key" "unknown directive 'restart-delay'" $'#%restart-delay: 1s\n:\n'
+refuse "an uppercase key" "unknown directive 'Type'" $'#%Type: daemon\n:\n'
+refuse "an unknown type" "unknown type:service" $'#%type: service\n:\n'
+refuse "an empty type" "unknown type:" $'#%type:\n:\n'
+refuse "an unknown onfail" "unknown onfail:panic, expected warn, stop or shell" $'#%onfail: panic\n:\n'
+refuse "an unknown restart" "unknown restart:yes, expected always or no" $'#%type: daemon\n#%restart: yes\nexec sleep 1\n'
+refuse "an unknown deps" "unknown deps:hard, expected uptime or order" $'#%deps: hard\n:\n'
+refuse "notify 2" "notify:2 must be between 3 and 255" $'#%type: daemon\n#%notify: 2\nexec sleep 1\n'
+refuse "notify 256" "notify:256 must be between 3 and 255" $'#%type: daemon\n#%notify: 256\nexec sleep 1\n'
+refuse "notify -3" "notify:-3 must be between 3 and 255" $'#%type: daemon\n#%notify: -3\nexec sleep 1\n'
+refuse "notify 3x" "notify:3x must be between 3 and 255" $'#%type: daemon\n#%notify: 3x\nexec sleep 1\n'
+refuse "notify empty" "notify: must be between 3 and 255" $'#%type: daemon\n#%notify:\nexec sleep 1\n'
+refuse "notify on a oneshot" "notify: requires type:daemon, not type:oneshot" $'#%notify: 3\n:\n'
+refuse "notify on a target" "notify: requires type:daemon, not type:target" $'#%notify: 3\n'
+refuse "restart on a oneshot" "restart: requires type:daemon, not type:oneshot" $'#%restart: always\n:\n'
+refuse "restart on a target" "restart: requires type:daemon, not type:target" $'#%type: target\n#%restart: always\n'
+refuse "a target with commands" "type:target must contain no commands" $'#%type: target\necho x\n'
+refuse "a oneshot without commands" "type:oneshot has no commands to run" $'#%type: oneshot\n# nothing\n'
+refuse "a daemon without commands" "type:daemon has no commands to run" $'#%type: daemon\n'
+refuse "start-tries 0" "start-tries:0 must be between 1 and 250" $'#%start-tries: 0\n:\n'
+refuse "start-tries 251" "start-tries:251 must be between 1 and 250" $'#%start-tries: 251\n:\n'
+refuse "start-tries -1" "start-tries:-1 must be between 1 and 250" $'#%start-tries: -1\n:\n'
+refuse "start-tries 2x" "start-tries:2x must be between 1 and 250" $'#%start-tries: 2x\n:\n'
+refuse "start-delay 65536" "start-delay:65536 exceeds the 65535 ms maximum" $'#%start-delay: 65536\n:\n'
+refuse "start-delay 66s" "start-delay:66s exceeds the 65535 ms maximum" $'#%start-delay: 66s\n:\n'
+refuse "start-delay 0" "start-delay:0 must not be zero" $'#%start-delay: 0\n:\n'
+refuse "start-timeout 0" "start-timeout:0 must not be zero" $'#%start-timeout: 0\n:\n'
+refuse "stop-timeout 25h" "stop-timeout:25h exceeds the 86400000 ms maximum" $'#%stop-timeout: 25h\n:\n'
+refuse "stop-timeout 5 s" "stop-timeout:5 s has an unknown unit ' s', expected ms, s, m or h" $'#%stop-timeout: 5 s\n:\n'
+refuse "start-timeout ten" "start-timeout:ten is not a duration" $'#%start-timeout: ten\n:\n'
+refuse "a name other than the filename" "name:b does not match its filename" $'#%name: b\n:\n'
+refuse "a NUL byte in the file" "contains a NUL byte" ':\necho a\0b\n'
+refuse "a NUL byte in the header" "contains a NUL byte" '#%type: oneshot\0\n:\n'
+
+# depon and depof separators and accumulation
+d=$T/sep
+svc "$d" x <<<':'
+svc "$d" y <<<':'
+svc "$d" z <<<':'
+svc "$d" w <<<':'
+svc "$d" a <<<$'#%depon: x,y  z\n#%depon:\tw ,\n:'
+run "$NINITCTL" init -d "$d" --no-check
+t_has "$out" ": 5 services, 4 edges, 4 roots," "depon names separate on commas, blanks or both, and accumulate"
+run "$NINITCTL" show "$d/depgraph"
+t_like "$(grep ' a ' <<<"$out")" ' w x y z$' "every name in depon is a prerequisite"
+
+d=$T/depof
+svc "$d" a <<<$'#%depof: b, c\n:'
+svc "$d" b <<<':'
+svc "$d" c <<<$'#%depon: a\n:'
+run "$NINITCTL" init -d "$d" --no-check
+t_has "$out" ": 3 services, 2 edges, 1 roots," "depof adds edges, a duplicate with depon is merged"
+run "$NINITCTL" show "$d/depgraph"
+t_like "$(grep ' b ' <<<"$out")" ' a$' "depof b in a makes a a prerequisite of b"
+
+t_done

@@ -1,0 +1,76 @@
+# ninitctl command line handling, README 4 and 6.1, exit status per README 4.4
+# runtime commands here all fail before connecting, pid 1 of the host is never contacted
+
+. "$top_srcdir/tests/lib.sh"
+
+run "$NINITCTL"
+t_is "$rc" 2 "no command is a usage error"
+t_has "$err" "Usage: ninitctl COMMAND [OPTION]..." "and prints the usage on stderr"
+t_is "$out" "" "and nothing on stdout"
+
+for h in help -h --help; do
+	run "$NINITCTL" "$h"
+	t_is "$rc" 0 "'$h' exits 0"
+	t_has "$out" "Usage: ninitctl COMMAND [OPTION]..." "'$h' prints the usage on stdout"
+done
+usage=$out
+for line in "init [-d DIR] [-o FILE] [-n] [--no-check]" "show [-f FILE] [-v]" \
+	"add [-d DIR] [--] NAME..." "del [-d DIR] [--] NAME..." "status [NAME]" "log [-e] [-w]" \
+	"start NAME" "stop NAME" "restart NAME" "resume" \
+	"Runtime commands (via /run/ninit/control, root only):" \
+	"DIR defaults to $NINIT_SVCDIR, FILE to $NINIT_SVCDIR/depgraph."; do
+	t_has "$usage" "$line" "the usage lists '$line'"
+done
+t_unlike "$usage" $'\t' "the usage is indented with spaces"
+long=$(awk 'length > 79' <<<"$usage")
+t_is "$long" "" "no usage line is wider than 79 columns"
+
+for c in init show add del status log start stop restart resume; do
+	run "$NINITCTL" "$c" --help
+	t_is "$rc$(head -c 22 <<<"$out")" "0Usage: ninitctl COMMAN" "'$c --help' prints the usage"
+done
+run "$NINITCTL" init -d -h
+t_is "$rc" 1 "-h as the value of -d is a directory, not a request for help"
+t_has "$err" "ninitctl: open -h: No such file or directory" "and is opened as one"
+run "$NINITCTL" del -d "$T" -- -h
+t_unlike "$out" "Usage:" "-h after -- is a name"
+
+run "$NINITCTL" stat
+t_is "$rc" 2 "an unknown command is a usage error"
+t_has "$err" "ninitctl: unknown command 'stat'" "and is named"
+t_has "$err" "Usage: ninitctl" "followed by the usage"
+
+run "$NINITCTL" init -x
+t_is "$rc" 2 "init with an unknown argument is a usage error"
+t_is "$err" "ninitctl: init: unexpected argument '-x'" "and is named"
+run "$NINITCTL" init -d
+t_is "$rc$err" "2ninitctl: init: -d needs a directory" "init -d without a value"
+run "$NINITCTL" init --dir
+t_is "$rc$err" "2ninitctl: init: --dir needs a directory" "init --dir without a value"
+run "$NINITCTL" init -d "$T" -o
+t_is "$rc$err" "2ninitctl: init: -o needs a file" "init -o without a value"
+run "$NINITCTL" init -d "$T" extra
+t_is "$rc$err" "2ninitctl: init: unexpected argument 'extra'" "init with an operand"
+
+for v in start stop restart; do
+	run "$NINITCTL" "$v"
+	t_is "$rc$err" "2ninitctl: $v needs a service name" "$v without a name"
+	run "$NINITCTL" "$v" a b
+	t_is "$rc$err" "2ninitctl: $v takes at most one service name" "$v with two names"
+	run "$NINITCTL" "$v" -q a
+	t_is "$rc$err" "2ninitctl: $v: unknown option '-q'" "$v with an unknown option"
+done
+for v in resume reload log; do
+	run "$NINITCTL" "$v" x
+	t_is "$rc$err" "2ninitctl: $v takes no arguments" "$v with an argument"
+done
+run "$NINITCTL" status a b
+t_is "$rc$err" "2ninitctl: status takes at most one service name" "status with two names"
+run "$NINITCTL" status -e
+t_is "$rc$err" "2ninitctl: status: unknown option '-e'" "-e belongs to log only"
+run "$NINITCTL" log -x
+t_is "$rc$err" "2ninitctl: log: unknown option '-x'" "log with an unknown option"
+run "$NINITCTL" start "$(head -c 5000 /dev/zero | tr '\0' n)"
+t_is "$rc$err" "2ninitctl: start: name is too long" "a name that does not fit a request"
+
+t_done

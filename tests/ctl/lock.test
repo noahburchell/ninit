@@ -1,0 +1,48 @@
+# init, add and del serialize on a flock of the service directory, README 4.1
+
+. "$top_srcdir/tests/lib.sh"
+
+command -v flock >/dev/null 2>&1 || t_skip_all "flock(1) is not installed"
+
+d=$T/svc
+mkdir -p "$d"
+printf ':\n' >"$d/a"
+printf ':\n' >"$d/b"
+
+ms() {
+	date +%s%3N
+}
+
+# holds the lock on DIR for SECONDS, returns once it is held
+hold() {
+	flock -x "$1" -c "touch '$T/held'; sleep $2" &
+	holder=$!
+	for ((k = 0; k < 500; k++)); do
+		[ -e "$T/held" ] && return 0
+		sleep 0.01
+	done
+	return 1
+}
+
+for cmd in "init -d $d --no-check" "del -d $d a" "add -d $d a"; do
+	rm -f "$T/held"
+	hold "$d" 1 || t_bail "flock did not take the lock"
+	t0=$(ms)
+	"$NINITCTL" $cmd >/dev/null 2>&1
+	rc=$?
+	t1=$(ms)
+	wait "$holder"
+	t_is "$rc" 0 "${cmd%% *} succeeds once the lock is released"
+	t_ok $(((t1 - t0) < 800)) "${cmd%% *} waits for the lock ($((t1 - t0)) ms)"
+done
+
+# a reader of the graph does not need the lock
+rm -f "$T/held"
+hold "$d" 1
+t0=$(ms)
+"$NINITCTL" show "$d/depgraph" >/dev/null
+t1=$(ms)
+wait "$holder"
+t_ok $(((t1 - t0) > 500)) "show does not wait for the lock ($((t1 - t0)) ms)"
+
+t_done
