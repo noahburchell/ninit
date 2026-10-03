@@ -131,9 +131,11 @@ ctl_tests = \
 	tests/ctl/tools.test \
 	tests/ctl/client.test
 
-qemu_tests =
+qemu_tests = \
+	tests/qemu/boot.test \
+	tests/qemu/env.test
 
-check_PROGRAMS = $(unit_tests) tests/helpers/czdump tests/helpers/fakectl
+check_PROGRAMS = $(unit_tests) tests/helpers/czdump tests/helpers/nctl-raw tests/helpers/fakectl
 
 unit_headers = tests/unit/tap.h tests/unit/gbuild.h tests/unit/logcap.h
 
@@ -149,6 +151,7 @@ tests_unit_t_shutdown_SOURCES = tests/unit/t-shutdown.c $(unit_headers)
 tests_unit_t_build_SOURCES = tests/unit/t-build.c src/ngraph.c $(unit_headers)
 tests_unit_t_ninit_SOURCES = tests/unit/t-ninit.c src/logging.c src/ngraph.c $(unit_headers)
 tests_helpers_czdump_SOURCES = tests/helpers/czdump.c src/ngraph.c
+tests_helpers_nctl_raw_SOURCES = tests/helpers/nctl-raw.c
 tests_helpers_fakectl_SOURCES = tests/helpers/fakectl.c
 
 TESTS = $(unit_tests) $(ctl_tests) $(qemu_tests)
@@ -235,5 +238,7 @@ tools_uninstall: tools-uninstall
 
 clean-local:
 	-rm -rf $(abs_top_builddir)/.ninit-progress
+	-rm -rf tests/qemu/base.cpio tests/qemu/base.cpio.tmp tests/qemu/base.root tests/qemu/smoke \
+		tests/qemu/tcg.ok tests/qemu/tcg.bad tests/qemu/.base.lock tests/qemu/.tcg.lock
 
 .PHONY: graph tools-install tools-uninstall tools_install tools_uninstall

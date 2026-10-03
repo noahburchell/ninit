@@ -1,0 +1,117 @@
+# a clean boot and poweroff, README 5 and 7.2
+
+. "$top_srcdir/tests/lib.sh"
+. "$top_srcdir/tests/qemu/lib.sh"
+q_require
+
+q_new boot
+q_svc a <<'EOF'
+echo a ran
+EOF
+q_svc b <<'EOF'
+#%depon: a
+echo b ran
+EOF
+q_svc d <<'EOF'
+#%type: daemon
+#%notify: 3
+{ sleep 0.2; printf 'x'; echo >&3; } &
+exec 3>&- sleep 100000
+EOF
+q_svc t <<'EOF'
+#%depon: b, d
+EOF
+q_svc e <<'EOF'
+#%type: daemon
+exec sleep 100000
+EOF
+q_svc late <<'EOF'
+#%depon: t
+echo late ran
+EOF
+q_check <<'EOF'
+for s in a b d t e late; do
+	st_is "$s" up 10000
+done
+log_has "boot: 7 of 7 services up in" "the boot summary counts every service up"
+
+is "$(cat /proc/1/comm)" ninit "pid 1 is ninit"
+is "$(cat /proc/1/oom_score_adj)" -1000 "pid 1 is exempt from the oom killer"
+nofile=$(awk '/^Max open files/ { print $4 }' /proc/1/limits)
+ok $((nofile < 16640)) "pid 1 raised its own descriptor limit ($nofile)"
+
+m() {
+	awk -v p="$1" '$2 == p { print $3 " " $4 }' /proc/mounts | tail -n1
+}
+like "$(m /proc)" '^proc .*nosuid,nodev,noexec' "/proc is proc, nosuid nodev noexec"
+like "$(m /sys)" '^sysfs .*nosuid,nodev,noexec' "/sys is sysfs, nosuid nodev noexec"
+like "$(m /dev)" '^devtmpfs .*nosuid.*mode=755' "/dev is devtmpfs, nosuid mode 0755"
+like "$(m /run)" '^tmpfs .*nosuid,nodev.*mode=755' "/run is tmpfs, nosuid nodev mode 0755"
+like "$(m /dev/pts)" '^devpts .*nosuid,noexec.*gid=5,mode=620,ptmxmode=666' "/dev/pts is devpts as documented"
+like "$(m /dev/shm)" '^tmpfs .*nosuid,nodev' "/dev/shm is tmpfs, nosuid nodev"
+is "$(stat -c %a /dev/shm)" 1777 "/dev/shm is mode 1777"
+like "$(m /sys/fs/cgroup)" '^cgroup2 .*nosuid,nodev,noexec.*nsdelegate' "/sys/fs/cgroup is cgroup2 with nsdelegate"
+check "/sys/fs/cgroup/ninit.services exists" test -d /sys/fs/cgroup/ninit.services
+
+is "$(readlink /dev/fd)" /proc/self/fd "/dev/fd links to /proc/self/fd"
+is "$(readlink /dev/stdin)" /proc/self/fd/0 "/dev/stdin links to fd 0"
+is "$(readlink /dev/stdout)" /proc/self/fd/1 "/dev/stdout links to fd 1"
+is "$(readlink /dev/stderr)" /proc/self/fd/2 "/dev/stderr links to fd 2"
+if [ -e /proc/kcore ]; then
+	is "$(readlink /dev/core)" /proc/kcore "/dev/core links to /proc/kcore"
+fi
+
+is "$(stat -c '%a %F' /run/ninit)" "700 directory" "/run/ninit is mode 0700"
+is "$(stat -c '%a %F' /run/ninit/control)" "600 socket" "the control socket is mode 0600"
+
+out=$(ninitctl status)
+like "$out" $'^  #  service  state  pid\n  -+\n' "status starts with the table header"
+like "$out" $'\n  0  [a-z]+ +up +' "status has a row per service"
+like "$out" $'\n7 services, 7 up$' "status ends with the count of services up"
+like "$(grep ' d ' <<<"$out")" '^  [0-9]  d +up +[0-9]+$' "a running daemon shows its pid"
+like "$(grep ' a ' <<<"$out")" '^  [0-9]  a +up +-$' "a completed oneshot shows no pid"
+unlike "$out" "held" "no held column while nothing is held"
+
+out=$(ninitctl status d)
+like "$out" $'^  #  service  state  pid\n  -+\n  0  d +up +[0-9]+$' "status NAME prints one row and no count"
+raw=$(nctl "status d")
+like "$raw" $'^\\. d up wanted pid [0-9]+\n\\+ d$' "the raw reply is a data line and a + line"
+raw=$(nctl "status")
+like "$(tail -n1 <<<"$raw")" '^\+ 7 services, 7 up$' "the raw status list ends with the count"
+
+out=$(ninitctl status nosuch 2>&1)
+rc=$?
+is "$rc:$out" "1:ninitctl: no service named nosuch" "status of an unknown service fails"
+
+out=$(ninitctl reload 2>&1)
+rc=$?
+is "$rc:$out" "1:ninitctl: the running graph cannot be replaced, reboot to load a new one" "reload is refused"
+
+log=$(ninitctl log)
+has "$log" "Welcome to ninit test guest! ($(uname -r))" "the log ring starts with the welcome line"
+has "$log" "NOTE > control: listening on /run/ninit/control" "the control socket is logged"
+has "$log" "NOTE > a: a ran" "service output is logged as NAME: line"
+like "$log" $'\n\\[[0-9]{3}\\.[0-9]{3}\\] DONE > a \\([0-9]+ ms\\)' "a ready oneshot is DONE with its time"
+like "$log" $'\n\\[[0-9]{3}\\.[0-9]{3}\\] DONE > t\n' "a target is DONE without a time"
+unlike "$log" $'\e' "the ring holds no colour codes"
+errs=$(ninitctl log -e)
+unlike "$errs" ' (NOTE|DONE|WAIT) > ' "log -e prints only WARN and FAIL lines"
+EOF
+q_boot
+q_import
+q_poweroff_ok
+q_has "Welcome to ninit test guest! (" "the console shows the welcome line"
+q_has "NOTE > boot: 7 services, 4 roots" "boot announces the graph"
+q_order "DONE > a (" "DONE > b (" "b starts after a is ready"
+q_order "DONE > d (" "DONE > t" "a target waits for its daemon"
+q_order "DONE > b (" "DONE > t" "and for its oneshot"
+q_order "DONE > t" "late: late ran" "a dependent of a target starts after it"
+q_order "boot: 7 of 7 services up" "shutdown: stopping" "the summary comes before shutdown"
+q_has "NOTE > shutdown: stopping 3 services in dependency order" "shutdown stops the services still running"
+q_order "shutdown: stopping" "poweroff: sending SIGTERM to all processes" "then signals every process"
+q_order "poweroff: sending SIGTERM to all processes" "poweroff: saving the clock and disabling swap" "then saves the clock"
+q_order "poweroff: saving the clock" "poweroff: syncing and remounting read-only" "then remounts read-only"
+q_order "poweroff: syncing and remounting read-only" "poweroff: now" "then powers off"
+q_lacks " FAIL > " "a clean boot and poweroff log no FAIL line"
+q_lacks " WARN > " "a clean boot and poweroff log no WARN line"
+t_done
