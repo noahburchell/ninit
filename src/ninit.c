@@ -75,6 +75,7 @@ struct run {
 	uint32_t live_pos;
 	long long restart_at;
 	uint8_t burst;
+	uint8_t cg_killed;
 
 	uint8_t attempt;
 	uint8_t hup;
@@ -273,15 +274,17 @@ static int cgroup_populated(uint32_t i)
 	return *p == '1';
 }
 
-static void cgroup_drop(uint32_t i)
+static int cgroup_drop(uint32_t i)
 {
 	char dir[CG_PATH_MAX];
 
 	if (!cg_ok || !cg_path(i, "", dir, sizeof(dir)))
-		return;
-	if (rmdir(dir) == 0 || errno == ENOENT || errno == EBUSY)
-		return;
-	log_warn("%s: rmdir %s: %s", ng_name(map, i), dir, strerror(errno));
+		return 1;
+	if (rmdir(dir) == 0 || errno == ENOENT)
+		return 1;
+	if (errno != EBUSY)
+		log_warn("%s: rmdir %s: %s", ng_name(map, i), dir, strerror(errno));
+	return 0;
 }
 
 static int cgroup_signal(uint32_t i, int sig)
@@ -302,6 +305,8 @@ static int cgroup_signal(uint32_t i, int sig)
 			return -1;
 		ok = write(fd, "1", 1) == 1;
 		close(fd);
+		if (ok)
+			runs[i].cg_killed = 1;
 		return ok ? 0 : -1;
 	}
 
@@ -1042,9 +1047,13 @@ static int launch(uint32_t i)
 		fcntl(ntf[0], F_SETFL, O_NONBLOCK);
 	}
 
+	// linux before 7.3 kills a child cloned into a cgroup that cgroup.kill was written to,
+	// a new cgroup or a join after fork is not affected
+	if (r->cg_killed && cgroup_drop(i))
+		r->cg_killed = 0;
 	cgroup_make(i, cg, sizeof(cg));
 
-	pid = spawn_into_cgroup(i, cg[0] != '\0');
+	pid = spawn_into_cgroup(i, cg[0] != '\0' && !r->cg_killed);
 	if (pid == 0)
 		child_exec(i, out[1], ntf[1], "");
 	if (pid < 0) {
