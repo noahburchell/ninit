@@ -264,7 +264,7 @@ int main(int argc, char **argv)
 		} else if (a[0] == '-' && a[1]) {
 			fprintf(stderr, "%s: unrecognized option '%s'\n", me, a);
 			usage(me, stderr);
-			return 1;
+			return 2;
 		} else if (is_telinit) {
 			if (!strcmp(a, "0")) {
 				act = ACT_POWEROFF;
@@ -274,14 +274,14 @@ int main(int argc, char **argv)
 				return 0;
 			} else {
 				fprintf(stderr, "%s: unknown runlevel '%s', expected 0 or 6\n", me, a);
-				return 1;
+				return 2;
 			}
 			have_when = 1;
 		} else if (!have_when) {
 			when = parse_when(a);
 			if (when < 0) {
 				fprintf(stderr, "%s: invalid time '%s'\n", me, a);
-				return 1;
+				return 2;
 			}
 			have_when = 1;
 		}
@@ -289,13 +289,13 @@ int main(int argc, char **argv)
 
 	if (is_telinit && !have_when) {
 		fprintf(stderr, "%s: missing runlevel operand\n", me);
-		return 1;
+		return 2;
 	}
 
 	if (is_shutdown && !have_when) {
 		fprintf(stderr, "%s: missing time operand\n", me);
 		usage(me, stderr);
-		return 1;
+		return 2;
 	}
 
 	if (force) {
