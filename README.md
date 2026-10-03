@@ -108,7 +108,7 @@ builds out of tree are supported:
 mkdir build && cd build && ../configure && make
 ```
 
-`make` prefixes each compile and link command with a progress counter. `make V=1` prints the plain automake commands instead. `./configure LDFLAGS=-static` links statically
+`make` prints one short line per compile and link. `make V=1` prints the full commands. `./configure LDFLAGS=-static` links statically
 
 `configure` starts from an empty `CFLAGS`. its optimisation flags, `-O2` and link time optimisation, come before the `CFLAGS` and `LDFLAGS` given to `configure` or `make`, so `-O3` or `-fno-lto` there take effect. the language standard, the warnings and the hardening flags come after them and cannot be overridden
 
