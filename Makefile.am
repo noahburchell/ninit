@@ -169,6 +169,15 @@ tests_helpers_fakectl_SOURCES = tests/helpers/fakectl.c
 
 TESTS = $(unit_tests) $(ctl_tests) $(qemu_tests)
 
+EXTRA_DIST += \
+	$(ctl_tests) \
+	$(qemu_tests) \
+	tests/README.md \
+	tests/lib.sh \
+	tests/qemu/lib.sh \
+	tests/qemu/guest.sh \
+	tests/compact
+
 TEST_EXTENSIONS = .test
 LOG_DRIVER = env AM_TAP_AWK='$(AWK)' $(SHELL) $(top_srcdir)/build-aux/tap-driver.sh
 TEST_LOG_DRIVER = $(LOG_DRIVER)
