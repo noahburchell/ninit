@@ -2069,8 +2069,15 @@ static void shutdown_system(int how, const char *what)
 	save_hwclock();
 	stop_swap();
 
-	if (ctl_lfd >= 0)
+	// an unlinked socket that is still open keeps /run from going read-only
+	for (int c = 0; c < n_ctl; c++)
+		close(ctl_conn[c].fd);
+	n_ctl = 0;
+	if (ctl_lfd >= 0) {
+		close(ctl_lfd);
+		ctl_lfd = -1;
 		unlink(NINIT_CTL_SOCK);
+	}
 	log_note("%s: syncing and remounting read-only", what);
 	sync();
 	remount_ro();
