@@ -1471,7 +1471,8 @@ int cmd_init(int argc, char **argv)
 
 		if (is_out || is_dg) {
 			if (!S_ISREG(st.st_mode) || !graph_image(path)) {
-				if (is_out)
+				// the build replaces the output and its .old, never its .tmp
+				if (is_out && strcmp(ents[k]->d_name + out_base_len, ".tmp"))
 					die("%s/%s: the output would replace this, and it is not "
 					    "a depgraph", dir, ents[k]->d_name);
 				if (!S_ISDIR(st.st_mode))
