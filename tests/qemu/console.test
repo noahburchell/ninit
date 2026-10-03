@@ -1,0 +1,65 @@
+# ninit never blocks on the console, README 5.4
+
+. "$top_srcdir/tests/lib.sh"
+. "$top_srcdir/tests/qemu/lib.sh"
+q_require
+[ -n "$Q_QUIET" ] && t_skip_all "a quiet build prints service output only to the ring"
+
+q_new console
+Q_PIPE=1
+q_svc flood <<'EOF'
+[ -e /run/go ] || exit 0
+pad=$(printf 'x%.0s' {1..82})
+for ((k = 0; k < 3000; k++)); do printf 'flood %04d %s\n' $k "$pad"; done
+EOF
+q_svc after <<'EOF'
+[ -e /run/go ] || exit 0
+echo "after the stall"
+EOF
+q_check <<'EOF'
+st_is flood up
+t_emit "# stall now"
+sleep 1
+touch /run/go
+ninitctl start flood >/dev/null
+worst=0
+for k in 1 2 3 4 5; do
+	t0=$(now_ms)
+	ninitctl status flood >/dev/null
+	t1=$(now_ms)
+	((t1 - t0 > worst)) && worst=$((t1 - t0))
+	sleep 0.2
+done
+ok $((worst > 500)) "control requests are answered while the console is stalled (worst $worst ms)"
+seqs=$(ninitctl log | sed -n 's/.*NOTE > flood: flood \([0-9]*\) .*/\1/p')
+first=$((10#$(head -n1 <<<"$seqs")))
+last=$((10#$(tail -n1 <<<"$seqs")))
+is "$last" 2999 "the ring holds the newest line the console dropped"
+is "$(wc -l <<<"$seqs")" $((last - first + 1)) "and every line before it back to its oldest ($first)"
+t_emit "# release now"
+sleep 2
+ninitctl start after >/dev/null
+sleep 0.5
+EOF
+q_console_flow() {
+	if [ -z "${stalled:-}" ] && grep -q '^# stall now' "$Q/tap.raw" 2>/dev/null; then
+		stalled=1
+		kill -STOP "$Q_CAT"
+	fi
+	if [ -z "${released:-}" ] && grep -q '^# release now' "$Q/tap.raw" 2>/dev/null; then
+		released=1
+		kill -CONT "$Q_CAT"
+	fi
+}
+Q_POLL=q_console_flow
+q_boot
+q_import
+q_poweroff_ok
+q_like "WARN > console: dropped [0-9]+ messages" "a stalled console drops lines and reports the count"
+q_has "after: after the stall" "logging resumes once the console drains"
+dropped=$(sed -n 's/.*console: dropped \([0-9]*\) messages.*/\1/p' "$Q/console.log" | awk '{ s += $1 } END { print s + 0 }')
+shown=$(grep -c 'NOTE > flood: flood ' "$Q/console.log")
+t_ok $((dropped + shown < 3000)) "console: every flood line is either shown or counted as dropped ($shown shown, $dropped dropped)"
+partial=$(grep -E 'flood: flood [0-9]{4} ' "$Q/console.log" | grep -vcE 'flood: flood [0-9]{4} x{82}$')
+t_is "$partial" 0 "console: no line reaches the console cut short"
+t_done

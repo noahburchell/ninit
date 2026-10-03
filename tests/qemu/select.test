@@ -1,0 +1,57 @@
+# choosing the graph at boot, README 5.1
+
+. "$top_srcdir/tests/lib.sh"
+. "$top_srcdir/tests/qemu/lib.sh"
+q_require
+
+# writes a graph to GRAPHDIR whose checker reports LABEL
+mkgraph() {
+	local d=$Q/root$1
+	mkdir -p "$d"
+	cat >"$d/check" <<EOF
+#%type: daemon
+. /t/lib.sh
+ok 0 "booted $2"
+t_end
+EOF
+	"$NINITCTL" init -d "$d" >/dev/null 2>&1
+}
+
+booted() {
+	q_boot
+	q_import
+	t_has "$(cat "$Q/tap.log")" "booted $1" "$Q_NAME: the $1 graph is loaded"
+	q_poweroff_ok
+}
+
+q_new default
+mkgraph /etc/ninit.d default
+mkgraph /t/alt alt
+booted default
+
+q_new ninit_graph
+mkgraph /etc/ninit.d default
+mkgraph /t/alt alt
+Q_ARGS="ninit_graph=/t/alt/depgraph"
+booted alt
+
+q_new argv
+mkgraph /etc/ninit.d default
+mkgraph /t/alt alt
+mkgraph /t/third third
+Q_ARGS="ninit_graph=/t/alt/depgraph -- /t/third/depgraph"
+booted third
+
+q_new relative
+mkgraph /etc/ninit.d default
+mkgraph /t/alt alt
+Q_ARGS="ninit_graph=t/alt/depgraph"
+booted default
+
+q_new old
+mkgraph /etc/ninit.d previous
+mkgraph /etc/ninit.d current
+Q_ARGS="ninit_graph=/etc/ninit.d/depgraph.old"
+booted previous
+
+t_done

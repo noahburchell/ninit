@@ -1,0 +1,135 @@
+# the emergency shell, README 8, driven over the console
+
+. "$top_srcdir/tests/lib.sh"
+. "$top_srcdir/tests/qemu/lib.sh"
+q_require
+
+PROMPT='~ # '
+
+# waits for TEXT as a test named WHAT
+q_see() {
+	if q_wait "$1" "${3:-10}"; then
+		t_ok 0 "$Q_NAME: $2"
+		return 0
+	fi
+	t_ok 1 "$Q_NAME: $2"
+	t_diag "$(q_since | tail -n 15)"
+	return 1
+}
+
+# types CMD and expects TEXT in what follows
+q_cmd() {
+	q_mark
+	q_send "$1\n"
+	q_see "$2" "$3"
+}
+
+q_stop() {
+	q_kill "$Q_PID"
+	q_finish
+}
+
+q_new missing-graph
+Q_PIPE=1
+Q_NOGRAPH=1
+Q_ARGS="ninit_graph=/nonexistent"
+q_start
+q_see "shell: started on the console, exit with reboot or poweroff" "a missing graph starts the shell"
+q_see "$PROMPT" "the shell prompts on the console"
+q_cmd 'echo MARK $((6 * 7))' "MARK 42" "the shell runs commands"
+q_cmd 'echo "T=$TERM H=$HOME"' "T=vt220 H=/" "TERM is vt220 on a serial console and HOME is /"
+q_cmd 'echo "P=$PATH"' "P=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" "PATH is the service PATH"
+q_cmd '[ -t 0 ] && [ -t 1 ] && echo TTY-YES' "TTY-YES" "the shell runs on a terminal"
+q_cmd 'set -- $(cat /proc/$$/stat); [ "$1" = "$6" ] && echo SESSION-LEADER' "SESSION-LEADER" "in its own session"
+q_cmd 'tty' "/dev/console" "the controlling terminal is the console"
+q_cmd 'echo "OOM=$(cat /proc/$$/oom_score_adj)"' "OOM=0" "with oom_score_adj 0"
+q_cmd 'ninitctl status' "0 services, 0 up" "ninitctl works from the shell"
+q_cmd 'exit' "WARN > shell: exited (exit 0)" "an exit is reported"
+q_see "$PROMPT" "and the shell is started again"
+q_send 'poweroff\n'
+q_finish
+q_poweroff_ok
+q_has "FAIL > depgraph: /nonexistent: No such file or directory" "the reason is logged"
+q_has "NOTE > shell: 'ninitctl resume' retries failed services" "the shell is introduced"
+q_has "NOTE > shell: 'ninitctl init' takes effect on the next boot" "with the init note"
+q_has "NOTE > control: listening on /run/ninit/control" "the control socket exists before the graph is loaded"
+t_is "$(grep -c 'shell: started on the console' "$Q/console.log")" 1 "missing-graph: the greeting is printed once"
+
+# graphs that fail verification
+for kind in crc version empty magic; do
+	q_new "graph-$kind"
+	Q_PIPE=1
+	q_svc a <<<':'
+	q_graph
+	g=$Q/root/etc/ninit.d/depgraph
+	case $kind in
+	crc)
+		printf '\x58' | dd of="$g" bs=1 seek=$(($(stat -c %s "$g") - 3)) conv=notrunc status=none
+		why="crc mismatch"
+		;;
+	version)
+		printf '\x06' | dd of="$g" bs=1 seek=4 conv=notrunc status=none
+		why="version mismatch"
+		;;
+	empty)
+		: >"$g"
+		why="not a regular file"
+		;;
+	magic)
+		printf 'this is a text file and certainly not a compiled dependency graph\n' >"$g"
+		why="bad magic"
+		;;
+	esac
+	q_start
+	q_see "FAIL > depgraph: /etc/ninit.d/depgraph: $why" "a graph with '$why' is refused"
+	q_see "$PROMPT" "and the shell starts"
+	q_send 'poweroff\n'
+	q_finish
+	q_poweroff_ok
+done
+
+# onfail shell stops what depends on the service and leaves the rest running
+q_new onfail-shell
+Q_PIPE=1
+q_svc fsck <<'EOF'
+#%onfail: shell
+[ -e /run/fixed ]
+EOF
+q_svc mounts <<'EOF'
+#%depon: fsck
+echo mounted
+EOF
+q_svc other <<'EOF'
+#%type: daemon
+exec sleep 1000
+EOF
+q_start
+q_see "FAIL > fsck: 1 of 3 services depends on it, starting emergency shell" "onfail shell names the dependents"
+q_see "FAIL > boot: cannot continue without fsck" "and the reason"
+q_see "$PROMPT" "the shell starts"
+q_cmd 'ninitctl status other' "up" "an unaffected service keeps running"
+q_cmd 'ninitctl status mounts' "skipped" "the dependents are skipped"
+q_cmd 'touch /run/fixed; ninitctl resume' "resuming 2 services, 1 started" "resume from the shell retries them"
+q_cmd 'sleep 0.5; ninitctl status mounts | grep -q " up " && echo MOUNTS-UP' "MOUNTS-UP" \
+	"and the dependent starts once the failure is fixed"
+q_send 'poweroff\n'
+q_finish
+q_poweroff_ok
+
+# five exits within 1 s of starting end the respawning
+q_new fast-exits
+Q_PIPE=1
+Q_NOGRAPH=1
+Q_ARGS="ninit_graph=/nonexistent"
+q_start
+for k in 1 2 3 4 5; do
+	q_wait "$PROMPT" 10 || break
+	q_mark
+	q_send 'exit\n'
+done
+q_see "FAIL > shell: exited immediately 5 times (exit 0), not restarting" "five fast exits stop the respawning"
+q_see "FAIL > shell: giving up, no shell can be started" "permanently"
+q_stop
+t_is "$(grep -c 'shell: exited (exit 0)' "$Q/console.log")" 4 "fast-exits: the first four exits restart the shell"
+
+t_done
