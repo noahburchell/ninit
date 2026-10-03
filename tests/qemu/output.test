@@ -1,0 +1,47 @@
+# service output, README 3.9
+
+. "$top_srcdir/tests/lib.sh"
+. "$top_srcdir/tests/qemu/lib.sh"
+q_require
+
+q_new output
+q_svc talk <<'EOF'
+echo "to stdout"
+echo "to stderr" >&2
+printf 'line1\nline2\n'
+printf '%600s\n' '' | tr ' ' L
+printf 'no newline at the end'
+EOF
+q_svc kids <<'EOF'
+{ sleep 0.2; echo "from a background child"; } &
+wait
+EOF
+q_svc binary <<'EOF'
+printf 'nul\0inside\x01ctl\x7f\xff\n'
+echo "after binary"
+EOF
+q_svc crlf <<'EOF'
+printf 'windows line\r\n'
+EOF
+q_check <<'EOF'
+st_is talk up
+st_is kids up
+st_is binary up
+r=$(ring)
+has "$r" "NOTE > talk: to stdout" "stdout is logged as NAME: line"
+has "$r" "NOTE > talk: to stderr" "stderr is logged the same way"
+has "$r" $'NOTE > talk: line1\n' "each line is its own log line"
+has "$r" $'NOTE > talk: line2\n' "including the second"
+long=$(grep 'NOTE > talk: L' <<<"$r" | sed 's/.*talk: //')
+is "$(wc -l <<<"$long")" 3 "a 600 byte line is split into 3 log lines"
+is "$(head -n1 <<<"$long" | tr -d '\n' | wc -c)" 256 "the first piece is 256 bytes"
+is "$(sed -n 2p <<<"$long" | tr -d '\n' | wc -c)" 256 "the second piece is 256 bytes"
+is "$(tail -n1 <<<"$long" | tr -d '\n' | wc -c)" 88 "the rest is the third"
+has "$r" "NOTE > talk: no newline at the end" "a last line without a newline is logged at exit"
+has "$r" "NOTE > kids: from a background child" "output of a background child is captured"
+has "$r" "NOTE > binary: after binary" "binary output does not stop logging"
+EOF
+q_boot
+q_import
+q_poweroff_ok
+t_done

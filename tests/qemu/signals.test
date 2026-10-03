@@ -1,0 +1,112 @@
+# shutdown requests, README 7.1 and 7.3, one boot per request
+
+. "$top_srcdir/tests/lib.sh"
+. "$top_srcdir/tests/qemu/lib.sh"
+q_require
+
+# boots, runs ACTION in the guest and expects the shutdown named WHAT
+request() {
+	local name=$1 action=$2 what=$3
+	q_new "$name"
+	q_svc d <<'EOF'
+#%type: daemon
+exec sleep 1000
+EOF
+	q_check <<EOF
+st_is d up
+T_END='$action'
+EOF
+	[ "$what" = halt ] && Q_HALT=1
+	q_boot
+	q_import
+	case $what in
+	reboot)
+		q_exit 0 "after reboot"
+		q_has "NOTE > reboot: now" "ninit logs reboot: now"
+		q_has "reboot: Restarting system" "the kernel restarts"
+		;;
+	halt)
+		t_is "$q_rc" halted "$name: the guest halts"
+		q_has "NOTE > halt: now" "ninit logs halt: now"
+		q_has "reboot: System halted" "the kernel halts"
+		;;
+	poweroff)
+		q_poweroff_ok
+		;;
+	esac
+	q_has "NOTE > shutdown: stopping" "the services are stopped first"
+}
+
+request sigterm 'kill -TERM 1' reboot
+request sigint 'kill -INT 1' reboot
+request sigusr1 'kill -USR1 1' halt
+request sigusr2 'kill -USR2 1' poweroff
+request reboot /sbin/reboot reboot
+request halt /sbin/halt halt
+request poweroff /sbin/poweroff poweroff
+request shutdown-now 'shutdown now' poweroff
+request shutdown-r 'shutdown -r now' reboot
+request shutdown-h 'shutdown -h +0' poweroff
+request shutdown-capital-h 'shutdown -H now' halt
+request telinit-0 'telinit 0' poweroff
+request telinit-6 'telinit 6' reboot
+
+# -f calls reboot(2) without stopping anything
+q_new poweroff-f
+q_check <<'EOF'
+T_END='poweroff -f'
+EOF
+q_boot
+q_poweroff_ok_f() {
+	q_exit 0 "after poweroff -f"
+	q_has "reboot: Power down" "the kernel powers down"
+	q_lacks "NOTE > poweroff: now" "ninit does not run its shutdown"
+	q_lacks "shutdown: stopping" "and stops no service"
+}
+q_poweroff_ok_f
+
+# ctrl-alt-del arrives as SIGINT
+q_new ctrl-alt-del
+Q_EXTRA=(-monitor "unix:$Q/mon.sock,server=on,wait=off")
+q_check <<'EOF'
+# the key reaches pid 1 only through a keyboard driver built into the kernel
+if grep -q 'AT Translated Set 2 keyboard' /proc/bus/input/devices 2>/dev/null; then
+	t_emit "# keyboard"
+	T_END=none
+else
+	t_emit "# no keyboard"
+fi
+EOF
+cad_at=0
+q_cad() {
+	grep -q '^# keyboard' "$Q/tap.raw" 2>/dev/null || return 0
+	((SECONDS < cad_at)) && return 0
+	cad_at=$((SECONDS + 2))
+	"$HELPERS/nctl-raw" -s "$Q/mon.sock" -t 300 -e 'sendkey ctrl-alt-delete\n' >/dev/null 2>&1
+}
+Q_POLL=q_cad
+q_boot
+q_import
+if grep -q '^# keyboard' "$Q/tap.log"; then
+	q_exit 0 "after ctrl-alt-del"
+	q_has "NOTE > reboot: now" "ctrl-alt-del reboots"
+else
+	t_skip "ctrl-alt-del: the kernel has no built-in AT keyboard driver"
+fi
+
+# a user without root goes through logind, which this guest lacks
+q_new non-root
+q_check <<'EOF'
+out=$(chpst -u nobody:nobody /sbin/poweroff 2>&1)
+is "$?:$out" "1:poweroff: permission denied, must be run as root" "poweroff as a user without logind is refused"
+out=$(/sbin/shutdown 2>&1)
+like "$out" "shutdown: missing time operand" "shutdown without TIME is refused"
+out=$(/sbin/shutdown -c 2>&1)
+has "$out" "interrupt it instead" "shutdown -c explains how to cancel"
+out=$(/sbin/telinit q 2>&1)
+is "$?:$out" "0:" "telinit q does nothing"
+EOF
+q_boot
+q_import
+q_poweroff_ok
+t_done

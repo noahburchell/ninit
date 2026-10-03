@@ -1,0 +1,110 @@
+# the shutdown sequence, README 7.2
+
+. "$top_srcdir/tests/lib.sh"
+. "$top_srcdir/tests/qemu/lib.sh"
+q_require
+
+# a daemon that logs SIGTERM and exits, with optional prerequisite and deps
+trapper() {
+	q_svc "$1" <<EOF
+#%type: daemon
+${2:+#%depon: $2}
+${3:+#%deps: $3}
+trap 'echo "STOP \$0 \$EPOCHREALTIME"; exit 0' TERM
+while :; do sleep 0.05; done
+EOF
+}
+
+q_new shutdown
+Q_TIMEOUT=90
+trapper s1
+trapper s2 s1
+trapper s3 s2
+trapper p1 "" order
+trapper p2 p1
+trapper lone
+q_svc stubborn <<'EOF'
+#%type: daemon
+#%depon: s1
+#%stop-timeout: 1s
+trap '' TERM
+while :; do sleep 0.05; done
+EOF
+q_svc again <<'EOF'
+#%type: daemon
+#%restart: always
+exec sleep 1000
+EOF
+q_svc leftover <<'EOF'
+setsid bash -c 'trap "echo LEFTOVER got TERM >/dev/console; exit 0" TERM; while :; do sleep 0.05; done' &
+EOF
+q_svc escapee <<'EOF'
+#%type: daemon
+bash -c 'trap "" TERM; while :; do sleep 0.05; done' &
+echo $! >/sys/fs/cgroup/cgroup.procs
+echo $! >/run/escapee.pid
+exec sleep 1000
+EOF
+q_file /sbin/hwclock 755 <<'EOF'
+#!/bin/bash
+echo "HWCLOCK $*" >/dev/console
+EOF
+q_file /etc/adjtime <<'EOF'
+0.0 0 0.0
+0
+LOCAL
+EOF
+q_check <<'EOF'
+for s in s1 s2 s3 p1 p2 lone stubborn again leftover escapee; do
+	st_is $s up
+done
+check "the escaped process left the service cgroup" grep -qx "0::/" /proc/$(cat /run/escapee.pid)/cgroup
+# halt and reboot requested during the poweroff are ignored, the sender outlives the checker
+late_signals() {
+	setsid bash -c 'trap "" TERM; kill -USR2 1; sleep 0.5; kill -USR1 1; kill -TERM 1' &
+}
+T_END=late_signals
+EOF
+q_boot
+q_import
+q_poweroff_ok
+q_order "NOTE > s3: STOP s3" "NOTE > s2: STOP s2" "a dependent stops before its prerequisite"
+q_order "NOTE > s2: STOP s2" "NOTE > s1: STOP s1" "and so on down the chain"
+q_order "stubborn: still running 1000 ms after SIGTERM, killing it" "NOTE > s1: STOP s1" \
+	"a prerequisite waits for a dependent that needs SIGKILL"
+q_order "NOTE > p2: STOP p2" "NOTE > p1: STOP p1" "deps order edges are followed at shutdown too"
+q_has "NOTE > lone: STOP lone" "an independent service is stopped"
+q_has "LEFTOVER got TERM" "processes a oneshot left behind are signalled"
+q_lacks "again: exited" "a restart: always daemon is not restarted during shutdown"
+q_has "poweroff: sending SIGKILL to all processes" "a process outside every service that ignores SIGTERM is killed"
+q_order "poweroff: sending SIGTERM to all processes" "poweroff: sending SIGKILL to all processes" \
+	"SIGKILL follows SIGTERM to all processes"
+q_has "HWCLOCK --systohc --localtime" "hwclock keeps local time when /etc/adjtime says LOCAL"
+q_order "HWCLOCK" "poweroff: syncing and remounting read-only" "the clock is saved before the remount"
+q_lacks "halt: now" "a halt signal during the shutdown is ignored"
+q_lacks "reboot: now" "a reboot signal during the shutdown is ignored"
+
+if [ -z "$Q_QUIET" ]; then
+	t_s3=$(sed -n 's/.*STOP s3 \([0-9.]*\).*/\1/p' "$Q/console.log")
+	t_lone=$(sed -n 's/.*STOP lone \([0-9.]*\).*/\1/p' "$Q/console.log")
+	gap=$(awk -v a="$t_s3" -v b="$t_lone" 'BEGIN { d = (a - b) * 1000; if (d < 0) d = -d; printf "%d", d }')
+	t_ok $((gap > 500)) "shutdown: independent branches stop in parallel ($gap ms apart)"
+else
+	t_skip "shutdown: independent branches stop in parallel, not on a quiet console"
+fi
+
+q_new shutdown-hwclock
+q_file /sbin/hwclock 755 <<'EOF'
+#!/bin/bash
+echo "HWCLOCK $*" >/dev/console
+exec sleep 100
+EOF
+q_check <<'EOF'
+ok 0 "booted"
+EOF
+q_boot
+q_import
+q_poweroff_ok
+q_has "HWCLOCK --systohc --utc" "without /etc/adjtime the hardware clock is UTC"
+q_has "WARN > shutdown: hwclock did not exit in 5 s, killing it" "a hanging hwclock is killed after 5 s"
+t_done

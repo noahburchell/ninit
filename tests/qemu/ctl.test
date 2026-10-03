@@ -1,0 +1,188 @@
+# runtime control, README 6
+
+. "$top_srcdir/tests/lib.sh"
+. "$top_srcdir/tests/qemu/lib.sh"
+q_require
+
+q_new ctl
+Q_TIMEOUT=90
+q_svc d <<'EOF'
+#%type: daemon
+exec sleep 1000
+EOF
+q_svc stubborn <<'EOF'
+#%type: daemon
+#%stop-timeout: 700ms
+trap '' TERM
+echo $$ >/run/stubborn.pid
+while :; do sleep 0.1; done
+EOF
+q_svc slowstop <<'EOF'
+#%type: daemon
+#%stop-timeout: 5s
+trap 'sleep 1; exit 0' TERM
+while :; do sleep 0.1; done
+EOF
+q_svc o <<'EOF'
+echo run >>/run/o
+EOF
+q_svc bad <<'EOF'
+#%start-tries: 1
+[ -e /run/bad.ok ] || exit 9
+EOF
+q_svc retrying <<'EOF'
+#%start-tries: 5
+#%start-timeout: 400ms
+#%start-delay: 1500ms
+[ -e /run/go ] || exit 0
+exec sleep 1000
+EOF
+q_svc t <<'EOF'
+#%depon: d
+EOF
+q_svc chatty <<'EOF'
+#%type: daemon
+#%notify: 3
+echo >&3
+exec 3>&-
+while [ ! -e /run/flood ]; do sleep 0.05; done
+for ((k = 0; k < 6000; k++)); do printf 'flood line %05d %s\n' $k xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; done
+exec sleep 1000
+EOF
+q_check <<'EOF'
+st_is d up
+st_is o up
+st_is bad failed
+st_is t up
+
+# start, stop and restart of a daemon
+out=$(ninitctl stop d)
+is "$?:$out" "0:d stopped" "stop stops a daemon"
+out=$(ninitctl status)
+like "$out" $'^  #  service +state +pid  held\n' "a held service adds the held column"
+like "$(grep ' d ' <<<"$out")" ' d +down +-  yes$' "the held service is marked"
+out=$(ninitctl stop d)
+is "$?:$out" "0:d already stopped" "stopping a stopped service succeeds"
+out=$(ninitctl start d)
+is "$?:$out" "0:d up" "start clears the hold and starts it"
+like "$(st_line d)" '^\. d up wanted pid [0-9]+$' "the hold is cleared"
+out=$(ninitctl start d 2>&1)
+is "$?:$out" "1:ninitctl: d already running" "start of a running service is refused"
+pid=$(pid_of d)
+out=$(ninitctl restart d)
+is "$?:$out" "0:d up" "restart stops and starts"
+ok $([ "$(pid_of d)" != "$pid" ] && [ "$(pid_of d)" != 0 ]; echo $?) "with a new process"
+ninitctl stop d >/dev/null
+out=$(ninitctl restart d)
+is "$?:$out" "0:d up" "restart of a stopped service starts it"
+
+# SIGKILL after stop-timeout
+t0=$(now_ms)
+out=$(ninitctl stop stubborn)
+rc=$?
+t1=$(now_ms)
+is "$rc:$out" "0:stubborn stopped after SIGKILL" "a service ignoring SIGTERM is killed after stop-timeout"
+ok $(((t1 - t0) < 650)) "stop waits stop-timeout before SIGKILL ($((t1 - t0)) ms)"
+log_has "WARN > stubborn: still running 700 ms after SIGTERM, killing it" "the SIGKILL is logged"
+check "the process is gone" test ! -e /proc/$(cat /run/stubborn.pid)
+
+# one operation at a time per service, owned by the service and not the connection
+ninitctl stop slowstop >/dev/null &
+bg=$!
+sleep 0.3
+out=$(ninitctl stop slowstop 2>&1)
+is "$?:$out" "1:ninitctl: slowstop is busy" "a second operation on a busy service is refused"
+out=$(ninitctl start slowstop 2>&1)
+is "$?:$out" "1:ninitctl: slowstop is busy" "whatever its verb"
+wait $bg
+is "$(st slowstop)" down "the first operation completes"
+ninitctl start slowstop >/dev/null
+nctl -q "stop slowstop"
+check "an operation continues after its client closes" wait_st slowstop down 5000
+
+# oneshots
+out=$(ninitctl start o)
+is "$?:$out" "0:o up" "start of a completed oneshot runs it again"
+is "$(wc -l </run/o)" 2 "the oneshot ran twice"
+out=$(ninitctl stop o)
+is "$?:$out" "0:o already stopped" "a completed oneshot has nothing to stop"
+out=$(ninitctl start bad 2>&1)
+is "$?:$out" "1:ninitctl: bad failed" "start reports a failure"
+touch /run/bad.ok
+out=$(ninitctl start bad)
+is "$?:$out" "0:bad up" "start resets the attempt count and retries"
+
+touch /run/go
+t0=$(now_ms)
+out=$(ninitctl start retrying 2>&1)
+rc=$?
+t1=$(now_ms)
+is "$rc:$out" "1:ninitctl: retrying start timed out" "start gives up after start-timeout plus 2 s"
+ok $((t1 - t0 < 2300 || t1 - t0 > 3500)) "start-timeout 400 ms plus 2 s ($((t1 - t0)) ms)"
+ninitctl stop retrying >/dev/null 2>&1
+
+# targets and unknown names
+for v in start stop restart; do
+	out=$(ninitctl $v t 2>&1)
+	is "$?:$out" "1:ninitctl: t is a target, it has no process" "$v of a target is refused"
+done
+out=$(ninitctl start nosuch 2>&1)
+is "$?:$out" "1:ninitctl: no service named nosuch" "an unknown service is refused"
+out=$(ninitctl resume)
+is "$?:$out" "0:nothing to resume" "resume with nothing failed"
+
+# the protocol itself
+is "$(nctl -e 'status d\r\n')" $'. d up wanted pid '"$(pid_of d)"$'\n+ d' "a cr before the newline is ignored"
+is "$(nctl 'status    d')" $'. d up wanted pid '"$(pid_of d)"$'\n+ d' "blanks before the name are ignored"
+is "$(nctl frob)" "- unknown command 'frob'" "an unknown verb is refused"
+is "$(nctl 'log foo')" "- unknown log mode 'foo'" "an unknown log mode is refused"
+is "$(nctl start)" "- start needs a service name" "start without a name is refused"
+is "$(nctl reload)" "- the running graph cannot be replaced, reboot to load a new one" "reload is refused"
+long=$(printf 'x%.0s' {1..1100})
+is "$(nctl -e "$long")" "- request too long" "a request over 1023 bytes is refused"
+out=$(nctl -e "$(printf 'x%.0s' {1..1022})\n")
+like "$out" "^- unknown command 'x{900}" "a request of 1023 bytes is read whole"
+is "$(nctl -H 7 status | tail -n1)" "$(nctl status | tail -n1)" "8 connections are served at once"
+is "$(nctl -H 8 status)" "- too many control connections" "a ninth connection is refused"
+# ninit drops the 8 closed connections once it reads their end of file
+wait_for 2000 nctl status >/dev/null
+nctl -t 300 -e '' >/dev/null
+is "$?" 4 "a connection that sends nothing gets nothing"
+check "the server still answers after an idle client" nctl "status d" >/dev/null
+
+# log streaming
+nctl -t 1500 "log watch" >/run/w1 &
+w1=$!
+sleep 0.3
+ninitctl restart o >/dev/null
+wait $w1
+has "$(cat /run/w1)" "NOTE > control: restart o" "a watcher receives lines as they are logged"
+has "$(head -n1 /run/w1)" "Welcome to ninit test guest" "a watcher starts with the ring"
+unlike "$(cat /run/w1)" $'(^|\n)[+-] ' "a watch has no final line"
+for k in 1 2 3 4; do
+	nctl -t 3000 "log watch" >/dev/null &
+	ws[k]=$!
+done
+sleep 0.3
+is "$(nctl 'log watch')" "- too many log watchers" "a fifth watcher is refused"
+for k in 1 2 3 4; do wait ${ws[k]}; done
+has "$(nctl log | tail -n1)" "+ end of log" "a plain log request ends with + end of log"
+
+# a watcher that falls behind the ring is told what it lost
+nctl -p 4000 -t 1500 "log watch" >/run/w2 &
+w2=$!
+sleep 0.5
+touch /run/flood
+wait_log "flood line 05999" 30000
+wait $w2
+like "$(cat /run/w2)" "WARN > log: skipped [0-9]+ bytes" "an overtaken watcher gets a skip notice"
+first=$(ninitctl log | head -n1)
+unlike "$first" "Welcome" "the ring has dropped its oldest lines"
+has "$(ninitctl log | tail -n5)" "flood line 05999" "the ring keeps the newest lines"
+size=$(ninitctl log | wc -c)
+ok $((size > 131072)) "the ring holds at most 128 KiB ($size bytes)"
+EOF
+q_boot
+q_import
+q_poweroff_ok
+t_done
