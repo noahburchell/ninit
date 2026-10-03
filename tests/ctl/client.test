@@ -1,0 +1,117 @@
+# the ninitctl client against a fake control socket, README 6.1 and 6.4
+# runs in a private user and mount namespace with its own /run, pid 1 of the host is never contacted
+
+. "$top_srcdir/tests/lib.sh"
+
+if [ -z "${NINIT_IN_NS:-}" ]; then
+	command -v unshare >/dev/null 2>&1 || t_skip_all "unshare(1) is not installed"
+	unshare -rm true 2>/dev/null || t_skip_all "user namespaces are not available"
+	trap - EXIT
+	t_cleanup
+	exec unshare -rm env NINIT_IN_NS=1 "$BASH" "$0"
+fi
+
+mount -t tmpfs tmpfs /run || t_bail "cannot mount a private /run"
+mkdir -p /run/ninit
+
+# serves REPLY to one ninitctl ARGS, leaves the request in $req
+serve() {
+	local reply=$1 k
+	shift
+	printf '%b' "$reply" >"$T/reply"
+	rm -f "$T/ready" "$T/req"
+	"$HELPERS/fakectl" /run/ninit/control "$T/reply" "$T/req" "$T/ready" &
+	for ((k = 0; k < 200; k++)); do
+		[ -e "$T/ready" ] && break
+		sleep 0.01
+	done
+	run "$NINITCTL" "$@"
+	wait
+	req=$(cat "$T/req" 2>/dev/null)
+}
+
+serve '+ 0 services, 0 up\n' status
+t_is "$req" "status" "status sends status"
+serve '+ x\n' status foo
+t_is "$req" "status foo" "status NAME sends the name"
+serve '+ x\n' start foo
+t_is "$req" "start foo" "start sends start NAME"
+serve '+ x\n' stop foo
+t_is "$req" "stop foo" "stop sends stop NAME"
+serve '+ x\n' restart foo
+t_is "$req" "restart foo" "restart sends restart NAME"
+serve '+ x\n' resume
+t_is "$req" "resume" "resume sends resume"
+serve '+ end of log\n' log
+t_is "$req" "log" "log sends log"
+serve '+ end of log\n' log -w
+t_is "$req" "log watch" "log -w sends log watch"
+serve '+ end of log\n' log --watch -e
+t_is "$req" "log watch" "log --watch -e sends log watch"
+serve '+ x\n' start -- -dash
+t_is "$req" "start -dash" "a name after -- is sent as given"
+
+serve '. a up wanted pid 12\n. bbbbbbbbbb pending wanted pid 0\n. c starting stopped pid 345678\n+ 3 services, 1 up\n' status
+t_is "$rc" 0 "a status reply exits 0"
+rule() {
+	printf -- '-%.0s' $(seq "$1")
+}
+# columns are as wide as their widest entry, pid 0 shows as -, a held service adds a held column
+want=$(printf '  %s  %-10s  %-8s  %6s  held\n' '#' service state pid
+	printf '  %s\n' "$(rule 37)"
+	printf '  %s  %-10s  %-8s  %6s\n' 0 a up 12
+	printf '  %s  %-10s  %-8s  %6s\n' 1 bbbbbbbbbb pending -
+	printf '  %s  %-10s  %-8s  %6s  yes\n' 2 c starting 345678
+	printf '\n3 services, 1 up')
+t_is "$out" "$want" "status prints a table sized to its contents, with a held column"
+
+serve '. a up wanted pid 12\n+ 1 services, 1 up\n' status
+t_unlike "$out" "held" "the held column is left out when nothing is held"
+
+serve '. a up wanted pid 12\n+ a\n' status a
+want=$(printf '  %s  %-7s  %-5s  %3s\n' '#' service state pid
+	printf '  %s\n' "$(rule 22)"
+	printf '  %s  %-7s  %-5s  %3s' 0 a up 12)
+t_is "$out" "$want" "status NAME prints the row without the trailing name"
+
+serve '. a up wanted pid 12\n. this is not a status line\n+ 2 services, 1 up\n' status
+t_has "$out" "a up wanted pid 12" "a reply that is not a table is printed raw"
+t_has "$out" "this is not a status line" "every line of it"
+
+serve '- no service named x\n' start x
+t_is "$rc:$err" "1:ninitctl: no service named x" "a - reply is printed on stderr and exits 1"
+t_is "$out" "" "and prints nothing on stdout"
+
+serve '+ x up\n' start x
+t_is "$rc:$out" "0:x up" "a + reply is printed and exits 0"
+
+serve '. a up wanted pid 1\n' status
+t_is "$rc" 1 "a reply without a final line exits 1"
+t_has "$err" "ninitctl: status: connection closed without a result" "and says so"
+
+serve 'garbage\n+ x\n' resume
+t_is "$rc" 0 "a malformed line does not fail the command"
+t_is "$err" "ninitctl: malformed reply: garbage" "but is reported"
+
+serve "$(printf 'y%.0s' {1..9000})" status
+t_is "$rc" 1 "a record longer than the client buffer fails"
+t_has "$err" "ninitctl: reply record too long" "and says so"
+
+log='. [000.001] NOTE > one\n. [000.002] WARN > two\n. not a log line\n. [000.003] FAIL > three\n. [000.004] DONE > four\n+ end of log\n'
+serve "$log" log
+t_is "$out" "[000.001] NOTE > one
+[000.002] WARN > two
+not a log line
+[000.003] FAIL > three
+[000.004] DONE > four" "log prints the ring lines without the trailing line"
+serve "$log" log -e
+t_is "$out" "[000.002] WARN > two
+[000.003] FAIL > three" "log -e prints only WARN and FAIL lines"
+
+rm -f /run/ninit/control
+run "$NINITCTL" status
+t_is "$rc" 1 "no control socket exits 1"
+t_has "$err" "ninitctl: /run/ninit/control: No such file or directory" "with the connect error"
+t_has "$err" "ninitctl: pid 1 is not ninit" "and the likely cause"
+
+t_done
