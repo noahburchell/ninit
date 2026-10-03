@@ -224,8 +224,28 @@ static int sim_swapoff(const char *a)
 #define swapoff sim_swapoff
 #define main ninit_main
 int ninit_main(int argc, char **argv);
+// the forbidden shims make exported callers such as remount_ro noreturn here, never in ninit
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsuggest-attribute=noreturn"
+#endif
 #include "../../src/fail.c"
+#include "../../src/boot.c"
+#include "../../src/cgroup.c"
+#include "../../src/command.c"
+#include "../../src/control.c"
+#include "../../src/drain.c"
+#include "../../src/pidmap.c"
+#include "../../src/reap.c"
+#include "../../src/signals.c"
+#include "../../src/spawn.c"
+#include "../../src/state.c"
+#include "../../src/stop.c"
+#include "../../src/teardown.c"
 #include "../../src/ninit.c"
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 #undef clock_gettime
 #undef pipe2
 #undef fork

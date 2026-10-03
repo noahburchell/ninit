@@ -16,28 +16,73 @@ LINK = $(CCLD) $(AM_CFLAGS) $(CFLAGS) $(NINIT_CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) $
 
 sbin_PROGRAMS = ninit ninitctl ninit-shutdown
 
-ninit_SOURCES = \
-	src/ninit.c \
-	src/logging.c \
-	src/ngraph.c \
-	src/fail.c \
+ninit_core = \
+	src/boot.c \
+	src/cgroup.c \
+	src/command.c \
+	src/control.c \
+	src/drain.c \
+	src/pidmap.c \
+	src/reap.c \
+	src/signals.c \
+	src/spawn.c \
+	src/state.c \
+	src/stop.c \
+	src/teardown.c \
+	src/ninit.c
+
+ninit_headers = \
+	src/boot.h \
+	src/cgroup.h \
+	src/command.h \
+	src/control.h \
+	src/drain.h \
 	src/fail.h \
 	src/logging.h \
 	src/nctl.h \
-	src/ngraph.h
+	src/ngraph.h \
+	src/ninit.h \
+	src/pidmap.h \
+	src/reap.h \
+	src/signals.h \
+	src/spawn.h \
+	src/state.h \
+	src/stop.h \
+	src/teardown.h
+
+ninit_SOURCES = \
+	$(ninit_core) \
+	src/logging.c \
+	src/ngraph.c \
+	src/fail.c \
+	$(ninit_headers)
+
+ninitctl_parser = \
+	ctl/util.c \
+	ctl/parser/compact.c \
+	ctl/parser/directives.c \
+	ctl/parser/parser.h \
+	ctl/util.h
 
 ninitctl_SOURCES = \
 	ctl/main.c \
 	ctl/build.c \
+	ctl/check.c \
+	ctl/graph.c \
+	ctl/image.c \
+	ctl/output.c \
+	ctl/sources.c \
 	ctl/show.c \
 	ctl/add.c \
 	ctl/del.c \
 	ctl/ctl.c \
+	$(ninitctl_parser) \
 	src/ngraph.c \
 	ctl/add.h \
 	ctl/build.h \
 	ctl/ctl.h \
 	ctl/del.h \
+	ctl/init.h \
 	ctl/show.h
 
 ninit_shutdown_SOURCES = tools/shutdown.c
@@ -163,7 +208,7 @@ tests_unit_t_fail_sulogin_CPPFLAGS = $(AM_CPPFLAGS) -DNINIT_SULOGIN=1 \
 tests_unit_t_shutdown_SOURCES = tests/unit/t-shutdown.c $(unit_headers)
 tests_unit_t_build_SOURCES = tests/unit/t-build.c src/ngraph.c $(unit_headers)
 tests_unit_t_ninit_SOURCES = tests/unit/t-ninit.c src/logging.c src/ngraph.c $(unit_headers)
-tests_helpers_czdump_SOURCES = tests/helpers/czdump.c src/ngraph.c
+tests_helpers_czdump_SOURCES = tests/helpers/czdump.c $(ninitctl_parser) src/ngraph.c
 tests_helpers_nctl_raw_SOURCES = tests/helpers/nctl-raw.c
 tests_helpers_fakectl_SOURCES = tests/helpers/fakectl.c
 
