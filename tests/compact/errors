@@ -1,0 +1,11 @@
+# comment
+no_such_command_one
+
+# comment
+	no_such_command_two   # comment
+cat <<X
+x
+X
+no_such_command_three
+echo "$(no_such_command_four)"
+${undefined_var:?is not set}

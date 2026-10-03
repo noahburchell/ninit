@@ -113,13 +113,15 @@ unit_tests = \
 	tests/unit/t-logging-quiet \
 	tests/unit/t-fail \
 	tests/unit/t-fail-sulogin \
-	tests/unit/t-shutdown
+	tests/unit/t-shutdown \
+	tests/unit/t-build
 
-ctl_tests =
+ctl_tests = \
+	tests/ctl/compact.test
 
 qemu_tests =
 
-check_PROGRAMS = $(unit_tests)
+check_PROGRAMS = $(unit_tests) tests/helpers/czdump
 
 unit_headers = tests/unit/tap.h tests/unit/gbuild.h tests/unit/logcap.h
 
@@ -132,6 +134,8 @@ tests_unit_t_fail_sulogin_SOURCES = $(tests_unit_t_fail_SOURCES)
 tests_unit_t_fail_sulogin_CPPFLAGS = $(AM_CPPFLAGS) -DNINIT_SULOGIN=1 \
 	-DNINIT_BUSYBOX='"/bin/busybox"'
 tests_unit_t_shutdown_SOURCES = tests/unit/t-shutdown.c $(unit_headers)
+tests_unit_t_build_SOURCES = tests/unit/t-build.c src/ngraph.c $(unit_headers)
+tests_helpers_czdump_SOURCES = tests/helpers/czdump.c src/ngraph.c
 
 TESTS = $(unit_tests) $(ctl_tests) $(qemu_tests)
 

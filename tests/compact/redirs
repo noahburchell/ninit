@@ -1,0 +1,10 @@
+exec 3>/dev/null   # comment
+echo to three >&3
+echo stderr 2>&1 >/dev/null | cat
+echo both &>/dev/null
+cat <<< "here   string # kept"
+echo   x >| /dev/null
+printf '%s\n' a b > >(cat)
+wait
+{ echo grouped; } 2>&1 | cat
+echo $LINENO

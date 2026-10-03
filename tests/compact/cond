@@ -1,0 +1,11 @@
+s="ab  cd"
+[[ $s =~ ^(ab)\ +(cd)$ ]] && echo "match ${BASH_REMATCH[2]}"
+[[ $s == *#* ]] || echo "no hash"
+[[ "a # b" == "a # b" ]] && echo "quoted hash"
+re='^a   b$'
+[[ "a   b" =~ $re ]] && echo spaced
+[[ -n $s && ( $s == ab* || -z $s ) ]] && echo grouped   # comment
+if [[ x =~ (x|y) ]]; then echo "regex ( paren"; fi
+[ "$s" = "ab  cd" ] && echo single bracket
+test "a" != "b"   &&   echo test
+echo $LINENO

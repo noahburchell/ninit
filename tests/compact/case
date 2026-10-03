@@ -1,0 +1,17 @@
+x=b
+case $x in
+	a)   echo a ;;   # comment
+	b|c) echo "b or c" ;;&
+	*b*)  echo "glob # b" ;&
+	(z)  echo fallthrough   ;;
+	*)   echo default ;;
+esac
+case "#" in
+	\#) echo hash ;;
+esac
+case x in x) echo "in a pattern ) paren" ;; esac
+y=$(case b in b) echo sub;; esac)
+echo "$y"
+for w in in do done; do echo "$w"; done
+case in in in) echo word in ;; esac
+echo $LINENO

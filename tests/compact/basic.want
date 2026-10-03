@@ -1,0 +1,17 @@
+
+
+
+echo one two
+echo indented
+echo "quoted   # not a comment"
+echo 'single   # not a comment'
+echo a#b
+echo ${#PATH} > /dev/null; echo "count $#"
+x=1
+echo "$x"
+echo trailing blanks
+echo $LINENO
+
+
+
+echo $LINENO

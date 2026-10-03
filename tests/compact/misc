@@ -1,0 +1,17 @@
+#!/bin/bash
+#%depon: x
+#%type: oneshot
+
+# blank lines and comments above are header
+
+set -u
+readonly r=1
+echo "$r"
+: "${HOME:?}"
+echo done   ;   echo two&wait
+true&&echo and||echo or
+echo a;echo b
+[ 1 -eq 1 ]&&echo test
+echo "tab	inside"
+echo 'tab	inside'
+echo $LINENO   #   end

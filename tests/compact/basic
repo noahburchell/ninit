@@ -1,0 +1,17 @@
+#!/bin/bash
+#%type: oneshot
+# a comment before the first command
+echo   one    two     # trailing comment
+	echo indented
+    echo "quoted   # not a comment"
+echo 'single   # not a comment'
+echo a#b    # a word containing a hash
+echo ${#PATH} > /dev/null; echo "count $#"
+x=1 # comment after an assignment
+echo "$x"   
+echo trailing blanks  	 
+echo $LINENO
+
+# comment between commands
+
+echo $LINENO

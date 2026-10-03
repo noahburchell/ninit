@@ -1,0 +1,20 @@
+f() { echo "f $1"; }   # comment
+function g {
+	echo   g   # comment
+}
+function h() ( echo "h in a subshell" )
+f one
+g
+h
+! false && echo negated
+{ time -p true; } 2>/dev/null
+{ echo   group;   }
+( echo   subshell )
+if true; then echo   then; elif false; then :; else echo else; fi
+while false; do :; done
+until true; do :; done
+select s in a; do break; done < /dev/null
+coproc cp { echo coproc; }
+read -r line <&"${cp[0]}"; echo "$line"
+wait
+echo $LINENO

@@ -1,0 +1,10 @@
+echo $((  1  +  2  ))   # comment
+(( x = 3 * ( 2 + 1 ) ))
+echo "$x"
+for (( i = 0 ; i < 3 ; i++ )); do echo "i $i"; done
+echo $(( 8 # 3 ))
+echo $(( 2#101 ))
+let 'y = 1 << 3'
+echo "$y"
+a=$((x>4?1:0)); echo "$a"
+echo $LINENO

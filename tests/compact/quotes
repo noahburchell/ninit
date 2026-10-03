@@ -1,0 +1,14 @@
+echo $'ansi \' # x'   # comment
+echo $"locale  # text"
+echo "a \" # b"
+echo \#not a comment
+echo \ # escaped space then comment
+echo '#' "#" $'#'
+echo "${x:-#default}" "${x:-a b}"
+p=a#b#c; echo "${p//#/-}" "${p#*#}" "${p%#*}"
+echo {a,b}#
+echo "$(echo ')')"
+echo "multi
+line   # in quotes
+string"
+echo $LINENO
