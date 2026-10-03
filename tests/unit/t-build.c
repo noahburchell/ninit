@@ -25,6 +25,8 @@ static jmp_buf die_jb;
 #include "../../ctl/util.c"
 #include "../../ctl/parser/compact.c"
 #include "../../ctl/parser/directives.c"
+#include "../../ctl/parser/lang.c"
+#include "../../ctl/parser/shell.c"
 #include "../../ctl/output.c"
 #include "../../ctl/sources.c"
 #include "../../ctl/graph.c"

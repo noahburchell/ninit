@@ -1,10 +1,10 @@
+#include "lang.h"
 #include "parser.h"
 #include "../util.h"
 #include "../../src/ngraph.h"
 
 #include <errno.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -88,86 +88,6 @@ static int has_code(const char *buf)
 	return 0;
 }
 
-static const char *word_at(const char **p, const char *end, size_t *len)
-{
-	const char *w;
-
-	while (*p < end && (**p == ' ' || **p == '\t' || **p == '\r'))
-		(*p)++;
-	w = *p;
-	while (*p < end && **p != ' ' && **p != '\t' && **p != '\r')
-		(*p)++;
-	*len = (size_t)(*p - w);
-	return *len ? w : NULL;
-}
-
-static const char *base_of(const char *w, size_t *len)
-{
-	const char *b = w;
-
-	for (size_t k = 0; k < *len; k++)
-		if (w[k] == '/')
-			b = w + k + 1;
-	*len -= (size_t)(b - w);
-	return b;
-}
-
-// the basename of the interpreter a #! line names, through env and its options
-static const char *shebang_interp(const char *line, size_t n, size_t *len)
-{
-	const char *p = line + 2, *end = line + n, *w;
-	size_t wl;
-
-	w = word_at(&p, end, &wl);
-	if (!w)
-		return NULL;
-	w = base_of(w, &wl);
-	if (wl == 3 && !memcmp(w, "env", 3)) {
-		while ((w = word_at(&p, end, &wl))) {
-			if (wl > 2 && w[0] == '-' && w[1] == 'S') {
-				w += 2;
-				wl -= 2;
-				break;
-			}
-			if (w[0] == '-') {
-				if (wl == 2 && (w[1] == 'u' || w[1] == 'C'))
-					word_at(&p, end, &wl);
-				continue;
-			}
-			if (!memchr(w, '=', wl))
-				break;
-		}
-		if (!w)
-			return NULL;
-		w = base_of(w, &wl);
-	}
-	*len = wl;
-	return wl ? w : NULL;
-}
-
-static int is_name(const char *w, size_t len, const char *path)
-{
-	const char *b = strrchr(path, '/');
-
-	b = b ? b + 1 : path;
-	return strlen(b) == len && !memcmp(w, b, len);
-}
-
-static void check_shebang(const char *fname, const char *body)
-{
-	const char *nl = strchr(body, '\n'), *w;
-	size_t n = nl ? (size_t)(nl - body) : strlen(body), len;
-
-	w = shebang_interp(body, n, &len);
-	if (!w || is_name(w, len, NG_SHELL) || is_name(w, len, NG_SHELL_ARGV0) ||
-	    (g_sh_lexed && is_name(w, len, "sh")))
-		return;
-	while (n && (body[n - 1] == ' ' || body[n - 1] == '\t' || body[n - 1] == '\r'))
-		n--;
-	fprintf(stderr, "ninitctl: warning: %s/%s: '%.*s' is ignored, the script runs under %s\n",
-		g_dir, fname, (int)n, body, NG_SHELL);
-}
-
 // bash line numbers must match the file
 void parse_src(struct src *s, const char *fname, char *body, size_t len)
 {
@@ -181,8 +101,7 @@ void parse_src(struct src *s, const char *fname, char *body, size_t len)
 	if (!s->name)
 		die("out of memory");
 	s->type = NG_TYPE_TARGET;
-	if (body[0] == '#' && body[1] == '!')
-		check_shebang(fname, body);
+	s->lang = lang_select(s, fname, body);
 
 	while (line && *line) {
 		char *nl = strchr(line, '\n');
@@ -316,11 +235,10 @@ void parse_src(struct src *s, const char *fname, char *body, size_t len)
 		if (!code)
 			die("%s/%s: type:%s has no commands to run",
 			    g_dir, fname, ng_typename(s->type));
-		if (g_sh_lexed)
-			len = compact(body, len, line ? (size_t)(line - scratch) : len, fname);
+		len = s->lang->store(s, body, len, line ? (size_t)(line - scratch) : len);
 		if (len > NG_MAX_SCRIPT)
 			die("%s/%s: script is %zu bytes%s, the maximum is %u", g_dir, fname, len,
-			    g_sh_lexed ? " without comments" : "", NG_MAX_SCRIPT);
+			    s->stripped ? " without comments" : "", NG_MAX_SCRIPT);
 		s->script = body;
 	}
 }

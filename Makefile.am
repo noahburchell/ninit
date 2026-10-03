@@ -61,6 +61,9 @@ ninitctl_parser = \
 	ctl/util.c \
 	ctl/parser/compact.c \
 	ctl/parser/directives.c \
+	ctl/parser/lang.c \
+	ctl/parser/shell.c \
+	ctl/parser/lang.h \
 	ctl/parser/parser.h \
 	ctl/util.h
 

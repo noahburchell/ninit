@@ -31,13 +31,8 @@ static void print_failure(const char *dir, const char *name, char *msg)
 
 void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 {
-	static char argv0[] = NG_SHELL_ARGV0, dashn[] = "-n", dasho[] = "-O", extglob[] = "extglob";
 	static char path[] = NG_PATH;
 	static char *const envp[] = { path, NULL };
-	static char *const cargv[] = { argv0, dashn, NULL };
-	// -n never runs the shopt that turns extglob on, so bash would refuse its patterns
-	static char *const bargv[] = { argv0, dasho, extglob, dashn, NULL };
-	char *const *args = strcmp(strrchr(NG_SHELL, '/') + 1, "bash") ? cargv : bargv;
 	long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
 	uint32_t slots = ncpu > 1 ? (uint32_t)ncpu : 1;
 	uint32_t i, live = 0, bad = 0, unchecked = 0;
@@ -63,6 +58,8 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 	devnull = open("/dev/null", O_WRONLY | O_CLOEXEC);
 
 	for (i = 0; i <= n; i++) {
+		char *argv[16];
+		const char *prog;
 		size_t len;
 		int sfd, efd;
 		pid_t pid;
@@ -142,6 +139,7 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 			continue;
 		}
 
+		prog = srcs[i].lang->check_argv(&srcs[i], argv, sizeof(argv) / sizeof(*argv));
 		pid = fork();
 		if (pid < 0)
 			die("fork: %s", strerror(errno));
@@ -150,7 +148,7 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 			if (devnull >= 0)
 				dup2(devnull, 1);
 			dup2(efd, 2);
-			execve(NG_SHELL, args, envp);
+			execve(prog, argv, envp);
 			_exit(127);
 		}
 		close(sfd);
