@@ -1,6 +1,7 @@
 #include "build.h"
 #include "init.h"
 #include "util.h"
+#include "parser/parser.h"
 #include "../src/ngraph.h"
 
 #include <stdio.h>
@@ -55,6 +56,7 @@ int cmd_init(int argc, char **argv)
 		}
 	}
 	g_dir = dir;
+	g_sh_lexed = sh_lexed(NG_SHELL_ARGV0);
 	if (!out) {
 		if (!custom_dir) {
 			out = NG_DEFAULT_FILE;

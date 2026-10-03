@@ -72,6 +72,32 @@ t_has "$pol" "start-tries 5" "a repeated start-tries takes the last value"
 accept "a #! line and blank lines in the header" $'#!/bin/bash\n\n#%type: daemon\n\n# comment\n\nexec sleep 1\n'
 t_like "$row" '^a +daemon ' "directives after a #! line and blank lines are read"
 
+ignored="is ignored, the script runs under $NINIT_SHELL"
+accept "a #! line naming python" $'#!/usr/bin/python3\n:\n'
+t_has "$init_err" "warning: $T/a$n_case/a: '#!/usr/bin/python3' $ignored" \
+	"a #! line naming another interpreter is warned about"
+accept "a #! line through env -S" $'#!/usr/bin/env -S perl -w\n:\n'
+t_has "$init_err" "warning: $T/a$n_case/a: '#!/usr/bin/env -S perl -w' $ignored" \
+	"env and its options are looked through"
+accept "a #! line naming ninitctl" $'#!/usr/sbin/ninitctl stop foo\n:\n'
+t_has "$init_err" "warning: $T/a$n_case/a: '#!/usr/sbin/ninitctl stop foo' $ignored" \
+	"any program other than the shell is warned about"
+accept "a #! line naming the shell" "#!$NINIT_SHELL"$'\n:\n'
+t_unlike "$init_err" "is ignored" "the configured shell draws no warning"
+accept "a #! line naming the shell through env" "#!/usr/bin/env -S $NINIT_SHELL_NAME -e"$'\n:\n'
+t_unlike "$init_err" "is ignored" "nor does it through env"
+accept "a #! line after the first" $':\n#!/usr/bin/python3\n'
+t_unlike "$init_err" "is ignored" "a #! after the first line is an ordinary comment"
+accept "#!/bin/sh" $'#!/bin/sh\n:\n'
+case $NINIT_SHELL_NAME in
+sh | bash | dash | ash | ksh | mksh | oksh | loksh | yash | posh)
+	t_unlike "$init_err" "is ignored" "#!/bin/sh draws no warning under a shell that lexes like sh"
+	;;
+*)
+	t_has "$init_err" "'#!/bin/sh' $ignored" "#!/bin/sh is warned about under a shell that does not lex like sh"
+	;;
+esac
+
 accept "a comment that is not a directive" $'# %type: target\n:\n'
 t_like "$row" '^a +oneshot ' "# %key is a plain comment"
 
@@ -80,8 +106,12 @@ t_like "$row" '^a +oneshot ' "an empty #% line is ignored"
 
 accept "a directive after the first command" $':\n#%type: target\n'
 t_like "$row" '^a +oneshot ' "a #% line after a command is not a directive"
-t_has "$init_err" "warning: $T/a$n_case/a: '#%type: target' follows a command, treating it as a comment" \
-	"and draws a warning"
+if [ -n "$t_strips" ]; then
+	t_has "$init_err" "warning: $T/a$n_case/a: '#%type: target' follows a command, treating it as a comment" \
+		"and draws a warning"
+else
+	t_unlike "$init_err" "follows a command" "and draws no warning in a script stored as written"
+fi
 
 accept "restart never" $'#%type: daemon\n#%restart: never\nexec sleep 1\n'
 t_like "$row" 'daemon .* - +- +-$' "restart never means no"
@@ -110,7 +140,12 @@ accept "name matching the file" $'#%name: a\n:\n'
 t_like "$row" '^a ' "name equal to the filename is accepted"
 
 accept "a script with comments" $'#!/bin/bash\n# header\necho   one    # trailing\n\n\t\techo two\n'
-t_is "$script" $'echo one\n\necho two' "show -v lists the stored script without comments or indentation"
+if [ -n "$t_strips" ]; then
+	t_is "$script" $'echo one\n\necho two' "show -v lists the stored script without comments or indentation"
+else
+	t_is "$script" $'#!/bin/bash\n# header\necho   one    # trailing\n\n\t\techo two' \
+		"show -v lists the script as written"
+fi
 
 refuse "a directive without a colon" "directive without a key: #%type daemon" $'#%type daemon\n:\n'
 refuse "an unknown key" "unknown directive 'restart-delay'" $'#%restart-delay: 1s\n:\n'

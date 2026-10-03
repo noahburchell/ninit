@@ -83,12 +83,18 @@ deepest dependency chain (4 services)
   fs -> mounts -> basic -> getty-console-long-name
 EOF
 )
-run "$NINITCTL" show -v "$g"
-same "$(mask <<<"$out")" "$want_v" "show -v adds the effective policy and the stored script"
-run "$NINITCTL" show --verbose "$g"
-same "$(mask <<<"$out")" "$want_v" "--verbose is -v"
-run "$NINITCTL" show -f "$g" -v
-same "$(mask <<<"$out")" "$want_v" "-f FILE names the graph"
+if [ -n "$t_strips" ]; then
+	run "$NINITCTL" show -v "$g"
+	same "$(mask <<<"$out")" "$want_v" "show -v adds the effective policy and the stored script"
+	run "$NINITCTL" show --verbose "$g"
+	same "$(mask <<<"$out")" "$want_v" "--verbose is -v"
+	run "$NINITCTL" show -f "$g" -v
+	same "$(mask <<<"$out")" "$want_v" "-f FILE names the graph"
+else
+	for w in "show -v adds the effective policy and the stored script" "--verbose is -v" "-f FILE names the graph"; do
+		t_skip "$w, the expected scripts are stripped and $NINIT_SHELL_NAME scripts are stored as written"
+	done
+fi
 run "$NINITCTL" show --file "$g"
 same "$(mask <<<"$out")" "$want" "--file FILE names the graph"
 

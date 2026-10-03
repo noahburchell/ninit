@@ -257,7 +257,23 @@ AC_DEFINE_UNQUOTED([NG_SHELL], ["$with_shell"], [Interpreter for service scripts
 AC_DEFINE_UNQUOTED([NG_SHELL_ARGV0], ["$with_shell_name"],
 		   [argv[0] to hand that interpreter.])
 ninit_shell=$with_shell
+ninit_shell_name=$with_shell_name
 AC_SUBST([ninit_shell])
+AC_SUBST([ninit_shell_name])
+
+AC_MSG_CHECKING([whether $with_shell runs -c SCRIPT NAME and -n])
+AS_IF([test "$cross_compiling" = yes],
+	[AC_MSG_RESULT([not checked, cross compiling])],
+      [test ! -x "$with_shell"],
+	[AC_MSG_RESULT([not checked, not executable here])
+	 AC_MSG_WARN([$with_shell is not executable on this system, every service fails on one without it])],
+      [test "$with_shell_name" != "`echo "$with_shell" | sed 's|.*/||'`"],
+	[AC_MSG_RESULT([not checked, argv@<:@0@:>@ is $with_shell_name])],
+      [AS_IF(["$with_shell" -c 'test "$0" = x' x </dev/null >/dev/null 2>&1 &&
+	      "$with_shell" -n </dev/null >/dev/null 2>&1],
+	     [AC_MSG_RESULT([yes])],
+	     [AC_MSG_RESULT([no])
+	      AC_MSG_ERROR([$with_shell does not run -c SCRIPT NAME and -n like sh])])])
 
 AC_ARG_WITH([service-dir],
   [AS_HELP_STRING([--with-service-dir=DIR], [directory holding service files @<:@/etc/ninit.d@:>@])],

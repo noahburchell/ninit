@@ -229,9 +229,9 @@ TEST_LOG_COMPILER = $(BASH_PROG)
 # a sanitizer build reports the memory a short lived ninitctl leaves to exit as a failure
 AM_TESTS_ENVIRONMENT = \
 	top_srcdir='$(abs_top_srcdir)'; top_builddir='$(abs_top_builddir)'; \
-	NINIT_SHELL='$(ninit_shell)'; NINIT_SVCDIR='$(ninit_svcdir)'; \
+	NINIT_SHELL='$(ninit_shell)'; NINIT_SHELL_NAME='$(ninit_shell_name)'; NINIT_SVCDIR='$(ninit_svcdir)'; \
 	ASAN_OPTIONS=$${ASAN_OPTIONS:-detect_leaks=0}; \
-	export top_srcdir top_builddir NINIT_SHELL NINIT_SVCDIR ASAN_OPTIONS;
+	export top_srcdir top_builddir NINIT_SHELL NINIT_SHELL_NAME NINIT_SVCDIR ASAN_OPTIONS;
 
 graph: ninitctl$(EXEEXT)
 	$(AM_V_at)./ninitctl init -d '$(ninit_svcdir)' -o '$(ninit_svcdir)/depgraph'

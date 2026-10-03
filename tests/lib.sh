@@ -3,6 +3,13 @@
 : "${top_srcdir:?top_srcdir is not set, run the tests with make check}"
 : "${top_builddir:?top_builddir is not set, run the tests with make check}"
 : "${NINIT_SHELL:=/bin/bash}"
+: "${NINIT_SHELL_NAME:=${NINIT_SHELL##*/}}"
+
+# README 3.2, ninitctl init strips comments only for a shell that lexes like sh
+case ${NINIT_SHELL_NAME##*/} in
+sh | bash | dash | ash | ksh | mksh | oksh | loksh | yash | posh) t_strips=1 ;;
+*) t_strips= ;;
+esac
 
 NINITCTL=$top_builddir/ninitctl
 NINIT=$top_builddir/ninit
