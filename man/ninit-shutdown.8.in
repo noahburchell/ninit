@@ -164,7 +164,7 @@ an existing
 .IB name .old
 is never replaced.
 .B make tools\-uninstall
-restores the originals
+restores the originals and removes the links that replaced nothing
 .SH SEE ALSO
 .BR ninit (8),
 .BR ninitctl (8),

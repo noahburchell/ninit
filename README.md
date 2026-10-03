@@ -137,7 +137,7 @@ there is no fallback to another shell. `--with-shell` also selects the interpret
 |---|---|
 | `install` | install `ninit`, `ninitctl` and `ninit-shutdown` into sbindir, the manual pages into mandir and the example services into `DOCDIR/ninit.d`, and create the service directory |
 | `tools-install` | `install`, then link `shutdown`, `poweroff`, `halt`, `reboot` and `telinit` to `ninit-shutdown`, see [7.3](#73-ninit-shutdown) |
-| `tools-uninstall` | restore the originals saved by `tools-install` and remove `ninit-shutdown` |
+| `tools-uninstall` | restore the originals saved by `tools-install`, remove the links that replaced nothing, and remove `ninit-shutdown` |
 | `graph` | run the freshly built `ninitctl init` on the configured service directory |
 | `dist` | build `ninit-VERSION.tar.xz` |
 
@@ -708,7 +708,7 @@ make tools-install     # save the originals as NAME.old, link the names to ninit
 make tools-uninstall   # put the originals back
 ```
 
-`tools-install` operates in sbindir. each existing `shutdown`, `poweroff`, `halt`, `reboot` and `telinit` is renamed to `NAME.old`. an existing symlink is saved as a new symlink to the same target, or to `TARGET.old` if the target is one of these names. an existing `NAME.old` is never replaced. `/sbin/init` is not touched. `tools-uninstall` renames every `NAME.old` back and removes `ninit-shutdown`
+`tools-install` operates in sbindir. each existing `shutdown`, `poweroff`, `halt`, `reboot` and `telinit` is renamed to `NAME.old`. an existing symlink is saved as a new symlink to the same target, or to `TARGET.old` if the target is one of these names. an existing `NAME.old` is never replaced. `/sbin/init` is not touched. `tools-uninstall` renames every `NAME.old` back, removes each link to `ninit-shutdown` that has no `NAME.old`, and removes `ninit-shutdown`
 
 ## 8 emergency shell
 
