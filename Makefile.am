@@ -148,7 +148,6 @@ dist_exampleunused_DATA = \
 EXTRA_DIST = \
 	README.md \
 	autogen.sh \
-	build-aux/progress \
     LICENSE \
 	$(NINIT_MANS:=.in)
 
@@ -234,23 +233,6 @@ AM_TESTS_ENVIRONMENT = \
 	ASAN_OPTIONS=$${ASAN_OPTIONS:-detect_leaks=0}; \
 	export top_srcdir top_builddir NINIT_SHELL NINIT_SVCDIR ASAN_OPTIONS;
 
-NINIT_RUN   := $(abs_top_builddir)/.ninit-progress/$(shell echo $$PPID)
-NINIT_STEPS  = $(sort $(ninit_OBJECTS) $(ninitctl_OBJECTS) $(ninit_shutdown_OBJECTS)) \
-	       ninit$(EXEEXT) ninitctl$(EXEEXT) ninit-shutdown$(EXEEXT) \
-	       $(if $(filter check,$(MAKECMDGOALS)),$(ninit_check_steps))
-NINIT_TOTAL  = $(words $(NINIT_STEPS))
-NINIT_SAY    = $(SHELL) $(top_srcdir)/build-aux/progress '$(NINIT_RUN)' '$(NINIT_TOTAL)' '$@'
-
-ninit_canon       = $(subst /,_,$(subst -,_,$(1)))
-ninit_check_steps = $(sort $(foreach p,$(check_PROGRAMS),$($(call ninit_canon,$(p))_OBJECTS))) \
-		    $(check_PROGRAMS:=$(EXEEXT))
-
-ninit_v_dep  = $(dir $@)$(DEPDIR)/$(basename $(notdir $@)).Tpo
-ninit_v_prog = $(call ninit_canon,$(basename $@))
-
-am__v_CC_0   = @$(NINIT_SAY) $(COMPILE) -MT $@ -MD -MP -MF $(ninit_v_dep) -c -o $@ $<;
-am__v_CCLD_0 = @$(NINIT_SAY) $(LINK) $($(ninit_v_prog)_OBJECTS) $($(ninit_v_prog)_LDADD) $(LIBS);
-
 graph: ninitctl$(EXEEXT)
 	$(AM_V_at)./ninitctl init -d '$(ninit_svcdir)' -o '$(ninit_svcdir)/depgraph'
 
@@ -306,7 +288,6 @@ tools_install:   tools-install
 tools_uninstall: tools-uninstall
 
 clean-local:
-	-rm -rf $(abs_top_builddir)/.ninit-progress
 	-rm -rf tests/qemu/base.cpio tests/qemu/base.cpio.tmp tests/qemu/base.root tests/qemu/smoke \
 		tests/qemu/tcg.ok tests/qemu/tcg.bad tests/qemu/.base.lock tests/qemu/.tcg.lock
 

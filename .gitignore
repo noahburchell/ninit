@@ -32,7 +32,6 @@
 .deps/
 .dirstamp
 .libs/
-.ninit-progress/
 
 /aclocal.m4
 /autom4te.cache/
@@ -40,7 +39,6 @@
 /configure
 /Makefile.in
 /build-aux/*
-!/build-aux/progress
 
 /Makefile
 /config.h
