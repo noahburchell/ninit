@@ -124,8 +124,10 @@ ctl_tests = \
 	tests/ctl/show.test \
 	tests/ctl/adddel.test \
 	tests/ctl/usage.test \
+	tests/ctl/docs.test \
 	tests/ctl/limits.test \
-	tests/ctl/lock.test
+	tests/ctl/lock.test \
+	tests/ctl/tools.test
 
 qemu_tests =
 

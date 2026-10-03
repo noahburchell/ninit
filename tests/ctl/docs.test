@@ -1,0 +1,86 @@
+# the example services build, and README 4.2 describes them as they are
+
+. "$top_srcdir/tests/lib.sh"
+
+src=$top_srcdir/docs/ninit.d
+d=$T/ninit.d
+mkdir -p "$d"
+cp -p "$src"/* "$d/" 2>/dev/null
+cp -rp "$src/unused" "$d/"
+# a distribution tree may be read-only, the copy must not be
+chmod -R u+w "$d"
+n=$(find "$d" -maxdepth 1 -type f | wc -l)
+
+run "$NINITCTL" init -d "$d"
+t_is "$rc" 0 "docs/ninit.d builds with the syntax check" || t_diag "$err"
+t_like "$out" "^$d/depgraph: $n services, " "every example file is a service"
+
+run "$NINITCTL" add -d "$d" avahi dhcpcd udev-settle
+t_is "$rc" 0 "the unused examples can be enabled"
+run "$NINITCTL" init -d "$d" -n
+t_is "$rc" 0 "the set with the unused examples builds" || t_diag "$err"
+"$NINITCTL" del -d "$d" avahi dhcpcd udev-settle >/dev/null
+
+# README 3.11 copies the set and runs these commands
+run "$NINITCTL" del -d "$d" bluetooth cupsd sddm
+t_is "$rc" 0 "del bluetooth cupsd sddm from README 3.11 works"
+run "$NINITCTL" add -d "$d" udev-settle
+t_is "$rc" 0 "add udev-settle from README 3.11 works"
+run "$NINITCTL" init -d "$d" -n
+t_is "$rc" 0 "the README 3.11 set builds" || t_diag "$err"
+"$NINITCTL" del -d "$d" udev-settle >/dev/null
+"$NINITCTL" add -d "$d" bluetooth cupsd sddm >/dev/null
+"$NINITCTL" init -d "$d" >/dev/null 2>&1
+
+readme=$top_srcdir/README.md
+# the sample show output in README 4.2, with the terminal glyphs a pipe does not get
+sample=$(sed -n '/^\$ ninitctl show$/,/^```$/p' "$readme" | sed '1d;$d' | sed 's/—/-/g; s/─/-/g; s/→/->/g')
+t_ok $([ -n "$sample" ]; echo $?) "README 4.2 has a sample of show"
+
+run "$NINITCTL" show "$d/depgraph"
+got=$(sed "s|$d/depgraph|/etc/ninit.d/depgraph|" <<<"$out")
+
+rows() {
+	grep -E '^ *[0-9]+  ' | sed 's/ *$//'
+}
+if [ "$(rows <<<"$got")" = "$(rows <<<"$sample")" ]; then
+	t_ok 0 "the service table in README 4.2 matches docs/ninit.d"
+else
+	t_ok 1 "the service table in README 4.2 matches docs/ninit.d"
+	t_diag "$(diff <(rows <<<"$sample") <(rows <<<"$got"))"
+fi
+t_is "$(sed -n 2p <<<"$got" | sed -E 's/, [0-9]+ bytes, crc [0-9a-f]+//')" \
+	"$(sed -n 2p <<<"$sample" | sed -E 's/, [0-9]+ bytes, crc [0-9a-f]+//')" \
+	"the counts in README 4.2 match docs/ninit.d"
+t_is "$(sed -n 2p <<<"$got")" "$(sed -n 2p <<<"$sample")" "the size and crc in README 4.2 match docs/ninit.d"
+t_is "$(tail -n2 <<<"$got")" "$(tail -n2 <<<"$sample")" "the deepest chain in README 4.2 matches docs/ninit.d"
+
+# README 3.11 lists every example
+for f in "$src"/*; do
+	[ -f "$f" ] || continue
+	s=${f##*/}
+	case $s in
+	getty[1-6]) s='`getty1` to `getty6`' ;;
+	tmpfiles-dev | tmpfiles) s='`tmpfiles-dev`, `tmpfiles`' ;;
+	udev | udev-trigger) s='`udev`, `udev-trigger`' ;;
+	modules-load | sysctl | binfmt) s='`modules-load`, `sysctl`, `binfmt`' ;;
+	dbus | elogind) s='`dbus`, `elogind`' ;;
+	*) s="\`$s\`" ;;
+	esac
+	grep -qF "| $s" "$readme"
+	t_ok $? "README 3.11 describes ${f##*/}"
+done
+for f in "$src"/unused/*; do
+	grep -qF "| \`${f##*/}\` |" "$readme"
+	t_ok $? "README 3.11 describes unused/${f##*/}"
+done
+
+# every example is in the distribution
+for f in "$src"/* "$src"/unused/*; do
+	[ -f "$f" ] || continue
+	rel=${f#"$top_srcdir"/}
+	grep -qF "$rel" "$top_srcdir/Makefile.am"
+	t_ok $? "$rel is installed and distributed by Makefile.am"
+done
+
+t_done

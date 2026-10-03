@@ -1,0 +1,55 @@
+# make tools-install and tools-uninstall, README 2.4 and 7.3
+
+. "$top_srcdir/tests/lib.sh"
+
+command -v "${MAKE:-make}" >/dev/null 2>&1 || t_skip_all "make is not installed"
+
+# the destination sbindir as configured
+sbindir=$(sed -n 's/^sbindir = //p' "$top_builddir/Makefile")
+sbindir=${sbindir//\$\{exec_prefix\}/$(sed -n 's/^exec_prefix = //p' "$top_builddir/Makefile")}
+sbindir=${sbindir//\$\{prefix\}/$(sed -n 's/^prefix = //p' "$top_builddir/Makefile")}
+
+mk() {
+	env -u MAKEFLAGS -u MFLAGS -u MAKELEVEL "${MAKE:-make}" -s -C "$top_builddir" "$@" DESTDIR="$T/dest"
+}
+
+s=$T/dest$sbindir
+mkdir -p "$s"
+printf 'original shutdown\n' >"$s/shutdown"
+ln -s /bin/systemctl "$s/poweroff"
+ln -s reboot "$s/halt"
+printf 'original reboot\n' >"$s/reboot"
+
+run mk tools-install
+t_is "$rc" 0 "tools-install succeeds" || t_diag "$err"
+for n in shutdown poweroff halt reboot telinit; do
+	t_is "$(readlink "$s/$n")" ninit-shutdown "$n links to ninit-shutdown"
+done
+t_is "$(cat "$s/shutdown.old")" "original shutdown" "a regular file is saved as NAME.old"
+t_is "$(readlink "$s/poweroff.old")" /bin/systemctl "a symlink is saved as a symlink to the same target"
+t_is "$(readlink "$s/halt.old")" reboot.old "a symlink to another tool name is saved pointing at that tool's .old"
+t_is "$(cat "$s/reboot.old")" "original reboot" "reboot is saved"
+[ ! -e "$s/telinit.old" ] && [ ! -L "$s/telinit.old" ]
+t_ok $? "a tool that did not exist leaves no .old"
+t_is "$(cat "$s/halt.old")" "original reboot" "halt.old still reaches the original reboot"
+[ -x "$s/ninit-shutdown" ] && [ -x "$s/ninit" ] && [ -x "$s/ninitctl" ]
+t_ok $? "the programs are installed"
+
+run mk tools-install
+t_is "$rc" 0 "a second tools-install succeeds"
+t_is "$(cat "$s/shutdown.old")" "original shutdown" "an existing .old is never replaced"
+t_is "$(readlink "$s/halt.old")" reboot.old "nor is a saved symlink"
+
+run mk tools-uninstall
+t_is "$rc" 0 "tools-uninstall succeeds" || t_diag "$err"
+t_is "$(cat "$s/shutdown")" "original shutdown" "shutdown is restored"
+t_is "$(readlink "$s/poweroff")" /bin/systemctl "poweroff is restored as the original symlink"
+t_is "$(readlink "$s/halt")" reboot "halt is restored pointing at reboot"
+t_is "$(cat "$s/reboot")" "original reboot" "reboot is restored"
+t_is "$(ls "$s" | grep -c '\.old$')" 0 "no .old remains"
+[ ! -e "$s/ninit-shutdown" ]
+t_ok $? "ninit-shutdown is removed"
+dangling=$(find "$s" -xtype l -lname ninit-shutdown)
+t_is "$dangling" "" "no link to the removed ninit-shutdown is left behind"
+
+t_done
