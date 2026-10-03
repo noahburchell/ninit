@@ -1,0 +1,156 @@
+# restart: always and exits after readiness, README 3.7
+
+. "$top_srcdir/tests/lib.sh"
+. "$top_srcdir/tests/qemu/lib.sh"
+q_require
+
+q_new restart
+Q_TIMEOUT=90
+q_svc crashy <<'EOF'
+#%type: daemon
+#%notify: 3
+#%restart: always
+n=$(cat /run/crashy 2>/dev/null || echo 0)
+echo $((n + 1)) >/run/crashy
+echo "run $n output"
+echo >&3
+exec 3>&-
+sleep 0.05
+exit 2
+EOF
+q_svc settle <<'EOF'
+#%type: daemon
+#%restart: always
+n=$(cat /run/settle 2>/dev/null || echo 0)
+echo $((n + 1)) >/run/settle
+case $n in
+0) sleep 0.2 ;;
+1) sleep 10.5 ;;
+*) exec sleep 1000 ;;
+esac
+exit 1
+EOF
+q_svc unready <<'EOF'
+#%type: daemon
+#%notify: 3
+#%restart: always
+#%start-timeout: 300ms
+n=$(cat /run/unready 2>/dev/null || echo 0)
+echo $((n + 1)) >/run/unready
+if [ "$n" = 0 ]; then
+	echo >&3
+	exec 3>&-
+	sleep 0.1
+	exit 1
+fi
+exec sleep 1000
+EOF
+q_svc once <<'EOF'
+#%type: daemon
+#%notify: 3
+echo >&3
+exec 3>&-
+echo "once says goodbye"
+sleep 0.3
+exit 4
+EOF
+q_svc gate <<'EOF'
+#%start-timeout: 60s
+while [ ! -e /run/open ]; do sleep 0.05; done
+EOF
+q_svc waiter <<'EOF'
+#%depon: once, gate
+echo waiter ran
+EOF
+q_svc ord <<'EOF'
+#%type: daemon
+#%notify: 3
+#%deps: order
+echo >&3
+exec 3>&-
+sleep 0.3
+exit 5
+EOF
+q_svc ordwaiter <<'EOF'
+#%depon: ord, gate
+echo ordwaiter ran
+EOF
+q_svc base <<'EOF'
+#%type: daemon
+#%restart: always
+exec sleep 1000
+EOF
+q_svc leaf <<'EOF'
+#%type: daemon
+#%restart: always
+#%depon: base
+echo $$ >/run/leaf.pid
+exec sleep 1000
+EOF
+q_check <<'EOF'
+# backoff 100, 250, 500, 1000, 2000 then 5000
+crashy_delays() {
+	ring | sed -n 's/.*WARN > crashy: exited (exit 2) after [0-9]* ms up, restarting in \([0-9]*\) ms$/\1/p' |
+		tr '\n' ' '
+}
+seven() {
+	[ "$(crashy_delays | wc -w)" -ge 7 ]
+}
+wait_for 20000 seven
+is "$(crashy_delays | cut -d' ' -f1-7)" "100 250 500 1000 2000 5000 5000" \
+	"restart delays are 100, 250, 500, 1000, 2000, then 5000 ms"
+r=$(ring)
+like "$(grep -m1 'crashy: exited' <<<"$r")" 'WARN > crashy: exited \(exit 2\) after [0-9]+ ms up, restarting in 100 ms' \
+	"the first exit names the reason, the uptime and the delay"
+is "$(grep -c 'WARN > run 0 output' <<<"$r")" 1 "the output tail follows the first exit"
+is "$(grep -c 'WARN > run 1 output' <<<"$r")" 0 "but not later exits of the sequence"
+ninitctl stop crashy >/dev/null
+n=$(cat /run/crashy)
+sleep 6
+is "$(cat /run/crashy)" "$n" "a held daemon is not restarted"
+is "$(st crashy)" down "and stays down"
+
+# settle ran 0.2 s, then 10.5 s, the second exit starts the backoff over
+st_is settle up 30000
+check "settle ran three times" wait_for 15000 grep -qx 3 /run/settle
+r=$(ring)
+is "$(grep -c 'settle: exited (exit 1) after .* restarting in 100 ms' <<<"$r")" 2 \
+	"10 s up resets the delay to 100 ms"
+
+three() {
+	[ "$(cat /run/unready)" -ge 3 ]
+}
+check "a respawn that never becomes ready is retried" wait_for 10000 three
+log_has "unready: start timed out after 300 ms" "the respawn times out"
+log_has "unready: exited (timed out and was killed) after" "and is killed and scheduled again"
+r=$(ring)
+t1=$(awk '/unready: exited .*restarting in 1000 ms/ { gsub(/[][]/, "", $1); print $1; exit }' <<<"$r")
+t2=$(awk -v t="$t1" '/unready: start timed out/ { gsub(/[][]/, "", $1); if ($1 + 0 > t + 0) { print $1; exit } }' <<<"$r")
+gap=$(awk -v a="$t1" -v b="$t2" 'BEGIN { printf "%d", (b - a) * 1000 }')
+ok $((gap < 1200)) "a respawn that timed out waits its restart delay ($gap ms after 'restarting in 1000 ms')"
+
+log_has "WARN > once: exited (exit 4) after" "an exit without restart is reported"
+log_has "WARN > once says goodbye" "with the output tail"
+st_is once down 3000
+st_is waiter skipped 3000 "its pending dependents are skipped"
+log_has "WARN > once: 1 dependent service will not start" "and counted"
+log_has "WARN > ord: exited (exit 5)" "a deps order daemon exits"
+touch /run/open
+st_is gate up 3000
+st_is ordwaiter up 3000 "a deps order prerequisite that exits does not skip its dependents"
+is "$(st waiter)" skipped "a skipped dependent stays skipped"
+
+# a restart waits while an uptime prerequisite is down
+pid=$(cat /run/leaf.pid)
+ninitctl stop base >/dev/null
+kill "$pid"
+sleep 1
+is "$(st leaf)" down "a restart waits while a deps uptime prerequisite is down"
+ninitctl start base >/dev/null
+st_is leaf up 5000 "and is made once the prerequisite is up"
+ok $([ "$(cat /run/leaf.pid)" != "$pid" ]; echo $?) "with a new process"
+EOF
+q_boot
+q_import
+q_poweroff_ok
+t_done
