@@ -127,11 +127,12 @@ ctl_tests = \
 	tests/ctl/docs.test \
 	tests/ctl/limits.test \
 	tests/ctl/lock.test \
-	tests/ctl/tools.test
+	tests/ctl/tools.test \
+	tests/ctl/client.test
 
 qemu_tests =
 
-check_PROGRAMS = $(unit_tests) tests/helpers/czdump
+check_PROGRAMS = $(unit_tests) tests/helpers/czdump tests/helpers/fakectl
 
 unit_headers = tests/unit/tap.h tests/unit/gbuild.h tests/unit/logcap.h
 
@@ -146,6 +147,7 @@ tests_unit_t_fail_sulogin_CPPFLAGS = $(AM_CPPFLAGS) -DNINIT_SULOGIN=1 \
 tests_unit_t_shutdown_SOURCES = tests/unit/t-shutdown.c $(unit_headers)
 tests_unit_t_build_SOURCES = tests/unit/t-build.c src/ngraph.c $(unit_headers)
 tests_helpers_czdump_SOURCES = tests/helpers/czdump.c src/ngraph.c
+tests_helpers_fakectl_SOURCES = tests/helpers/fakectl.c
 
 TESTS = $(unit_tests) $(ctl_tests) $(qemu_tests)
 
