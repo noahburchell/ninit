@@ -1,6 +1,10 @@
 // prints a service file as ninitctl init stores it
 
-#include "../../ctl/build.c"
+#include "../../ctl/parser/parser.h"
+#include "../../ctl/util.h"
+
+#include <stdio.h>
+#include <string.h>
 
 int main(int argc, char **argv)
 {
