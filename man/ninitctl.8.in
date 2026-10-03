@@ -108,6 +108,8 @@ the directory
 .IP
 nothing is written if any step fails, and an existing
 .I file
+or
+.IB file .old
 that is not a graph is never replaced.
 the graph has mode 0644, less group or other read permission if any service file lacks it, less the umask.
 .B init
