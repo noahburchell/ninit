@@ -1211,9 +1211,9 @@ static void drain_notify(uint32_t i, unsigned chunks)
 				long long ms = now_ms() - r->started;
 
 				r->starting = 0;
+				log_done("%s (%lld ms)", ng_name(map, i), ms);
 				if (state[i] == NG_ST_RUNNING || state[i] == NG_ST_DONE)
 					complete(i);
-				log_done("%s (%lld ms)", ng_name(map, i), ms);
 			}
 			continue;
 		}
@@ -1260,9 +1260,9 @@ static void drain_exec(uint32_t i)
 		long long ms = now_ms() - r->started;
 
 		r->starting = 0;
+		log_done("%s (%lld ms)", ng_name(map, i), ms);
 		if (state[i] == NG_ST_RUNNING || state[i] == NG_ST_DONE)
 			complete(i);
-		log_done("%s (%lld ms)", ng_name(map, i), ms);
 	}
 }
 
@@ -1525,8 +1525,8 @@ static void child_exited(uint32_t i, int status)
 		if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
 			long long ms = now_ms() - r->started;
 
-			complete(i);
 			log_done("%s (%lld ms)", name, ms);
+			complete(i);
 			maybe_free(i);
 		} else {
 			service_failed(i, status);
