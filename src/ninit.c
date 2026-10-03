@@ -2809,6 +2809,7 @@ int main(int argc, char **argv)
 	uint32_t *pf_idx;
 	uint8_t *pf_kind;
 	int placeholder, degraded;
+	long long quiet_since;
 
 	if (getpid() != 1) {
 		log_err("ninit must run as pid 1");
@@ -2877,8 +2878,8 @@ int main(int argc, char **argv)
 		fail_emergency_shell("boot: out of memory building the poll set");
 	}
 
+	quiet_since = now_ms();
 	for (;;) {
-		static long long last_stall = -1;
 		long long wait, due;
 		nfds_t nfds = 1, k;
 		uint32_t start;
@@ -2990,14 +2991,13 @@ int main(int argc, char **argv)
 		if (rc == 0) {
 			long long t = now_ms();
 
-			if (last_stall < 0)
-				last_stall = t;
-			else if (t - last_stall >= STALL_MS) {
-				last_stall = t;
+			if (t - quiet_since >= STALL_MS) {
+				quiet_since = t;
 				report_stalls();
 			}
 			continue;
 		}
+		quiet_since = now_ms();
 
 		if (pfds[0].revents)
 			handle_signals();
