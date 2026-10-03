@@ -53,7 +53,11 @@ for f in "$top_srcdir"/tests/compact/*; do
 		t_diag "$(<"$T/syn")"
 
 	if [ -f "$f.want" ]; then
-		want=$(<"$f.want")
+		if [ -n "$t_strips" ]; then
+			want=$(<"$f.want")
+		else
+			want=$orig
+		fi
 		if [ "$stripped" = "$want" ]; then
 			t_ok 0 "$n: stored text is as specified"
 		else
@@ -77,8 +81,12 @@ X
 EOF
 run "$HELPERS/czdump" "$T/late" late
 t_is "$rc" 0 "a #% line after the header is not a directive"
-t_has "$err" "warning: ./late: '#%depon: nothing' follows a command, treating it as a comment" \
-	"a #% line after the header is warned about"
+if [ -n "$t_strips" ]; then
+	t_has "$err" "warning: ./late: '#%depon: nothing' follows a command, treating it as a comment" \
+		"a #% line after the header is warned about"
+else
+	t_unlike "$err" "follows a command" "a #% line after the header is not warned about in a script stored as written"
+fi
 t_unlike "$err" "in a string" "a #% line inside a quoted string is not warned about"
 t_unlike "$err" "in a here-document" "a #% line inside a here-document is not warned about"
 t_has "$out" "#%in a here-document" "a here-document keeps its #% line"

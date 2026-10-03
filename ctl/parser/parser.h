@@ -23,5 +23,8 @@ struct src {
 	struct strv depof;
 };
 
+extern int g_sh_lexed;
+
 size_t compact(char *s, size_t n, size_t code_off, const char *fname);
+int sh_lexed(const char *argv0);
 void parse_src(struct src *s, const char *fname, char *body, size_t len);

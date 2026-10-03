@@ -76,7 +76,8 @@ and
 .B del
 take
 .IP 2. 4
-parse every service file and strip the comments from its script.
+parse every service file and strip the comments from its script, when the interpreter lexes like sh, see
+.BR ninit.d (5).
 the first error ends the command
 .IP 3. 4
 check every stripped script with
@@ -120,7 +121,9 @@ warns about daemons that have dependents and no
 .BR notify ,
 about a missing or empty
 .IR /etc/locale.conf ,
-and about directives after the header
+about a
+.B #!\&
+line naming another interpreter, and about directives after the header
 .TP
 .B show
 verify a graph and print it as a table, followed by one of its longest dependency chains

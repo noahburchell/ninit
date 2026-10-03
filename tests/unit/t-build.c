@@ -402,10 +402,130 @@ static void test_compact_syntax(void)
 	free(orig);
 }
 
+struct src_arg {
+	const char *text;
+	struct src s;
+};
+
+static void call_parse(void *p)
+{
+	struct src_arg *a = p;
+	size_t len = strlen(a->text);
+	char *body = malloc(len + 1);
+
+	memcpy(body, a->text, len + 1);
+	memset(&a->s, 0, sizeof(a->s));
+	parse_src(&a->s, "svc", body, len);
+}
+
+// LINE with tab and cr spelled out, for test names
+static const char *shown(const char *line)
+{
+	static char buf[256];
+	size_t j = 0;
+
+	for (const char *p = line; *p && j + 3 < sizeof(buf); p++) {
+		if (*p == '\t' || *p == '\r') {
+			buf[j++] = '\\';
+			buf[j++] = *p == '\t' ? 't' : 'r';
+		} else {
+			buf[j++] = *p;
+		}
+	}
+	buf[j] = '\0';
+	return buf;
+}
+
+static void test_shebang(void)
+{
+	static const struct {
+		const char *line, *want;
+	} cases[] = {
+		{ "#!/bin/bash", "bash" },
+		{ "#!bash", "bash" },
+		{ "#! /usr/bin/env python3", "python3" },
+		{ "#!\t/usr/bin/perl -w", "perl" },
+		{ "#!/usr/bin/env -S bash -e", "bash" },
+		{ "#!/usr/bin/env -Sbash -e", "bash" },
+		{ "#!/usr/bin/env -S /usr/local/bin/zsh", "zsh" },
+		{ "#!/usr/bin/env -u FOO -i perl -w", "perl" },
+		{ "#!/usr/bin/env -C / lua", "lua" },
+		{ "#!/usr/bin/env A=b C=d zsh", "zsh" },
+		{ "#!/usr/bin/env -- awk -f", "awk" },
+		{ "#!/bin/bash\r", "bash" },
+		{ "#!/usr/bin/env", NULL },
+		{ "#!/usr/bin/env -i A=b", NULL },
+		{ "#!", NULL },
+		{ "#!  \t", NULL },
+	};
+	const char *zsh = "#!/usr/bin/zsh\n#%type: oneshot\n# note\nls (#i)readme   # case blind\n";
+	struct src_arg a;
+	char want[512];
+	int rc;
+
+	for (size_t k = 0; k < sizeof(cases) / sizeof(*cases); k++) {
+		size_t len;
+		const char *w = shebang_interp(cases[k].line, strlen(cases[k].line), &len);
+
+		if (!cases[k].want)
+			ok(!w, "'%s' names no interpreter", shown(cases[k].line));
+		else
+			ok(w && len == strlen(cases[k].want) && !memcmp(w, cases[k].want, len),
+			   "'%s' names %s", shown(cases[k].line), cases[k].want);
+	}
+
+	ok(sh_lexed("sh") && sh_lexed("bash") && sh_lexed("/bin/dash") && sh_lexed("ash") &&
+	   sh_lexed("ksh") && sh_lexed("mksh") && sh_lexed("oksh") && sh_lexed("loksh") &&
+	   sh_lexed("yash") && sh_lexed("posh"), "sh, bash, dash, ash and the ksh family lex like sh");
+	ok(!sh_lexed("zsh") && !sh_lexed("/usr/bin/zsh") && !sh_lexed("fish") && !sh_lexed("bash5") &&
+	   !sh_lexed("lua") && !sh_lexed(""), "zsh, fish and other names do not");
+
+	g_dir = "/d";
+	g_sh_lexed = 0;
+	a.text = zsh;
+	rc = capture(call_parse, &a);
+	ok(!rc && a.s.script && !strcmp(a.s.script, zsh),
+	   "for a shell that does not lex like sh the script is stored as written");
+	g_sh_lexed = 1;
+	rc = capture(call_parse, &a);
+	ok(!rc && a.s.script && !strstr(a.s.script, "(#i)"), "the sh stripper would cut the zsh glob flag");
+
+	a.text = "#!/usr/bin/python3\n:\n";
+	rc = capture(call_parse, &a);
+	snprintf(want, sizeof(want), "ninitctl: warning: /d/svc: '#!/usr/bin/python3' is ignored, "
+		 "the script runs under %s\n", NG_SHELL);
+	ok(!rc && !strcmp(errtext, want), "a #! line naming another interpreter is warned about");
+	a.text = "#!/usr/bin/env -S ninitctl stop foo  \r\n:\n";
+	rc = capture(call_parse, &a);
+	snprintf(want, sizeof(want), "ninitctl: warning: /d/svc: '#!/usr/bin/env -S ninitctl stop foo' "
+		 "is ignored, the script runs under %s\n", NG_SHELL);
+	ok(!rc && !strcmp(errtext, want), "the warning quotes the line without trailing blanks");
+	a.text = "#!" NG_SHELL "\n:\n";
+	rc = capture(call_parse, &a);
+	ok(!rc && !*errtext, "the configured shell draws no warning");
+	a.text = ":\n#!/usr/bin/python3\n";
+	rc = capture(call_parse, &a);
+	ok(!rc && !*errtext, "a #! line after the first line is an ordinary comment");
+
+	a.text = "#!/bin/sh\n:\n";
+	if (is_name("sh", 2, NG_SHELL) || is_name("sh", 2, NG_SHELL_ARGV0)) {
+		ok(1, "# SKIP the configured shell is sh");
+		ok(1, "# SKIP the configured shell is sh");
+	} else {
+		rc = capture(call_parse, &a);
+		ok(!rc && !*errtext, "#!/bin/sh draws no warning when the shell lexes like sh");
+		g_sh_lexed = 0;
+		rc = capture(call_parse, &a);
+		ok(!rc && strstr(errtext, "'#!/bin/sh' is ignored"), "but does under a shell that does not");
+		g_sh_lexed = 1;
+	}
+}
+
 int main(void)
 {
 	test_parse_ms();
 	test_helpers();
+	test_shebang();
 	test_compact_corpus();
 	test_compact_fuzz();
 	test_compact_syntax();

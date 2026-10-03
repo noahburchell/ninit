@@ -77,16 +77,37 @@ a
 .B #%
 line after the header is not a directive.
 .B ninitctl init
-warns about it, except inside a quoted string or a here-document, and treats it as a comment
+warns about it, except inside a quoted string, a here-document or a file stored as written, and treats it as a comment
 .PP
 a
 .B #!\&
 line is an ordinary comment.
 the file is executed by the configured interpreter whatever its first line and mode.
 .B ninitctl init
+warns when the first line is a
+.B #!\&
+line naming another interpreter, directly or through
+.BR env .
+.B #!/bin/sh
+draws no warning when the interpreter lexes like sh
+.PP
+.B ninitctl init
 stores the script without its comments, indentation or trailing blanks, and with runs of blanks collapsed to one space.
 text inside quotes and here-documents is stored as written, and so is the rest of the file after a construct it cannot follow exactly, such as a line continuation inside a word.
 a removed line stays as an empty line, so line numbers in interpreter messages match the file.
+the stripper follows sh lexing and runs only when the interpreter is run as
+.BR sh ,
+.BR bash ,
+.BR dash ,
+.BR ash ,
+.BR ksh ,
+.BR mksh ,
+.BR oksh ,
+.BR loksh ,
+.B yash
+or
+.BR posh .
+for any other interpreter, such as zsh, the file is stored as written.
 a file containing a NUL byte is rejected
 .PP
 a

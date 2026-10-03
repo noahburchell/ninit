@@ -52,7 +52,11 @@ fi
 t_is "$(sed -n 2p <<<"$got" | sed -E 's/, [0-9]+ bytes, crc [0-9a-f]+//')" \
 	"$(sed -n 2p <<<"$sample" | sed -E 's/, [0-9]+ bytes, crc [0-9a-f]+//')" \
 	"the counts in README 4.2 match docs/ninit.d"
-t_is "$(sed -n 2p <<<"$got")" "$(sed -n 2p <<<"$sample")" "the size and crc in README 4.2 match docs/ninit.d"
+if [ -n "$t_strips" ]; then
+	t_is "$(sed -n 2p <<<"$got")" "$(sed -n 2p <<<"$sample")" "the size and crc in README 4.2 match docs/ninit.d"
+else
+	t_skip "the size and crc in README 4.2 are of stripped scripts, $NINIT_SHELL_NAME scripts are stored as written"
+fi
 t_is "$(tail -n2 <<<"$got")" "$(tail -n2 <<<"$sample")" "the deepest chain in README 4.2 matches docs/ninit.d"
 
 # README 3.11 lists every example

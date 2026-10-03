@@ -19,6 +19,7 @@ int main(int argc, char **argv)
 	}
 	name = argc == 3 ? argv[2] : strrchr(argv[1], '/') ? strrchr(argv[1], '/') + 1 : argv[1];
 	g_dir = ".";
+	g_sh_lexed = sh_lexed(NG_SHELL_ARGV0);
 	buf = slurp(argv[1], &len);
 	parse_src(&s, name, buf, len);
 	if (s.script)

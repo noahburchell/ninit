@@ -131,6 +131,8 @@ every build is hardened with `_FORTIFY_SOURCE=2`, `-fstack-protector-strong`, `-
 
 there is no fallback to another shell. `--with-shell` also selects the interpreter `ninitctl init` uses for its syntax check. dash, for example, is `--with-shell=/bin/dash --with-shell-name=dash`
 
+the interpreter must run `-c SCRIPT NAME` with `$0` set to NAME, and check a script read from stdin with `-n`, as sh does. `configure` runs both and fails if either fails, which rules out lua, python and perl. it skips the check when cross compiling, when PATH is not executable on the build system, and when `--with-shell-name` is not the basename of PATH
+
 ### 2.4 make targets
 
 | target | effect |
@@ -170,11 +172,13 @@ a name must be 1 to 255 bytes and must not contain `/`, `,`, whitespace or contr
 
 a service file is a shell script. its header is every line before the first line that is neither blank nor a comment. a directive is a header line of the form `#%key: value`. whitespace around the key and the value is ignored
 
-the `#!` line is an ordinary comment. the interpreter is always the configured one, `/bin/bash` by default. the file does not need to be executable
+the `#!` line is an ordinary comment. the interpreter is always the configured one, `/bin/bash` by default. the file does not need to be executable. `ninitctl init` warns when the first line is a `#!` line naming another interpreter, directly or through `env`. `#!/bin/sh` draws no warning when the configured shell lexes like sh
 
 `ninitctl init` stores the script without its comments, indentation or trailing blanks, and with runs of blanks collapsed to one space. text inside quotes and here-documents is stored as written, and so is the rest of the file after a construct it cannot follow exactly, such as a line continuation inside a word. a removed line stays as an empty line, so line numbers in shell errors match the file
 
-a `#%` line after the header is not a directive. `ninitctl init` warns about it and treats it as a comment. lines inside a quoted string or a here-document are exempt from the warning
+the stripper follows sh lexing. it runs when `--with-shell-name` is `sh`, `bash`, `dash`, `ash`, `ksh`, `mksh`, `oksh`, `loksh`, `yash` or `posh`, the shells that lex like sh. for any other shell the file is stored as written. zsh, for one, reads `(#i)` as a glob flag where the stripper sees a comment
+
+a `#%` line after the header is not a directive. `ninitctl init` warns about it and treats it as a comment. lines inside a quoted string or a here-document are exempt from the warning, and so is a file stored as written
 
 a file containing a NUL byte is rejected
 

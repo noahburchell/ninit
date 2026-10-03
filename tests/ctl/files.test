@@ -114,7 +114,12 @@ put "$d" a ':\n'
 } >"$d/max"
 t_is "$(stat -c %s "$d/max")" 135167 "the largest service file is 135167 bytes"
 build "$d" --no-check
-t_is "$rc" 0 "a 135167 byte service file is read"
+if [ -n "$t_strips" ]; then
+	t_is "$rc" 0 "a 135167 byte service file is read"
+else
+	t_has "$err" "ninitctl: $d/max: script is 135167 bytes, the maximum is 131071" \
+		"a 135167 byte service file is read, stored as written it exceeds the script maximum"
+fi
 printf '#' >>"$d/max"
 build "$d" --no-check
 t_is "$rc" 1 "a 135168 byte service file fails the build"
@@ -130,7 +135,7 @@ t_is "$rc" 0 "a script of 131071 bytes without comments fits"
 printf ':' >>"$d/script"
 build "$d" --no-check
 t_is "$rc" 1 "a script of 131072 bytes without comments fails the build"
-t_has "$err" "ninitctl: $d/script: script is 131072 bytes without comments, the maximum is 131071" \
+t_has "$err" "ninitctl: $d/script: script is 131072 bytes${t_strips:+ without comments}, the maximum is 131071" \
 	"with its stored size and the maximum"
 rm -f "$d/script"
 
