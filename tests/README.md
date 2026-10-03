@@ -52,6 +52,8 @@ one test:
 make check TESTS=tests/qemu/boot.test NINIT_TEST_KERNEL=/path/to/vmlinuz
 ```
 
+a `ninit` built with a sanitizer, by `--enable-debug` or `-fsanitize` in `CFLAGS`, cannot run as pid 1 and skips the qemu tests
+
 each boot leaves `console.log` (the serial console without colour), `tap.log` (the guest's results), `initrd` and `init.err` in its scratch directory
 
 ### guest layout
