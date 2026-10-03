@@ -76,13 +76,17 @@ and
 .B del
 take
 .IP 2. 4
-parse every service file and strip the comments from its script, when the interpreter lexes like sh, see
+parse every service file, resolve the python, lua or perl interpreter a
+.B #!\&
+line names, and strip the comments from a shell script when the interpreter lexes like sh, see
 .BR ninit.d (5).
 the first error ends the command
 .IP 3. 4
-check every stripped script with
-.BR "@ninit_shell@ \-n" ,
-up to 32 in parallel, and report every syntax error.
+check every script, up to 32 in parallel, a shell script with
+.B "@ninit_shell@ \-n"
+and a python, lua or perl script as
+.BR ninit.d (5)
+describes, and report every syntax error, in service order.
 bash checks with
 .B extglob
 on

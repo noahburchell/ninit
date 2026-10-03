@@ -1,0 +1,213 @@
+# python, lua and perl services under ninit, README 3.2 and 3.8
+# the graph is built on the host, so each interpreter is copied into the guest at the path the build resolved
+
+. "$top_srcdir/tests/lib.sh"
+. "$top_srcdir/tests/qemu/lib.sh"
+q_require
+
+# where ninitctl init finds PROG through env
+interp() {
+	local d
+	for d in /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin; do
+		if [ -f "$d/$1" ] && [ -x "$d/$1" ]; then
+			echo "$(cd "$d" && pwd -P)/$1"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# the interpreter itself, not a wrapper such as python-exec
+PY=$(python3 -c 'import os, sys; print(os.path.realpath(sys.executable))' 2>/dev/null)
+LUA=$(interp lua)
+PERL=$(interp perl)
+[ -x "$PY" ] || PY=
+[ -n "$PY$LUA$PERL" ] || t_skip_all "none of python3, lua and perl is installed"
+
+q_new interp
+
+# python with the modules a -I -B -u startup loads, lib-dynload marks the platform library
+copy_python() {
+	local f
+	q_copy_elf "$Q/root" "$PY" || return 1
+	"$PY" -I -B -u -c 'import os, sys
+for m in list(sys.modules.values()):
+	f = getattr(m, "__file__", None)
+	if f:
+		print(f)
+print(os.path.join(sys.base_exec_prefix, sys.platlibdir, "python%d.%d" % sys.version_info[:2], "lib-dynload"))' |
+		while read -r f; do
+			case $f in
+			*/lib-dynload) mkdir -p "$Q/root$f" ;;
+			*) mkdir -p "$Q/root${f%/*}" && cp -L "$f" "$Q/root$f" ;;
+			esac
+		done
+}
+
+copy_perl() {
+	local f
+	q_copy_elf "$Q/root" "$PERL" || return 1
+	for f in $("$PERL" -e 'use strict; use warnings; print join("\n", values %INC), "\n"'); do
+		mkdir -p "$Q/root${f%/*}" && cp -L "$f" "$Q/root$f"
+	done
+}
+
+checks=
+if [ -n "$PY" ]; then
+	copy_python || t_bail "cannot copy $PY into the guest"
+	q_svc pyone <<EOF
+#!$PY
+#%type: oneshot
+# names, descriptors and a line of output
+import os, sys
+open('/run/py.name', 'w').write(' '.join(sys.argv))
+os.system('ls /proc/%d/fd | sort -n | tr "\\\\n" " " > /run/py.fds' % os.getpid())
+sys.path.insert(0, '/t/pymod')
+import helper
+print('py hello')
+EOF
+	q_file /t/pymod/helper.py <<'EOF'
+VALUE = 1
+EOF
+	q_svc pyd <<EOF
+#!$PY
+#%type: daemon
+#%notify: 5
+import os, time
+print('py tick')
+os.write(5, b'\\n')
+os.close(5)
+time.sleep(100000)
+EOF
+	q_svc pyexec <<EOF
+#!$PY
+#%type: daemon
+import time
+time.sleep(100000)
+EOF
+	q_svc pyfail <<EOF
+#!$PY
+# fails on line 4
+x = 1
+y = x / 0
+EOF
+	checks+='
+st_is pyone up 20000 "a python oneshot completes"
+is "$(cat /run/py.name)" "-c pyone" "python gets -c and the service name in sys.argv"
+is "$(cat /run/py.fds)" "0 1 2 " "a python oneshot has only 0, 1 and 2"
+log_has "NOTE > pyone: py hello" "python output is logged"
+check "python writes no __pycache__" test ! -e /t/pymod/__pycache__
+st_is pyd up 20000 "a python daemon is ready once it writes its notify fd"
+log_has "NOTE > pyd: py tick" "python output reaches the log while it runs"
+st_is pyexec up 20000 "a python daemon without notify is ready on exec"
+st_is pyfail failed 20000
+log_has "FAIL > pyfail: failed 1 time (exit 1)" "an uncaught python exception fails the service"
+log_has "line 4" "the traceback gives the line of the file"
+log_has "ZeroDivisionError" "and the exception"
+'
+fi
+
+if [ -n "$LUA" ]; then
+	q_copy_elf "$Q/root" "$LUA" || t_bail "cannot copy $LUA into the guest"
+	q_svc luone <<'EOF'
+#!/usr/bin/env lua
+#%type: oneshot
+local f = io.open('/run/lu.name', 'w')
+f:write(arg[0])
+f:close()
+os.execute('ls /proc/$PPID/fd | sort -n | tr "\\n" " " > /run/lu.fds')
+print('lu hello')
+EOF
+	q_svc lud <<'EOF'
+#!/usr/bin/env lua
+#%type: daemon
+#%notify: 5
+print('lu tick')
+local n = io.open('/proc/self/fd/5', 'w')
+n:write('\n')
+n:close()
+os.execute('exec sleep 100000')
+EOF
+	q_svc lufail <<'EOF'
+#!/usr/bin/env lua
+-- fails on line 3
+error('lu boom')
+EOF
+	checks+='
+st_is luone up 20000 "a lua oneshot completes"
+is "$(cat /run/lu.name)" "luone" "lua gets the service name in arg[0]"
+is "$(cat /run/lu.fds)" "0 1 2 " "a lua oneshot has only 0, 1 and 2"
+log_has "NOTE > luone: lu hello" "lua output is logged"
+st_is lud up 20000 "a lua daemon is ready once it writes its notify fd"
+log_has "NOTE > lud: lu tick" "lua output reaches the log while it runs"
+st_is lufail failed 20000
+log_has "FAIL > lufail: failed 1 time (exit 1)" "a lua error fails the service"
+log_has "(command line):3: lu boom" "the error gives the line of the file"
+'
+fi
+
+if [ -n "$PERL" ]; then
+	copy_perl || t_bail "cannot copy $PERL into the guest"
+	q_svc plone <<'EOF'
+#!/usr/bin/perl -w
+#%type: oneshot
+use strict;
+open(my $f, '>', '/run/pl.name') or die;
+print $f $0;
+close $f;
+# system() opens a pipe of its own, so perl lists its descriptors itself
+opendir(my $d, '/proc/self/fd') or die;
+my @fds = sort { $a <=> $b } grep { /^\d+$/ && $_ != fileno($d) } readdir($d);
+open(my $o, '>', '/run/pl.fds') or die;
+print $o join(' ', @fds), ' ';
+close $o;
+print "pl hello\n";
+EOF
+	q_svc pld <<'EOF'
+#!/usr/bin/perl -w
+#%type: daemon
+#%notify: 5
+use strict;
+print "pl tick\n";
+open(my $n, '>&=', 5) or die;
+print $n "\n";
+close $n;
+sleep 100000;
+EOF
+	q_svc plfail <<'EOF'
+#!/usr/bin/perl
+# fails on line 3
+die "pl boom";
+EOF
+	checks+='
+st_is plone up 20000 "a perl oneshot completes"
+is "$(cat /run/pl.name)" "plone" "perl gets the service name in \$0"
+is "$(cat /run/pl.fds)" "0 1 2 " "a perl oneshot has only 0, 1 and 2"
+log_has "NOTE > plone: pl hello" "perl output is logged"
+st_is pld up 20000 "a perl daemon is ready once it writes its notify fd"
+log_has "NOTE > pld: pl tick" "perl output reaches the log while it runs"
+st_is plfail failed 20000
+log_has "FAIL > plfail: failed 1 time (exit" "a perl die fails the service"
+log_has "pl boom at -e line 3." "the message gives the line of the file"
+'
+fi
+
+# an interpreter the build system has and the guest lacks
+if [ -n "$PY" ]; then
+	mkdir -p "$T/gone"
+	ln -s "$PY" "$T/gone/python3"
+	q_svc gone <<EOF
+#!$T/gone/python3
+print(1)
+EOF
+	checks+='
+st_is gone failed 20000
+log_has "ninit: exec '"$T"'/gone/python3: errno 2" "an interpreter missing at boot is named"
+'
+fi
+
+q_check <<<"$checks"
+q_boot
+q_import
+q_poweroff_ok
+t_done

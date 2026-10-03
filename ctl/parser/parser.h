@@ -24,6 +24,7 @@ struct src {
 	struct strv depof;
 	const struct lang *lang;
 	const char *interp;
+	struct strv iargs;
 	int stripped;
 	struct strv exec_pre;
 	struct strv exec_suf;

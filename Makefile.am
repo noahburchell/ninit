@@ -63,6 +63,9 @@ ninitctl_parser = \
 	ctl/parser/directives.c \
 	ctl/parser/lang.c \
 	ctl/parser/shell.c \
+	ctl/parser/python.c \
+	ctl/parser/lua.c \
+	ctl/parser/perl.c \
 	ctl/parser/lang.h \
 	ctl/parser/parser.h \
 	ctl/util.h
@@ -169,6 +172,7 @@ ctl_tests = \
 	tests/ctl/directives.test \
 	tests/ctl/graph.test \
 	tests/ctl/files.test \
+	tests/ctl/interp.test \
 	tests/ctl/show.test \
 	tests/ctl/adddel.test \
 	tests/ctl/usage.test \
@@ -193,7 +197,8 @@ qemu_tests = \
 	tests/qemu/select.test \
 	tests/qemu/cgroup.test \
 	tests/qemu/scale.test \
-	tests/qemu/console.test
+	tests/qemu/console.test \
+	tests/qemu/interp.test
 
 check_PROGRAMS = $(unit_tests) tests/helpers/czdump tests/helpers/nctl-raw tests/helpers/fakectl
 

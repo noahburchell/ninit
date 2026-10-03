@@ -1,0 +1,113 @@
+# python, lua and perl services selected by #!, README 3.2 and 3.8
+
+. "$top_srcdir/tests/lib.sh"
+
+# where ninitctl init finds PROG through env, the PATH services run with and the directory canonical
+interp() {
+	local d
+	for d in /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin; do
+		if [ -f "$d/$1" ] && [ -x "$d/$1" ]; then
+			echo "$(cd "$d" && pwd -P)/$1"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# builds DIR, show -v lands in $out
+build() {
+	run "$NINITCTL" init -d "$1" -o "$1.g" "${@:2}"
+	init_rc=$rc init_err=$err
+	[ "$rc" = 0 ] && run "$NINITCTL" show -v "$1.g"
+}
+
+# the lines show -v prints for service NAME
+svc_lines() {
+	awk -v n="$1" '$1 ~ /^[0-9]+$/ { on = ($2 == n); next } on && /^     \| / { sub(/^     \| /, ""); print }' <<<"$out"
+}
+
+lang() {
+	local name=$1 prog=$2 want_runs=$3 good=$4 bad=$5 bad_line=$6 tail=$7 d path
+	path=$(interp "$prog") || {
+		t_skip "$name: $prog is not installed"
+		t_skip "$name: show -v names the interpreter"
+		t_skip "$name: the header is blanked, the body stored as written"
+		t_skip "$name: a comment after the code is kept and not warned about"
+		t_skip "$name: a syntax error fails the build"
+		t_skip "$name: with the line of the file"
+		return
+	}
+	d=$T/$name
+	mkdir -p "$d"
+	printf '#!/usr/bin/env %s\n#%%type: oneshot\n# about it\n\n%s\n%s\n' "$prog" "$good" "$tail" >"$d/svc"
+	build "$d"
+	t_is "$init_rc" 0 "$name: a #! line through env selects it and the script checks" || t_diag "$init_err"
+	t_is "$(svc_lines svc | sed -n 2p)" "runs $path ${want_runs/@@/svc}" "$name: show -v names the interpreter"
+	t_is "$(svc_lines svc | sed -n '3,$p')" "$good"$'\n'"$tail" "$name: the header is blanked, the body stored as written"
+	t_unlike "$init_err" "follows a command" "$name: a comment after the code is kept and not warned about"
+	printf '#!%s\n# head\n\n%s\n' "$path" "$bad" >"$d/svc"
+	build "$d"
+	t_is "$init_rc" 1 "$name: a syntax error fails the build"
+	t_like "$init_err" "ninitctl: $d/svc: .*[^0-9]$bad_line[^0-9]" "$name: with the line of the file" || t_diag "$init_err"
+}
+
+lang python python3 "-I -B -u -c SCRIPT @@" 'import sys
+print(sys.argv)' 'if True
+    pass' 4 '#%start-tries: 9 is a comment here'
+lang lua lua "-e 'io.stdout:setvbuf(\"line\") arg = { [0] = \"@@\" }' -e SCRIPT" 'print(arg[0])' 'local x = = 1' 4 \
+	'-- # is no comment in lua, only the header is blanked'
+lang perl perl "-e '\$| = 1; \$0 = '\\''@@'\\'';' -e '#line 1' -e SCRIPT" 'use strict;
+print "$0\n";' 'my $x = ;' 4 '#%start-tries: 9 is a comment here'
+
+d=$T/args
+mkdir -p "$d"
+if py=$(interp python3); then
+	printf '#!%s -X dev\nprint(1)\n' "$py" >"$d/a"
+	build "$d"
+	t_is "$(svc_lines a | sed -n 2p)" "runs $py -I -B -u -X dev -c SCRIPT a" "#! arguments come before -c, split as env -S splits"
+	printf '#!/usr/bin/env -S python3 -X dev\nprint(1)\n' >"$d/a"
+	build "$d"
+	t_is "$(svc_lines a | sed -n 2p)" "runs $py -I -B -u -X dev -c SCRIPT a" "and after the program env -S runs"
+	printf '#!/usr/bin/env python3\n#%%type: target\n' >"$d/a"
+	build "$d"
+	t_unlike "$(svc_lines a)" "runs " "a target never names an interpreter"
+else
+	t_skip "#! arguments come before -c, python3 is not installed"
+	t_skip "and after the program env -S runs, python3 is not installed"
+	t_skip "a target never names an interpreter, python3 is not installed"
+fi
+
+d=$T/missing
+mkdir -p "$d"
+printf '#!/usr/bin/python9.99\nprint(1)\n' >"$d/a"
+build "$d"
+t_is "$init_rc" 1 "a missing interpreter fails the build"
+t_has "$init_err" "ninitctl: $d/a: /usr/bin/python9.99: No such file or directory" "and names it"
+printf '#!/usr/bin/env lua9.99\nprint(1)\n' >"$d/a"
+build "$d"
+t_is "$init_rc" 1 "an interpreter env cannot find fails the build"
+t_has "$init_err" "ninitctl: $d/a: 'lua9.99' is not in /usr/local/sbin:" "and says where it looked"
+printf '#!perl/perl\nprint 1;\n' >"$d/a"
+build "$d"
+t_has "$init_err" "ninitctl: $d/a: 'perl/perl' is not an absolute path" "a relative interpreter path fails the build"
+
+d=$T/other
+mkdir -p "$d"
+printf '#!/usr/bin/ruby\nputs 1\n' >"$d/a"
+build "$d" --no-check
+t_has "$init_err" "warning: $d/a: '#!/usr/bin/ruby' is ignored, the script runs under $NINIT_SHELL" \
+	"any other interpreter still runs under the shell, with a warning"
+t_unlike "$(svc_lines a)" "runs " "and names no interpreter"
+
+d=$T/mixed
+mkdir -p "$d"
+if py=$(interp python3); then
+	printf '#!%s\nif True\n' "$py" >"$d/a"
+	printf 'fi\n' >"$d/b"
+	build "$d"
+	t_has "$init_err" "ninitctl: 2 service scripts failed the syntax check" "failures under two interpreters name neither"
+else
+	t_skip "failures under two interpreters name neither, python3 is not installed"
+fi
+
+t_done

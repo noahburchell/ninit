@@ -73,11 +73,11 @@ accept "a #! line and blank lines in the header" $'#!/bin/bash\n\n#%type: daemon
 t_like "$row" '^a +daemon ' "directives after a #! line and blank lines are read"
 
 ignored="is ignored, the script runs under $NINIT_SHELL"
-accept "a #! line naming python" $'#!/usr/bin/python3\n:\n'
-t_has "$init_err" "warning: $T/a$n_case/a: '#!/usr/bin/python3' $ignored" \
+accept "a #! line naming ruby" $'#!/usr/bin/ruby\n:\n'
+t_has "$init_err" "warning: $T/a$n_case/a: '#!/usr/bin/ruby' $ignored" \
 	"a #! line naming another interpreter is warned about"
-accept "a #! line through env -S" $'#!/usr/bin/env -S perl -w\n:\n'
-t_has "$init_err" "warning: $T/a$n_case/a: '#!/usr/bin/env -S perl -w' $ignored" \
+accept "a #! line through env -S" $'#!/usr/bin/env -S node --no-warnings\n:\n'
+t_has "$init_err" "warning: $T/a$n_case/a: '#!/usr/bin/env -S node --no-warnings' $ignored" \
 	"env and its options are looked through"
 accept "a #! line naming ninitctl" $'#!/usr/sbin/ninitctl stop foo\n:\n'
 t_has "$init_err" "warning: $T/a$n_case/a: '#!/usr/sbin/ninitctl stop foo' $ignored" \
@@ -86,7 +86,7 @@ accept "a #! line naming the shell" "#!$NINIT_SHELL"$'\n:\n'
 t_unlike "$init_err" "is ignored" "the configured shell draws no warning"
 accept "a #! line naming the shell through env" "#!/usr/bin/env -S $NINIT_SHELL_NAME -e"$'\n:\n'
 t_unlike "$init_err" "is ignored" "nor does it through env"
-accept "a #! line after the first" $':\n#!/usr/bin/python3\n'
+accept "a #! line after the first" $':\n#!/usr/bin/ruby\n'
 t_unlike "$init_err" "is ignored" "a #! after the first line is an ordinary comment"
 accept "#!/bin/sh" $'#!/bin/sh\n:\n'
 case $NINIT_SHELL_NAME in

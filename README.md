@@ -51,6 +51,7 @@ all three are installed into sbindir. the manual pages `ninit(8)`, `ninitctl(8)`
 - a c23 compiler, gcc 14 or later or clang 18 or later, and make
 - bash at `/bin/bash`, or the interpreter chosen with `--with-shell`, when the first service starts
 - `/bin/sh` for the emergency shell
+- python, lua or perl only for a service file whose `#!` line names it, see [3.12](#312-python-lua-and-perl)
 - cgroup v2 for service containment. forking directly into a cgroup uses `CLONE_INTO_CGROUP` (linux 5.7). SIGKILL is delivered through `cgroup.kill` (linux 5.14). without cgroup v2 services are contained by process group only
 - optional: `hwclock` at shutdown, `sulogin` for `--with-sulogin`, `dbus-send` and elogind for `ninit-shutdown` run without root
 
@@ -172,7 +173,7 @@ a name must be 1 to 255 bytes and must not contain `/`, `,`, whitespace or contr
 
 a service file is a shell script. its header is every line before the first line that is neither blank nor a comment. a directive is a header line of the form `#%key: value`. whitespace around the key and the value is ignored
 
-the `#!` line is an ordinary comment. the interpreter is always the configured one, `/bin/bash` by default. the file does not need to be executable. `ninitctl init` warns when the first line is a `#!` line naming another interpreter, directly or through `env`. `#!/bin/sh` draws no warning when the configured shell lexes like sh
+the `#!` line is an ordinary comment unless it names python, lua or perl, see [3.12](#312-python-lua-and-perl). otherwise the interpreter is the configured one, `/bin/bash` by default. the file does not need to be executable. `ninitctl init` warns when the first line is a `#!` line naming any other interpreter, directly or through `env`. `#!/bin/sh` draws no warning when the configured shell lexes like sh
 
 `ninitctl init` stores the script without its comments, indentation or trailing blanks, and with runs of blanks collapsed to one space. text inside quotes and here-documents is stored as written, and so is the rest of the file after a construct it cannot follow exactly, such as a line continuation inside a word. a removed line stays as an empty line, so line numbers in shell errors match the file
 
@@ -291,7 +292,7 @@ when a daemon without `restart` exits after being ready, the console shows `NAME
 
 ### 3.8 execution environment
 
-each start runs `/bin/bash -c SCRIPT NAME`, where SCRIPT is the file as stored by `ninitctl init`, see [3.2](#32-file-format), so `$0` is the service name. the process has:
+each start runs `/bin/bash -c SCRIPT NAME`, where SCRIPT is the file as stored by `ninitctl init`, see [3.2](#32-file-format), so `$0` is the service name. a python, lua or perl service runs as in [3.12](#312-python-lua-and-perl) instead, with the same process attributes. the process has:
 
 - a new session and no controlling terminal
 - the cgroup `/sys/fs/cgroup/ninit.services/svc-N`, where N is the service's index in the graph, the `#` column of `ninitctl show`
@@ -384,6 +385,36 @@ ninitctl add udev-settle
 ninitctl init -n
 ```
 
+### 3.12 python, lua and perl
+
+the configured shell is the language of service files. python, lua and perl are an extra for the few services better written in one of them. a file whose `#!` line names one of these interpreters runs under it instead of the shell:
+
+| language | `#!` interpreter |
+|---|---|
+| python | `python`, `python3`, `python3.N` |
+| lua | `lua`, `luaN.N`, `luajit` and its versioned names |
+| perl | `perl`, `perlN.N` |
+
+the interpreter is named directly, as in `#!/usr/bin/python3`, or through `env`, as in `#!/usr/bin/env lua`. `ninitctl init` resolves it once, when the graph is built, and the graph holds its absolute path. ninit never runs `env`. a path in the `#!` line is kept as written. `env` is resolved through the `PATH` services run with, see [3.8](#38-execution-environment), with the directory made canonical and the program keeping its own name, so `env python3` is `/usr/bin/python3` where `/usr/sbin` links to `/usr/bin`. an interpreter that does not exist or is not executable fails the build. the words after the interpreter are separate arguments, as `env -S` splits them, and come before the script
+
+the header, `#!` line and directives included, is stored as empty lines and the rest of the file as written. nothing is stripped and a `#%` line after the header draws no warning. line numbers in interpreter messages match the file. in lua a `#` line is valid only in the header
+
+each start runs:
+
+| language | command | the service name |
+|---|---|---|
+| python | `INTERP -I -B -u ARGS -c SCRIPT NAME` | `sys.argv` is `['-c', NAME]` |
+| lua | `INTERP ARGS -e 'io.stdout:setvbuf("line") arg = { [0] = "NAME" }' -e SCRIPT` | `arg[0]` |
+| perl | `INTERP ARGS -e '$\| = 1; $0 = '\''NAME'\'';' -e '#line 1' -e SCRIPT` | `$0` |
+
+`-I` keeps `/`, the working directory, off `sys.path` and ignores the `PYTHON*` variables. `-B` keeps python from writing `__pycache__` directories as root. `-u`, the lua line buffering and perl's `$|` hand output to ninit as it is written, so the log keeps pace with the service and a killed service leaves its last lines in the output tail. perl's `#line 1` restores the line numbers the first `-e` shifted. stdin is `/dev/null` and `@ARGV` is empty, so perl's `<>` reads nothing
+
+everything else in [3.8](#38-execution-environment) applies: the environment, the descriptors, the notify fd and the cgroup. a daemon without `notify` is ready once its interpreter has been executed
+
+the syntax check of [4.1](#41-init) compiles python through `compile()` and lua through `load()`, neither runs the script. perl has no check that runs nothing, `perl -c` runs `BEGIN` blocks and `use` statements as it compiles. `--no-check` skips every check
+
+the interpreter must exist at its path when the service starts. with `/usr` on its own filesystem, a service whose interpreter is under `/usr` needs to depend on the service that mounts it. when the exec fails the service prints `ninit: exec PATH: errno N` and fails
+
 ## 4 compiling the graph
 
 `ninitctl` has configuration commands, described here, and runtime commands, described in [6](#6-runtime-control). `ninitctl help` prints a summary of both
@@ -404,8 +435,8 @@ ninitctl init [-d DIR] [-o FILE] [-n] [--no-check]
 `init` performs, in order:
 
 1. take an exclusive `flock` on DIR. `add` and `del` take the same lock
-2. read and parse every service file, see [3](#3-service-files), and strip the comments from its script. the first error stops the build
-3. check every stripped script with `bash -n`, up to 32 in parallel. bash runs the check with `extglob` on, since `-n` never runs the `shopt` that would turn it on. every syntax error is reported with its service name, and any error stops the build
+2. read and parse every service file, see [3](#3-service-files), resolve the interpreter a `#!` line names, see [3.12](#312-python-lua-and-perl), and strip the comments from a shell script. the first error stops the build
+3. check every script, up to 32 in parallel, a shell script with `bash -n` and the others as in [3.12](#312-python-lua-and-perl). bash runs the check with `extglob` on, since `-n` never runs the `shopt` that would turn it on. every syntax error is reported with its service name and the failures print in service order. any error stops the build
 4. resolve `depon` and `depof`, merge duplicate edges, reject cycles
 5. order the services topologically. among the services ready to be placed, roots come first, then the service with the longest chain of dependents, then the first by name
 6. resolve the default `onfail` of each service and count its dependents
@@ -812,6 +843,8 @@ an interpreter argv is two lists of NUL-terminated strings, each ended by an emp
 | `start-delay` | 1 ms to 65535 ms |
 | `start-tries` | 1 to 250 |
 | `notify` | fd 3 to 255 |
+| interpreter path from a `#!` line | 255 bytes |
+| interpreter arguments, those ninit adds included | 16, of 4096 bytes each |
 | output kept per service | 1024 bytes |
 | service output line | 256 bytes, longer lines are split |
 | log ring | 128 KiB |

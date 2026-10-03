@@ -81,12 +81,13 @@ warns about it, except inside a quoted string, a here-document or a file stored 
 .PP
 a
 .B #!\&
-line is an ordinary comment.
-the file is executed by the configured interpreter whatever its first line and mode.
+line is an ordinary comment unless it names python, lua or perl, see
+.BR "PYTHON, LUA AND PERL" .
+otherwise the file is executed by the configured interpreter whatever its first line and mode.
 .B ninitctl init
 warns when the first line is a
 .B #!\&
-line naming another interpreter, directly or through
+line naming any other interpreter, directly or through
 .BR env .
 .B #!/bin/sh
 draws no warning when the interpreter lexes like sh
@@ -305,6 +306,9 @@ without its comments, and
 .I name
 is the service name, available as
 .BR $0 .
+a python, lua or perl service is executed as in
+.B "PYTHON, LUA AND PERL"
+instead.
 the process has:
 .IP \(bu 2
 a new session and no controlling terminal
@@ -376,6 +380,100 @@ and
 lines beginning with
 .B #
 are comments and a later assignment overrides an earlier one
+.SH PYTHON, LUA AND PERL
+the configured interpreter is the language of service files.
+python, lua and perl are an extra for the few services better written in one of them.
+a file whose
+.B #!\&
+line names
+.BR python ,
+.BR python3 ,
+.BR python3. N,
+.BR lua ,
+.BR lua N . N,
+.B luajit
+or a versioned
+.BR luajit ,
+.B perl
+or
+.BR perl N . N
+runs under that interpreter.
+it is named directly or through
+.BR env .
+.B ninitctl init
+resolves it when the graph is built and stores its absolute path, ninit never runs
+.BR env .
+.B env
+is resolved through the
+.B PATH
+services run with, with the directory made canonical and the program keeping its own name.
+a missing or non-executable interpreter fails the build.
+the words after the interpreter are separate arguments, as
+.B env \-S
+splits them, and come before the script
+.PP
+the header, the
+.B #!\&
+line and directives included, is stored as empty lines and the rest of the file as written.
+nothing is stripped and line numbers in interpreter messages match the file.
+in lua a
+.B #
+line is valid only in the header.
+each start executes, with
+.I args
+from the
+.B #!\&
+line:
+.PP
+.RS
+.nf
+\fIinterp\fR \-I \-B \-u \fIargs\fR \-c \fIscript name\fR
+\fIinterp args\fR \-e \(aqio.stdout:setvbuf("line") arg = { [0] = "\fIname\fR" }\(aq \-e \fIscript\fR
+\fIinterp args\fR \-e \(aq$| = 1; $0 = \(aq\(rs\(aq\(aq\fIname\fR\(aq\(rs\(aq\(aq;\(aq \-e \(aq#line 1\(aq \-e \fIscript\fR
+.fi
+.RE
+.PP
+for python, lua and perl.
+python sees the name in
+.BR sys.argv[1] ,
+lua in
+.B arg[0]
+and perl in
+.BR $0 .
+.B \-I
+keeps
+.IR / ,
+the working directory, off
+.B sys.path
+and ignores the
+.B PYTHON*
+variables,
+.B \-B
+keeps python from writing
+.I __pycache__
+directories as root.
+.BR \-u ,
+the lua line buffering and perl's
+.B $|
+hand output to ninit as it is written.
+the environment, descriptors, notify fd and readiness are those of
+.BR "EXECUTION ENVIRONMENT" .
+.PP
+the syntax check of
+.B ninitctl init
+compiles python with
+.B compile()
+and lua with
+.BR load() ,
+neither runs the script.
+.B perl \-c
+runs
+.B BEGIN
+blocks and
+.B use
+statements as it compiles.
+the interpreter must exist at its path when the service starts, a failed exec prints
+.BI "ninit: exec " path ": errno " n
 .SH OUTPUT
 each line a service writes is logged as a
 .B NOTE
@@ -493,6 +591,8 @@ start-timeout, stop-timeout|24 h
 start-delay|65535 ms
 start-tries|250
 notify|3 to 255
+interpreter path|255 bytes
+interpreter arguments|16 of 4096 bytes
 retained output|1024 bytes
 /etc/locale.conf|8191 bytes
 .TE
