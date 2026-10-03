@@ -221,6 +221,10 @@ int main(int argc, char **argv)
 	long when = 0;
 	int is_shutdown, is_telinit, force = 0, have_when = 0, k;
 
+	// another init gets its own tool with every argument, whatever ninit would make of them
+	if (pid1_is_ninit() == 0)
+		fallback(me, argv);
+
 	if (!strcmp(me, "reboot"))
 		act = ACT_REBOOT;
 	else if (!strcmp(me, "poweroff"))
@@ -293,9 +297,6 @@ int main(int argc, char **argv)
 		usage(me, stderr);
 		return 1;
 	}
-
-	if (pid1_is_ninit() == 0)
-		fallback(me, argv);
 
 	if (force) {
 		sync();
