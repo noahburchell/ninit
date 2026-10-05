@@ -887,7 +887,7 @@ an interpreter argv is two lists of NUL-terminated strings, each ended by an emp
 
 ## contact
 
-ninit@nburch.org
+<ninit@nburch.org>
 
 ## license
 
