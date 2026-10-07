@@ -136,6 +136,9 @@ is "$(nctl -e 'status d\r\n')" $'. d up wanted pid '"$(pid_of d)"$'\n+ d' "a cr 
 is "$(nctl 'status    d')" $'. d up wanted pid '"$(pid_of d)"$'\n+ d' "blanks before the name are ignored"
 is "$(nctl frob)" "- unknown command 'frob'" "an unknown verb is refused"
 is "$(nctl 'log foo')" "- unknown log mode 'foo'" "an unknown log mode is refused"
+like "$(nctl 'log time')" $'^\\. [0-9]+ ms\n\\+ boot time$' "log time answers with the boot time"
+boot=$(ninitctl log | sed -n 's/.*NOTE > boot: [0-9]* of [0-9]* services up in \([0-9]* ms\)$/\1/p')
+is "$(ninitctl log -t)" "$boot" "ninitctl log -t prints the time of the boot summary"
 is "$(nctl start)" "- start needs a service name" "start without a name is refused"
 is "$(nctl reload)" "- the running graph cannot be replaced, reboot to load a new one" "reload is refused"
 long=$(printf 'x%.0s' {1..1100})

@@ -202,6 +202,16 @@ static void log_print(const char *l, int errors, int tty)
 
 	if (errors && (!t || (memcmp(t, "WARN", 4) && memcmp(t, "FAIL", 4))))
 		return;
+	if (tty && !t && !strncmp(l, "Welcome to ", 11)) {
+		const char *e = NULL, *q = l + 11;
+
+		while ((q = strstr(q, "! (")))
+			e = q++;
+		if (e) {
+			printf("Welcome to \033[1m%.*s\033[0m%s\n", (int)(e - l - 11), l + 11, e);
+			return;
+		}
+	}
 	if (tty && t)
 		for (k = 0; k < sizeof(col) / sizeof(*col); k++)
 			if (!memcmp(t, col[k][0], 4)) {
@@ -258,7 +268,7 @@ int cmd_ctl(const char *verb, int argc, char **argv)
 	size_t held = 0, at;
 	int fd, k, endopts = 0, rc = NCTL_EXIT_USAGE, seen_end = 0;
 	int tabular = !strcmp(verb, "status"), log = !strcmp(verb, "log");
-	int errors = 0, watch = 0, tty = isatty(STDOUT_FILENO);
+	int errors = 0, watch = 0, boot = 0, tty = isatty(STDOUT_FILENO);
 	ssize_t n;
 
 	for (k = 0; k < argc; k++) {
@@ -272,6 +282,10 @@ int cmd_ctl(const char *verb, int argc, char **argv)
 		}
 		if (!endopts && log && (!strcmp(argv[k], "-w") || !strcmp(argv[k], "--watch"))) {
 			watch = 1;
+			continue;
+		}
+		if (!endopts && log && (!strcmp(argv[k], "-t") || !strcmp(argv[k], "--time"))) {
+			boot = 1;
 			continue;
 		}
 		if (!endopts && argv[k][0] == '-' && argv[k][1]) {
@@ -296,8 +310,14 @@ int cmd_ctl(const char *verb, int argc, char **argv)
 		return NCTL_EXIT_USAGE;
 	}
 
+	if (boot && (errors || watch)) {
+		fprintf(stderr, "ninitctl: log: '-t' excludes '-e' and '-w'\n");
+		return NCTL_EXIT_USAGE;
+	}
 	if (watch)
 		name = "watch";
+	if (boot)
+		name = "time";
 	at = (size_t)snprintf(line, sizeof(line), "%s%s%s\n", verb, name ? " " : "",
 			      name ? name : "");
 	if (at >= sizeof(line)) {
@@ -327,7 +347,9 @@ int cmd_ctl(const char *verb, int argc, char **argv)
 		while ((nl = memchr(p, '\n', held - (size_t)(p - buf))) != NULL) {
 			*nl = '\0';
 			if (NCTL_IS_DATA(p)) {
-				if (log)
+				if (boot)
+					printf("%s\n", p + NCTL_TAG_LEN);
+				else if (log)
 					log_print(p + NCTL_TAG_LEN, errors, tty);
 				else if (!tabular || !stab_add(&tab, p + NCTL_TAG_LEN))
 					printf("%s\n", p + NCTL_TAG_LEN);

@@ -34,6 +34,7 @@ ninitctl \- compile, inspect and control the ninit service graph
 .B ninitctl log
 .RB [ \-e ]
 .RB [ \-w ]
+.RB [ \-t ]
 .br
 .BR "ninitctl start" | stop | restart
 .I name
@@ -268,6 +269,17 @@ lines overwritten before they are read are replaced by one
 .B WARN
 line,
 .BI "log: skipped " n " bytes"
+.TP
+.BR \-t ", " \-\-time
+with
+.BR log ,
+print only the boot time,
+.IB t " ms"
+from the boot summary.
+it fails until startup has ended, and excludes
+.B \-e
+and
+.B \-w
 .TP
 .BR \-h ", " \-\-help
 print a summary of the commands

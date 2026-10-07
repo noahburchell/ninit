@@ -15,7 +15,7 @@ for h in help -h --help; do
 done
 usage=$out
 for line in "init [-d DIR] [-o FILE] [-n] [--no-check]" "show [-f FILE] [-v]" \
-	"add [-d DIR] [--] NAME..." "del [-d DIR] [--] NAME..." "status [NAME]" "log [-e] [-w]" \
+	"add [-d DIR] [--] NAME..." "del [-d DIR] [--] NAME..." "status [NAME]" "log [-e] [-w] [-t]" \
 	"start NAME" "stop NAME" "restart NAME" "resume" \
 	"Runtime commands (via /run/ninit/control, root only):" \
 	"DIR defaults to $NINIT_SVCDIR, FILE to $NINIT_SVCDIR/depgraph."; do
@@ -70,6 +70,10 @@ run "$NINITCTL" status -e
 t_is "$rc$err" "2ninitctl: status: unknown option '-e'" "-e belongs to log only"
 run "$NINITCTL" log -x
 t_is "$rc$err" "2ninitctl: log: unknown option '-x'" "log with an unknown option"
+for o in -w -e; do
+	run "$NINITCTL" log -t "$o"
+	t_is "$rc$err" "2ninitctl: log: '-t' excludes '-e' and '-w'" "log -t with $o"
+done
 run "$NINITCTL" start "$(head -c 5000 /dev/zero | tr '\0' n)"
 t_is "$rc$err" "2ninitctl: start: name is too long" "a name that does not fit a request"
 

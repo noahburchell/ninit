@@ -43,7 +43,7 @@ uint32_t drain_left;
 uint32_t drain_rotor;
 int shutting_down;
 int null_fd = -1;
-static int boot_reported;
+long long boot_ms = -1;
 static long long boot_t0;
 
 long long now_ms(void)
@@ -58,16 +58,16 @@ static void check_boot_done(void)
 {
 	uint32_t k;
 
-	if (boot_reported || shutting_down || !n_svc || n_active)
+	if (boot_ms >= 0 || shutting_down || !n_svc || n_active)
 		return;
 	for (k = 0; k < n_live; k++)
 		if (runs[live[k]].restart_at || runs[live[k]].stale_pid)
 			return;
-	boot_reported = 1;
+	boot_ms = now_ms() - boot_t0;
 	fail_summary(map, state);
 	if (n_pending)
 		log_warn("boot: %u service%s never started", n_pending, n_pending == 1 ? "" : "s");
-	log_note("boot: %u of %u services up in %lld ms", n_done, n_svc, now_ms() - boot_t0);
+	log_note("boot: %u of %u services up in %lld ms", n_done, n_svc, boot_ms);
 }
 
 static void start_graph(void)
@@ -212,6 +212,7 @@ int main(int argc, char **argv)
 		fire_restarts();
 		check_timeouts();
 		ctl_tick();
+		log_tick();
 		for (int c = n_ctl; c-- > 0; )
 			if (ctl_conn[c].out_at < ctl_conn[c].out_len ||
 			    ctl_conn[c].listing || ctl_conn[c].done)
@@ -295,6 +296,9 @@ int main(int argc, char **argv)
 		if (due >= 0 && (wait < 0 || due < wait))
 			wait = due;
 		due = ctl_due();
+		if (due >= 0 && (wait < 0 || due < wait))
+			wait = due;
+		due = log_due();
 		if (due >= 0 && (wait < 0 || due < wait))
 			wait = due;
 		if (degraded && (wait < 0 || wait > DEGRADED_POLL_MS))

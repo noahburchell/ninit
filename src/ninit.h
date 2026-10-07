@@ -61,5 +61,6 @@ extern uint32_t drain_left;
 extern uint32_t drain_rotor;
 extern int shutting_down;
 extern int null_fd;
+extern long long boot_ms;
 
 long long now_ms(void);

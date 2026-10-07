@@ -619,6 +619,8 @@ on a terminal the tags are coloured. with `--enable-quiet` only `WARN` and `FAIL
 
 ninit never blocks on the console. a line the console does not accept within 100 ms is dropped whole and counted, and the count is printed as `console: dropped N messages` once output resumes. a line is never cut short. the ring retains dropped lines
 
+a line equal to the line before it, at the same tag, is counted instead of logged. a block of up to 16 lines logged twice in a row is counted the same way from its third occurrence. the count is logged as `last message repeated N times` or `last N messages repeated M times` before the next different line. a count still open 30 s after its first repeat is logged then, the next after 120 s, then every 600 s. a single repeat is logged as it was. a block that stops partway is logged as it arrived, at most 1 s after its first held line. the count carries the most severe tag of its block, and reaches the console if any line of the block did
+
 ## 6 runtime control
 
 ### 6.1 commands
@@ -628,7 +630,7 @@ runtime commands go to ninit over `/run/ninit/control`. the socket has mode 0600
 | command | effect |
 |---|---|
 | `ninitctl status [NAME]` | state of every service, or of NAME |
-| `ninitctl log [-e] [-w]` | the log ring, oldest first. `-e` prints only `WARN` and `FAIL` lines. `-w` then prints each line as it is logged, until interrupted |
+| `ninitctl log [-e] [-w] [-t]` | the log ring, oldest first. `-e` prints only `WARN` and `FAIL` lines. `-w` then prints each line as it is logged, until interrupted. `-t` prints only the boot time, `T ms` from the boot summary, and fails until startup has ended |
 | `ninitctl start NAME` | clear the hold, reset the attempt count and the restart delay, start NAME. returns when it is ready or has failed |
 | `ninitctl stop NAME` | hold NAME, send it SIGTERM, and SIGKILL after `stop-timeout`. returns when it has stopped |
 | `ninitctl restart NAME` | `stop`, then `start`. if NAME is already stopped, `start` |
@@ -668,6 +670,7 @@ a client connects, sends one request line, and reads the reply until ninit close
 
 - request: `VERB [NAME]` and a newline, at most 1023 bytes. a carriage return before the newline is ignored. VERB is a command from [6.1](#61-commands)
 - reply: zero or more data lines beginning with `. `, then one line beginning with `+ ` on success or `- ` on failure
+- `log time` is answered with one data line, `T ms` from `boot: N of M services up in T ms`, or with `- boot has not finished`
 - `log watch` is answered with the ring, then with each line as it is logged, and has no final line. a watcher the ring overtakes receives one `WARN` line, `log: skipped N bytes`, in place of the lines it lost. at most 4 connections watch at once
 - a client that closes its end before the final line is dropped. its operation continues
 - at most 8 connections are served at once. a further connection receives `- too many control connections`
@@ -848,6 +851,7 @@ an interpreter argv is two lists of NUL-terminated strings, each ended by an emp
 | output kept per service | 1024 bytes |
 | service output line | 256 bytes, longer lines are split |
 | log ring | 128 KiB |
+| repeating block of log lines | 16 lines |
 | control request | 1023 bytes |
 | concurrent control connections | 8 |
 | concurrent log watchers | 4 |
@@ -866,6 +870,8 @@ an interpreter argv is two lists of NUL-terminated strings, each ended by an emp
 | wait after SIGKILL to every process | 2 s |
 | `hwclock` at shutdown | 5 s |
 | console write | 100 ms |
+| log repeat count | 30 s, 120 s, then every 600 s |
+| log line held as a possible repeat | 1 s |
 | emergency shell exit counted as immediate | 1 s |
 
 ## 11 files
