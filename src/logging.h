@@ -29,6 +29,8 @@ size_t log_line(uint64_t *at, char *buf);
 void log_feed(void (*fn)(void));
 int log_pending_fd(void);
 void log_flush(void);
+long long log_due(void);
+void log_tick(void);
 
 // a quiet build keeps these in the ring but off the console
 #ifdef NINIT_QUIET

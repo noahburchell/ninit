@@ -48,6 +48,11 @@ serve '+ end of log\n' log -w
 t_is "$req" "log watch" "log -w sends log watch"
 serve '+ end of log\n' log --watch -e
 t_is "$req" "log watch" "log --watch -e sends log watch"
+serve '. 207 ms\n+ boot time\n' log -t
+t_is "$req" "log time" "log -t sends log time"
+t_is "$rc:$out" "0:207 ms" "log -t prints the boot time alone"
+serve '- boot has not finished\n' log --time
+t_is "$rc:$err" "1:ninitctl: boot has not finished" "log --time before the boot summary fails"
 serve '+ x\n' start -- -dash
 t_is "$req" "start -dash" "a name after -- is sent as given"
 

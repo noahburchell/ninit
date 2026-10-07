@@ -188,6 +188,18 @@ the console is written without blocking.
 a line the console does not accept within 100 ms is dropped whole and counted, and the count is printed once output resumes.
 a line is never cut short.
 the ring retains dropped lines
+.PP
+a line equal to the line before it, at the same tag, is counted instead of logged.
+a block of up to 16 lines logged twice in a row is counted the same way from its third occurrence.
+the count is logged as
+.BI "last message repeated " n " times"
+or
+.BI "last " n " messages repeated " m " times"
+before the next different line.
+a count still open 30 s after its first repeat is logged then, the next after 120 s, then every 600 s.
+a single repeat is logged as it was.
+a block that stops partway is logged as it arrived, at most 1 s after its first held line.
+the count carries the most severe tag of its block
 .SH CONTROL SOCKET
 .I /run/ninit/control
 is a stream socket in the unix domain.
@@ -216,6 +228,13 @@ with the meanings given in
 .BR ninitctl (8).
 .B reload
 is always refused
+.PP
+the request
+.B "log time"
+is answered with one data line, the boot time
+.IB t " ms"
+from the boot summary, or fails with
+.B "boot has not finished"
 .PP
 the request
 .B "log watch"

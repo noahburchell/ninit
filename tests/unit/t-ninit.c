@@ -450,7 +450,8 @@ static void sim_reset(void)
 	n_live = q_head = q_tail = 0;
 	draining = 0;
 	n_active = n_done = n_pending = n_up = 0;
-	boot_reported = shutting_down = 0;
+	boot_ms = -1;
+	shutting_down = 0;
 	n_ops = 0;
 	cg_ok = 0;
 	emerg_pid = -1;
@@ -693,7 +694,7 @@ static void test_sim_basic(void)
 	is_str(st_of("late"), "starting", "and releases its dependents");
 	sim_ready(svc_by("late"));
 	sim_advance(10);
-	ok(boot_reported, "the boot summary is printed once nothing is starting");
+	ok(boot_ms >= 0, "the boot summary is printed once nothing is starting");
 	ok(inv_ok("after boot"), "the counters agree after boot");
 	is_int(n_up, 5, "all five services are up");
 }

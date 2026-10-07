@@ -130,6 +130,9 @@ done
 q_see "FAIL > shell: exited immediately 5 times (exit 0), not restarting" "five fast exits stop the respawning"
 q_see "FAIL > shell: giving up, no shell can be started" "permanently"
 q_stop
-t_is "$(grep -c 'shell: exited (exit 0)' "$Q/console.log")" 4 "fast-exits: the first four exits restart the shell"
+# the four exits are one line logged and three counted
+t_is "$(grep -c 'shell: exited (exit 0)' "$Q/console.log")" 1 "fast-exits: the first exit is logged"
+t_is "$(grep -c 'WARN > last message repeated 3 times' "$Q/console.log")" 1 \
+	"fast-exits: the next three restart the shell and are counted"
 
 t_done

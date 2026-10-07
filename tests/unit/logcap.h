@@ -18,8 +18,12 @@ static inline void logcap_quiet(void)
 		log_adopt_fd(fd);
 }
 
+// a line no other equals ends any repetition, so earlier cases are not collapsed into this one
 static inline void logcap_begin(void)
 {
+	static unsigned n;
+
+	ninit_log(LOG_INFO | LOG_NOCON, "logcap %u", ++n);
 	logcap_mark = log_end();
 }
 

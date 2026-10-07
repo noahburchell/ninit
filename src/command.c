@@ -233,6 +233,15 @@ void ctl_cmd(struct ctl *c, char *line)
 	if (!strcmp(line, "log")) {
 		int watching = 0;
 
+		if (arg && !strcmp(arg, "time")) {
+			if (boot_ms < 0) {
+				ctl_end(c, 0, "boot has not finished");
+				return;
+			}
+			ctl_out(c, NCTL_DATA "%lld ms\n", boot_ms);
+			ctl_end(c, 1, "boot time");
+			return;
+		}
 		if (arg && strcmp(arg, "watch")) {
 			ctl_end(c, 0, "unknown log mode '%s'", arg);
 			return;

@@ -271,6 +271,185 @@ static void test_format(void)
 	console_read(con, sizeof(con));
 }
 
+// the ring from at onwards
+static const char *ring_since(uint64_t at)
+{
+	static char buf[32768];
+	size_t n = 0;
+
+	while (at < log_end() && n + LOG_LINE + 1 < sizeof(buf))
+		n += log_line(&at, buf + n);
+	buf[n] = '\0';
+	return buf;
+}
+
+// a line no other equals ends any repetition, returns where the ring continues
+static uint64_t rep_reset(void)
+{
+	static unsigned n;
+
+	ninit_log(LOG_NOTE | LOG_NOCON, "reset %u", ++n);
+	return log_end();
+}
+
+static void test_repeat(void)
+{
+	static const char *const block[] = { "iwd: a", "iwd: b", "iwd: c", "iwd: d" };
+	char con[8192], want[2048];
+	uint64_t at;
+	size_t w;
+
+	console_pipe(0);
+	fake_clock = 1;
+	fake_ms = 0;
+	log_init();
+	log_adopt_fd(con_w);
+
+	at = rep_reset();
+	for (int k = 0; k < 5; k++) {
+		fake_ms = k;
+		ninit_log(LOG_NOTE, "same");
+	}
+	is_str(ring_since(at), "[000.000] NOTE > same\n", "a line logged again is held back");
+	ok(log_due() >= 0, "and a count is pending");
+	fake_ms = 10;
+	ninit_log(LOG_NOTE, "other");
+	is_str(ring_since(at), "[000.000] NOTE > same\n"
+			       "[000.004] NOTE > last message repeated 4 times\n"
+			       "[000.010] NOTE > other\n",
+	       "the count precedes the next line, at the time of the last repeat");
+	console_read(con, sizeof(con));
+	is_str(con, ring_since(at), "the console gets the same lines");
+	is_int(log_due(), -1, "nothing is pending after the count");
+
+	at = rep_reset();
+	ninit_log(LOG_NOTE, "twice");
+	ninit_log(LOG_NOTE, "twice");
+	ninit_log(LOG_NOTE, "after");
+	is_str(ring_since(at), "[000.010] NOTE > twice\n[000.010] NOTE > twice\n[000.010] NOTE > after\n",
+	       "a line repeated once is logged as it was");
+
+	at = rep_reset();
+	ninit_log(LOG_NOTE, "lv");
+	ninit_log(LOG_WARN, "lv");
+	is_str(ring_since(at), "[000.010] NOTE > lv\n[000.010] WARN > lv\n",
+	       "the same text at another level is not a repeat");
+
+	at = rep_reset();
+	ninit_log(LOG_NOTE, "x");
+	ninit_log(LOG_NOTE, "y");
+	ninit_log(LOG_NOTE, "x");
+	is_str(ring_since(at), "[000.010] NOTE > x\n[000.010] NOTE > y\n[000.010] NOTE > x\n",
+	       "a line that recurs is logged at once");
+	is_int(log_due(), -1, "and nothing is held");
+
+	// the iwd case, a block of lines repeating every few seconds
+	at = rep_reset();
+	for (int r = 0; r < 10; r++) {
+		fake_ms = 1000 + r * 100;
+		for (int k = 0; k < 4; k++)
+			ninit_log(LOG_NOTE, "%s", block[k]);
+	}
+	fake_ms = 3000;
+	ninit_log(LOG_NOTE, "end");
+	w = 0;
+	for (int r = 0; r < 2; r++)
+		for (int k = 0; k < 4; k++)
+			w += (size_t)snprintf(want + w, sizeof(want) - w, "[001.%03d] NOTE > %s\n",
+					      r * 100, block[k]);
+	snprintf(want + w, sizeof(want) - w, "[001.900] NOTE > last 4 messages repeated 8 times\n"
+					     "[003.000] NOTE > end\n");
+	is_str(ring_since(at), want, "a block logged twice in a row is counted from then on");
+
+	// a repetition cut short is logged as it arrived
+	at = rep_reset();
+	for (int r = 0; r < 3; r++)
+		for (int k = 0; k < 4; k++) {
+			fake_ms = 5000 + r * 10 + k;
+			ninit_log(LOG_NOTE, "%s", block[k]);
+		}
+	fake_ms = 5100;
+	ninit_log(LOG_NOTE, "%s", block[0]);
+	fake_ms = 5101;
+	ninit_log(LOG_NOTE, "%s", block[1]);
+	fake_ms = 5200;
+	ninit_log(LOG_NOTE, "z");
+	w = 0;
+	for (int r = 0; r < 3; r++)
+		for (int k = 0; k < 4; k++)
+			w += (size_t)snprintf(want + w, sizeof(want) - w, "[005.%03d] NOTE > %s\n",
+					      r * 10 + k, block[k]);
+	snprintf(want + w, sizeof(want) - w, "[005.100] NOTE > iwd: a\n[005.101] NOTE > iwd: b\n"
+					     "[005.200] NOTE > z\n");
+	is_str(ring_since(at), want, "a single repetition and a partial one are logged with their times");
+
+	// a held line is logged after LOG_HOLD_MS when nothing completes the block
+	at = rep_reset();
+	fake_ms = 6000;
+	for (int r = 0; r < 2; r++)
+		for (int k = 0; k < 4; k++)
+			ninit_log(LOG_NOTE, "%s", block[k]);
+	fake_ms = 6050;
+	ninit_log(LOG_NOTE, "%s", block[0]);
+	has_str(ring_last(), "iwd: d", "the start of a third repetition is held");
+	is_int(log_due(), LOG_HOLD_MS, "for LOG_HOLD_MS");
+	fake_ms = 6050 + LOG_HOLD_MS - 1;
+	log_tick();
+	has_str(ring_last(), "iwd: d", "and not sooner");
+	fake_ms = 6050 + LOG_HOLD_MS;
+	log_tick();
+	is_str(ring_last(), "[006.050] NOTE > iwd: a\n", "then logged with the time it arrived");
+	is_int(log_due(), -1, "and nothing is pending");
+
+	// the count is logged after 30 s, 120 s, then every 600 s
+	at = rep_reset();
+	fake_ms = 10000;
+	for (int k = 0; k < 4; k++) {
+		fake_ms = 10000 + k;
+		ninit_log(LOG_WARN, "flood");
+	}
+	is_int(log_due(), 29998, "a count is due 30 s after the first repeat");
+	fake_ms = 40001;
+	log_tick();
+	is_str(ring_since(at), "[010.000] WARN > flood\n[010.003] WARN > last message repeated 3 times\n",
+	       "and is logged then, at the level of the line");
+	fake_ms = 50000;
+	ninit_log(LOG_WARN, "flood");
+	ninit_log(LOG_WARN, "flood");
+	is_int(log_due(), 120000, "the next count is due after 120 s");
+	at = log_end();
+	fake_ms = 170000;
+	log_tick();
+	is_str(ring_since(at), "[050.000] WARN > last message repeated 2 times\n",
+	       "the repeat goes on being counted after a count");
+	fake_ms = 170001;
+	ninit_log(LOG_WARN, "flood");
+	is_int(log_due(), 600000, "and the interval stops at 600 s");
+
+	// the count takes the most severe tag of its block
+	at = rep_reset();
+	fake_ms = 0;
+	for (int r = 0; r < 4; r++) {
+		ninit_log(LOG_NOTE, "n");
+		ninit_log(LOG_WARN, "w");
+	}
+	ninit_log(LOG_NOTE, "done");
+	is_str(ring_since(at), "[000.000] NOTE > n\n[000.000] WARN > w\n[000.000] NOTE > n\n[000.000] WARN > w\n"
+			       "[000.000] WARN > last 2 messages repeated 2 times\n[000.000] NOTE > done\n",
+	       "a block with a WARN line is counted as WARN");
+
+	console_read(con, sizeof(con));
+	at = rep_reset();
+	for (int k = 0; k < 3; k++)
+		ninit_log(LOG_NOTE | LOG_NOCON, "quiet");
+	rep_reset();
+	has_str(ring_since(at), "NOTE > last message repeated 2 times\n", "a ring-only line is counted in the ring");
+	is_int(console_read(con, sizeof(con)), 0, "and its count stays off the console");
+
+	rep_reset();
+	fake_clock = 0;
+}
+
 static unsigned feeds;
 
 static void count_feed(void)
@@ -737,6 +916,7 @@ int main(void)
 {
 	log_init();
 	test_format();
+	test_repeat();
 	test_ring();
 	test_console_stall();
 	test_console_partial();
