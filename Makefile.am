@@ -152,7 +152,7 @@ dist_exampleunused_DATA = \
 	docs/ninit.d/unused/udev-settle
 
 EXTRA_DIST = \
-	README.md \
+	README.rst \
 	autogen.sh \
     LICENSE \
 	$(NINIT_MANS:=.in)
