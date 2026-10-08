@@ -32,9 +32,10 @@ t_is "$rc" 0 "the README 3.11 set builds" || t_diag "$err"
 "$NINITCTL" add -d "$d" bluetooth cupsd sddm >/dev/null
 "$NINITCTL" init -d "$d" >/dev/null 2>&1
 
-readme=$top_srcdir/README.md
+readme=$top_srcdir/README.rst
 # the sample show output in README 4.2, with the terminal glyphs a pipe does not get
-sample=$(sed -n '/^\$ ninitctl show$/,/^```$/p' "$readme" | sed '1d;$d' | sed 's/—/-/g; s/─/-/g; s/→/->/g')
+sample=$(awk '/^   \$ ninitctl show$/ { f = 1; next } f && /^[^ ]/ { exit } f { sub(/^   /, ""); print }' "$readme" |
+	sed 's/—/-/g; s/─/-/g; s/→/->/g')
 t_ok $([ -n "$sample" ]; echo $?) "README 4.2 has a sample of show"
 
 run "$NINITCTL" show "$d/depgraph"
@@ -64,18 +65,17 @@ for f in "$src"/*; do
 	[ -f "$f" ] || continue
 	s=${f##*/}
 	case $s in
-	getty[1-6]) s='`getty1` to `getty6`' ;;
-	tmpfiles-dev | tmpfiles) s='`tmpfiles-dev`, `tmpfiles`' ;;
-	udev | udev-trigger) s='`udev`, `udev-trigger`' ;;
-	modules-load | sysctl | binfmt) s='`modules-load`, `sysctl`, `binfmt`' ;;
-	dbus | elogind) s='`dbus`, `elogind`' ;;
-	*) s="\`$s\`" ;;
+	getty[1-6]) s='getty1 to getty6' ;;
+	tmpfiles-dev | tmpfiles) s='tmpfiles-dev, tmpfiles' ;;
+	udev | udev-trigger) s='udev, udev-trigger' ;;
+	modules-load | sysctl | binfmt) s='modules-load, sysctl, binfmt' ;;
+	dbus | elogind) s='dbus, elogind' ;;
 	esac
-	grep -qF "| $s" "$readme"
+	grep -q "^$s  " "$readme"
 	t_ok $? "README 3.11 describes ${f##*/}"
 done
 for f in "$src"/unused/*; do
-	grep -qF "| \`${f##*/}\` |" "$readme"
+	grep -q "^${f##*/}  " "$readme"
 	t_ok $? "README 3.11 describes unused/${f##*/}"
 done
 
