@@ -42,11 +42,52 @@ struct shebang {
 	const char *end;
 };
 
+enum { ENV_PROG, ENV_SKIP, ENV_ARG, ENV_SPLIT, ENV_END };
+
+// what a word of an env command line is, as gnu and busybox env parse it
+static int env_word(const char *w, size_t wl, int opts, size_t *off)
+{
+	static const char *const takes[] = { "argv0", "chdir", "unset" };
+	const char *eq;
+	size_t nl;
+
+	if (!opts || w[0] != '-')
+		return memchr(w, '=', wl) ? ENV_SKIP : ENV_PROG;
+	if (wl == 1)
+		return ENV_SKIP;
+	if (w[1] != '-') {
+		for (size_t k = 1; k < wl; k++) {
+			// the -S argument is split into words that env parses again
+			if (w[k] == 'S') {
+				*off = k + 1;
+				return ENV_SPLIT;
+			}
+			if (w[k] == 'a' || w[k] == 'C' || w[k] == 'u')
+				return k + 1 == wl ? ENV_ARG : ENV_SKIP;
+		}
+		return ENV_SKIP;
+	}
+	eq = memchr(w, '=', wl);
+	nl = (eq ? (size_t)(eq - w) : wl) - 2;
+	if (!nl)
+		return ENV_END;
+	// getopt_long takes any unambiguous prefix of a long option
+	if (nl <= 12 && !memcmp(w + 2, "split-string", nl)) {
+		*off = eq ? (size_t)(eq - w) + 1 : wl;
+		return ENV_SPLIT;
+	}
+	for (size_t k = 0; !eq && k < sizeof(takes) / sizeof(*takes); k++)
+		if (nl <= strlen(takes[k]) && !memcmp(w + 2, takes[k], nl))
+			return ENV_ARG;
+	return ENV_SKIP;
+}
+
 // the program a #! line runs and what follows it, looking through env and its options
 static int parse_shebang(const char *line, size_t n, struct shebang *sb)
 {
 	const char *p = line + 2, *end = line + n, *w, *b;
-	size_t wl, bl;
+	size_t wl, bl, off;
+	int opts = 1, what;
 
 	w = word_at(&p, end, &wl);
 	if (!w)
@@ -54,19 +95,19 @@ static int parse_shebang(const char *line, size_t n, struct shebang *sb)
 	bl = wl;
 	b = base_of(w, &bl);
 	if (bl == 3 && !memcmp(b, "env", 3)) {
-		while ((w = word_at(&p, end, &wl))) {
-			if (wl > 2 && w[0] == '-' && w[1] == 'S') {
-				w += 2;
-				wl -= 2;
-				break;
+		for (w = word_at(&p, end, &wl); w; w = word_at(&p, end, &wl)) {
+			what = env_word(w, wl, opts, &off);
+			while (what == ENV_SPLIT && off < wl) {
+				w += off;
+				wl -= off;
+				what = env_word(w, wl, opts, &off);
 			}
-			if (w[0] == '-') {
-				if (wl == 2 && (w[1] == 'u' || w[1] == 'C'))
-					word_at(&p, end, &wl);
-				continue;
-			}
-			if (!memchr(w, '=', wl))
+			if (what == ENV_PROG)
 				break;
+			if (what == ENV_END)
+				opts = 0;
+			else if (what == ENV_ARG && !word_at(&p, end, &wl))
+				return 0;
 		}
 		if (!w)
 			return 0;
