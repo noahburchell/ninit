@@ -201,7 +201,7 @@ DIR/unused/ holds disabled services and is not read by ninitctl init. ninitctl d
 
 a service file is a shell script. its header is every line before the first line that is neither blank nor a comment. a directive is a header line of the form ``#%key: value``. whitespace around the key and the value is ignored
 
-the #! line is an ordinary comment unless it names python, lua or perl, see `3.12`_. otherwise the interpreter is the configured one, /bin/bash by default. the file does not need to be executable. ninitctl init warns when the first line is a #! line naming any other interpreter, directly or through env. ``#!/bin/sh`` draws no warning when the configured shell lexes like sh
+the #! line is an ordinary comment unless it names python, lua or perl, see `3.12`_. otherwise the interpreter is the configured one, /bin/bash by default. the file does not need to be executable. ninitctl init warns when the first line of a file with commands is a #! line naming any other interpreter, directly or through env. ``#!/bin/sh`` draws no warning when the configured shell lexes like sh
 
 ninitctl init stores the script without its comments, indentation or trailing blanks, and with runs of blanks collapsed to one space. text inside quotes and here-documents is stored as written, and so is the rest of the file after a construct it cannot follow exactly, such as a line continuation inside a word. a removed line stays as an empty line, so line numbers in shell errors match the file
 
@@ -461,7 +461,7 @@ lua       lua, luaN.N, luajit and its versioned names
 perl      perl, perlN.N
 ========  ========================================
 
-the interpreter is named directly, as in ``#!/usr/bin/python3``, or through env, as in ``#!/usr/bin/env lua``. ninitctl init resolves it once, when the graph is built, and the graph holds its absolute path. ninit never runs env, so the options and NAME=VALUE words before the program, read as gnu and busybox env read them, have no effect. a path in the #! line is kept as written. env is resolved through the PATH services run with, see `3.8`_, with the directory made canonical and the program keeping its own name, so ``env python3`` is /usr/bin/python3 where /usr/sbin links to /usr/bin. an interpreter that does not exist or is not executable fails the build. the words after the interpreter are separate arguments, as ``env -S`` splits them, and come before the script
+the interpreter is named directly, as in ``#!/usr/bin/python3``, or through env, as in ``#!/usr/bin/env lua``. ninitctl init resolves it once, when the graph is built, and the graph holds its absolute path. ninit never runs env, so the options and NAME=VALUE words before the program, read as gnu and busybox env read them, have no effect. a path in the #! line is kept as written. env is resolved through the PATH services run with, see `3.8`_, with the directory made canonical and the program keeping its own name, so ``env python3`` is /usr/bin/python3 where /usr/sbin links to /usr/bin. an interpreter that does not exist or is not executable fails the build. the #! line of a file without commands, which runs nothing, is not read. the words after the interpreter are separate arguments, as ``env -S`` splits them, and come before the script
 
 the build fails on an argument that keeps the stored script from running. a letter counts inside a cluster of options, as in ``-Bc``:
 
@@ -520,7 +520,7 @@ option                  effect
 ``init`` performs, in order:
 
 1. take an exclusive flock on DIR. ``add`` and ``del`` take the same lock
-2. read and parse every service file, see `3`_, resolve the interpreter a #! line names, see `3.12`_, and strip the comments from a shell script. the first error stops the build
+2. read and parse every service file, see `3`_, resolve the interpreter the #! line of a file with commands names, see `3.12`_, and strip the comments from a shell script. the first error stops the build
 3. check every script, up to 32 in parallel, a shell script with ``bash -n`` and the others as in `3.12`_. bash runs the check with extglob on, since ``-n`` never runs the shopt that would turn it on. every syntax error is reported with its service name and the failures print in service order. a check still running after 30 s is killed and reported as not finished. any error stops the build
 4. resolve depon and depof, merge duplicate edges, reject cycles
 5. order the services topologically. among the services ready to be placed, roots come first, then the service with the longest chain of dependents, then the first by name

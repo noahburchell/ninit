@@ -413,6 +413,9 @@ is resolved through the
 .B PATH
 services run with, with the directory made canonical and the program keeping its own name.
 a missing or non-executable interpreter fails the build.
+the
+.B #!\&
+line of a file without commands, which runs nothing, is not read.
 the words after the interpreter are separate arguments, as
 .B env \-S
 splits them, and come before the script
