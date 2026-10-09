@@ -474,7 +474,7 @@ lua       ``-e``, luajit ``-b``, and ``-l`` or luajit ``-j`` without their argum
 perl      ``-e``, ``-E``, ``-x``, ``-c``, ``-h``, ``-u``, ``-v``, ``-V``, ``-d`` without a module, ``-n``, ``-p``, ``-a``, ``-F``, and ``-I`` without its argument
 ========  ========================================
 
-the header, #! line and directives included, is stored as empty lines and the rest of the file as written. nothing is stripped and a #% line after the header draws no warning. line numbers in interpreter messages match the file. in lua a ``#`` line is valid only in the header
+the header, #! line and directives included, is stored as empty lines and the rest of the file as written. nothing is stripped and a #% line after the header draws no warning. line numbers in interpreter messages match the file. in lua a ``#`` line is valid only in the header. crlf line ends are stored as written, and the three interpreters read them as lf, in strings and here-documents too
 
 each start runs:
 

@@ -105,6 +105,12 @@ log_has "FAIL > pyfail: failed 1 time (exit 1)" "an uncaught python exception fa
 log_has "line 4" "the traceback gives the line of the file"
 log_has "ZeroDivisionError" "and the exception"
 '
+	printf '#!%s\r\n#%%type: oneshot\r\nx = """a\r\nb"""\r\nprint("py crlf %%d" %% len(x))\r\ny = 1 / 0\r\n' "$PY" |
+		q_svc pycrlf
+	checks+='
+log_has "NOTE > pycrlf: py crlf 3" "python reads a file with crlf line ends as lf"
+log_has "File \"<string>\", line 6" "and counts its lines as the file does"
+'
 fi
 
 if [ -n "$LUA" ]; then
@@ -143,6 +149,12 @@ log_has "NOTE > lud: lu tick" "lua output reaches the log while it runs"
 st_is lufail failed 20000
 log_has "FAIL > lufail: failed 1 time (exit 1)" "a lua error fails the service"
 log_has "(command line):3: lu boom" "the error gives the line of the file"
+'
+	printf '#!/usr/bin/env lua\r\n#%%type: oneshot\r\nlocal x = [[a\r\nb]]\r\nprint("lu crlf " .. #x)\r\nerror("lu crlf boom")\r\n' |
+		q_svc lucrlf
+	checks+='
+log_has "NOTE > lucrlf: lu crlf 3" "lua reads a file with crlf line ends as lf"
+log_has "(command line):6: lu crlf boom" "and counts its lines as the file does"
 '
 fi
 
@@ -189,6 +201,13 @@ log_has "NOTE > pld: pl tick" "perl output reaches the log while it runs"
 st_is plfail failed 20000
 log_has "FAIL > plfail: failed 1 time (exit" "a perl die fails the service"
 log_has "pl boom at -e line 3." "the message gives the line of the file"
+'
+	printf '#!/usr/bin/perl\r\n#%%type: oneshot\r\nmy $x = "a\r\nb";\r\nprint "pl crlf ", length($x), "\\n";\r\nprint <<EOF;\r\npl heredoc\r\nEOF\r\ndie "pl crlf boom";\r\n' |
+		q_svc plcrlf
+	checks+='
+log_has "NOTE > plcrlf: pl crlf 3" "perl reads a file with crlf line ends as lf"
+log_has "NOTE > plcrlf: pl heredoc" "a here-document ends at its crlf terminator"
+log_has "pl crlf boom at -e line 9." "and perl counts its lines as the file does"
 '
 fi
 
