@@ -309,8 +309,8 @@ static int prefix(char *buf, size_t cap, const char *tag, long long ms)
 	return n > LOG_PREFIX_MAX ? LOG_PREFIX_MAX : n;
 }
 
-// copies the line at *at into buf, which holds LOG_LINE bytes, and advances *at.
-// a reader the ring has overtaken gets a notice instead. returns 0 at the end
+// copies the line at *at into buf, which holds LOG_LINE bytes, and advances *at,
+// a reader the ring has overtaken gets a notice instead, and 0 is returned at the end
 size_t log_line(uint64_t *at, char *buf)
 {
 	uint64_t end;
