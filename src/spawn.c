@@ -93,7 +93,7 @@ static void child_exec(uint32_t i, int out_w, int ntf_w, const char *cg)
 			close(cf);
 		}
 		if (!joined) {
-			// out_w is already this service's stdout so pid 1 logs it
+			// out_w is already the stdout of this service, so pid 1 logs it
 			at = put_str(msg, 0, "ninit: could not join its cgroup: errno ");
 			at = put_num(msg, at, (unsigned)errno);
 			at = put_str(msg, at, ", it is only contained by its process group\n");

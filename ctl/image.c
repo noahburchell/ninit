@@ -86,7 +86,7 @@ void write_image(const struct build *b, const char *out, int dry, int srclock)
 				    nd == 1 ? "s" : "");
 			pol = s->onfail;
 		} else {
-			// only this service decides; adding unrelated ones must not move it
+			// only this service decides, adding unrelated ones must not move it
 			pol = nd ? NG_ONFAIL_STOP : NG_ONFAIL_WARN;
 		}
 
