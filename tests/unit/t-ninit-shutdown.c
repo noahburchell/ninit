@@ -369,7 +369,7 @@ static void test_errors(void)
 	rc = run("shutdown", NULL);
 	is_int(rc, 2, "shutdown without TIME is a usage error");
 	has_str(err, "shutdown: missing time operand\n", "and says why");
-	has_str(err, "Usage: shutdown [OPTION]... TIME\n", "and prints the usage");
+	has_str(err, "usage: shutdown [OPTION]... TIME\n", "and prints the usage");
 	is_int(sh.kills, 0, "and signals nothing");
 
 	reset();
@@ -403,7 +403,7 @@ static void test_errors(void)
 	rc = run("reboot", "-x", NULL);
 	is_int(rc, 2, "an unknown option is a usage error");
 	has_str(err, "reboot: unrecognized option '-x'\n", "and is named");
-	has_str(err, "Usage: reboot [OPTION]...\n", "with the usage on stderr");
+	has_str(err, "usage: reboot [OPTION]...\n", "with the usage on stderr");
 
 	reset();
 	rc = run("shutdown", "-c", NULL);
@@ -638,17 +638,17 @@ static void test_usage(void)
 	reset();
 	rc = run("shutdown", "--help", NULL);
 	is_int(rc, 0, "--help exits 0");
-	has_str(out, "Usage: shutdown [OPTION]... TIME\n", "shutdown's usage names TIME");
-	has_str(out, "TIME is now, +MINUTES or HH:MM.\n", "and its forms");
+	has_str(out, "usage: shutdown [OPTION]... TIME\n", "shutdown's usage names TIME");
+	has_str(out, "TIME is now, +MINUTES or HH:MM\n", "and its forms");
 	is_int(sh.kills, 0, "--help does nothing else");
 
 	reset();
 	run("reboot", "--help", NULL);
-	has_str(out, "Usage: reboot [OPTION]...\n", "reboot's usage has no TIME");
+	has_str(out, "usage: reboot [OPTION]...\n", "reboot's usage has no TIME");
 
 	reset();
 	run("ninit-shutdown", "--help", NULL);
-	has_str(out, "Usage: ninit-shutdown [OPTION]... TIME\n", "ninit-shutdown requires TIME and says so");
+	has_str(out, "usage: ninit-shutdown [OPTION]... TIME\n", "ninit-shutdown requires TIME and says so");
 
 	reset();
 	rc = run("shutdown", "now", "--help", NULL);
