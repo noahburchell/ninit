@@ -213,7 +213,13 @@ t_is "$(names "$d/mygraph")" "a" "the custom output holds only the service"
 "$NINITCTL" show "$d/rel" >/dev/null 2>&1
 t_ok $? "a relative output path is written relative to the working directory"
 
-# syntax check
+# syntax check, the message and whether it names a line depend on the configured shell
+case ${NINIT_SHELL_NAME##*/} in
+bash) syn_msg='[^:]*: line [0-9]+: syntax error' syn_line='line 6: syntax error' ;;
+zsh) syn_msg='zsh: parse error' syn_line= ;;
+ash) syn_msg='ash: syntax error' syn_line= ;;
+*) syn_msg= syn_line= ;;
+esac
 d=$T/syntax
 put "$d" good ':\n'
 put "$d" bad1 '#!/bin/bash\n# comment\nif true\nthen\n'
@@ -221,7 +227,11 @@ put "$d" bad2 'echo )\n'
 build "$d"
 t_is "$rc" 1 "a syntax error fails the build"
 t_has "$err" "ninitctl: $d/bad1: " "the failing service is named"
-t_like "$err" "ninitctl: $d/bad1: [^:]*: line [0-9]+: syntax error" "with the shell's message and line"
+if [ -n "$syn_msg" ]; then
+	t_like "$err" "ninitctl: $d/bad1: $syn_msg" "with the shell's message"
+else
+	t_skip "with the shell's message, the wording of $NINIT_SHELL_NAME is not known here"
+fi
 t_has "$err" "ninitctl: $d/bad2: " "every failing service is reported"
 t_has "$err" "ninitctl: 2 service scripts failed the $NINIT_SHELL syntax check" "with a count"
 order=$(grep -v ': warning: ' <<<"$err" | grep -oF -e "$d/bad1: " -e "$d/bad2: " -e "failed the" | uniq | tr '\n' ,)
@@ -237,7 +247,11 @@ t_is "$rc" 0 "a service using extglob patterns passes the syntax check" || t_dia
 d=$T/syntax-line
 put "$d" a '#!/bin/bash\n# one\n# two\n\necho ok\nfi\n'
 build "$d"
-t_has "$err" "line 6: syntax error" "the reported line is the line in the file"
+if [ -n "$syn_line" ]; then
+	t_has "$err" "$syn_line" "the reported line is the line in the file"
+else
+	t_skip "the reported line is the line in the file, $NINIT_SHELL_NAME names none for a script on stdin"
+fi
 
 d=$T/many
 for ((k = 0; k < 100; k++)); do put "$d" "s$k" ':\n'; done
