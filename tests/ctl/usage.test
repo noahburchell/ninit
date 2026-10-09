@@ -5,20 +5,20 @@
 
 run "$NINITCTL"
 t_is "$rc" 2 "no command is a usage error"
-t_has "$err" "Usage: ninitctl COMMAND [OPTION]..." "and prints the usage on stderr"
+t_has "$err" "usage: ninitctl COMMAND [OPTION]..." "and prints the usage on stderr"
 t_is "$out" "" "and nothing on stdout"
 
 for h in help -h --help; do
 	run "$NINITCTL" "$h"
 	t_is "$rc" 0 "'$h' exits 0"
-	t_has "$out" "Usage: ninitctl COMMAND [OPTION]..." "'$h' prints the usage on stdout"
+	t_has "$out" "usage: ninitctl COMMAND [OPTION]..." "'$h' prints the usage on stdout"
 done
 usage=$out
 for line in "init [-d DIR] [-o FILE] [-n] [--no-check]" "show [-f FILE] [-v]" \
 	"add [-d DIR] [--] NAME..." "del [-d DIR] [--] NAME..." "status [NAME]" "log [-e] [-w] [-t]" \
 	"start NAME" "stop NAME" "restart NAME" "resume" \
-	"Runtime commands (via /run/ninit/control, root only):" \
-	"DIR defaults to $NINIT_SVCDIR, FILE to $NINIT_SVCDIR/depgraph."; do
+	"runtime commands, through /run/ninit/control and for root only:" \
+	"DIR defaults to $NINIT_SVCDIR, FILE to $NINIT_SVCDIR/depgraph"; do
 	t_has "$usage" "$line" "the usage lists '$line'"
 done
 t_unlike "$usage" $'\t' "the usage is indented with spaces"
@@ -27,18 +27,18 @@ t_is "$long" "" "no usage line is wider than 79 columns"
 
 for c in init show add del status log start stop restart resume; do
 	run "$NINITCTL" "$c" --help
-	t_is "$rc$(head -c 22 <<<"$out")" "0Usage: ninitctl COMMAN" "'$c --help' prints the usage"
+	t_is "$rc$(head -c 22 <<<"$out")" "0usage: ninitctl COMMAN" "'$c --help' prints the usage"
 done
 run "$NINITCTL" init -d -h
 t_is "$rc" 1 "-h as the value of -d is a directory, not a request for help"
 t_has "$err" "ninitctl: open -h: No such file or directory" "and is opened as one"
 run "$NINITCTL" del -d "$T" -- -h
-t_unlike "$out" "Usage:" "-h after -- is a name"
+t_unlike "$out" "usage:" "-h after -- is a name"
 
 run "$NINITCTL" stat
 t_is "$rc" 2 "an unknown command is a usage error"
 t_has "$err" "ninitctl: unknown command 'stat'" "and is named"
-t_has "$err" "Usage: ninitctl" "followed by the usage"
+t_has "$err" "usage: ninitctl" "followed by the usage"
 
 run "$NINITCTL" init -x
 t_is "$rc" 2 "init with an unknown argument is a usage error"

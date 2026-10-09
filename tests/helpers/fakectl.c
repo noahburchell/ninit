@@ -19,7 +19,7 @@ int main(int argc, char **argv)
 	ssize_t n;
 
 	if (argc != 5) {
-		fputs("Usage: fakectl SOCK REPLY REQUEST-LOG READY-FILE\n", stderr);
+		fputs("usage: fakectl SOCK REPLY REQUEST-LOG READY-FILE\n", stderr);
 		return 2;
 	}
 	lfd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);

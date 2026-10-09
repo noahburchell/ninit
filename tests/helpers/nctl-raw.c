@@ -88,7 +88,7 @@ static int write_all(int fd, const char *p, size_t n)
 
 static void usage(void)
 {
-	fputs("Usage: nctl-raw [-s SOCK] [-e] [-H N] [-q] [-p MS] [-t MS] [-l N] REQUEST\n"
+	fputs("usage: nctl-raw [-s SOCK] [-e] [-H N] [-q] [-p MS] [-t MS] [-l N] REQUEST\n"
 	      "\n"
 	      "  -s SOCK  control socket path\n"
 	      "  -e       REQUEST is sent as given, with escapes and no added newline\n"
@@ -98,7 +98,7 @@ static void usage(void)
 	      "  -t MS    stop reading after MS without data\n"
 	      "  -l N     stop after N reply lines\n"
 	      "\n"
-	      "Exit status is 0 for a + line, 1 for a - line, 3 for no final line, 4 on timeout.\n",
+	      "exit status is 0 for a + line, 1 for a - line, 3 for no final line, 4 on timeout\n",
 	      stderr);
 	exit(2);
 }

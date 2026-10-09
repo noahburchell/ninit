@@ -10,16 +10,16 @@
 
 static void usage(FILE *f)
 {
-	fputs("Usage: ninitctl COMMAND [OPTION]...\n"
+	fputs("usage: ninitctl COMMAND [OPTION]...\n"
 	      "\n"
-	      "Configuration commands:\n"
+	      "configuration commands:\n"
 	      "  init [-d DIR] [-o FILE] [-n] [--no-check] [--root ROOT]\n"
 	      "                              compile DIR into a depgraph\n"
 	      "  show [-f FILE] [-v]         print the compiled depgraph\n"
 	      "  add [-d DIR] [--] NAME...   move services out of DIR/unused\n"
 	      "  del [-d DIR] [--] NAME...   move services into DIR/unused\n"
 	      "\n"
-	      "Runtime commands (via " NINIT_CTL_SOCK ", root only):\n"
+	      "runtime commands, through " NINIT_CTL_SOCK " and for root only:\n"
 	      "  status [NAME]               report service state\n"
 	      "  log [-e] [-w] [-t]          print the log, -e only WARN and FAIL,\n"
 	      "                              -w then follow it, -t only the boot time\n"
@@ -28,9 +28,9 @@ static void usage(FILE *f)
 	      "  restart NAME                stop, then start a service\n"
 	      "  resume                      retry failed and skipped services\n"
 	      "\n"
-	      "DIR defaults to " NG_DEFAULT_DIR ", FILE to " NG_DEFAULT_FILE ".\n"
-	      "With --root, DIR defaults to ROOT" NG_DEFAULT_DIR ".\n"
-	      "A rebuilt depgraph takes effect on the next boot.\n",
+	      "DIR defaults to " NG_DEFAULT_DIR ", FILE to " NG_DEFAULT_FILE "\n"
+	      "with --root, DIR defaults to ROOT" NG_DEFAULT_DIR "\n"
+	      "a rebuilt depgraph takes effect on the next boot\n",
 	      f);
 }
 
