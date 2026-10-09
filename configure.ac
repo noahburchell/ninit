@@ -23,6 +23,8 @@ AC_CANONICAL_HOST
 AC_REQUIRE_AUX_FILE([tap-driver.sh])
 AC_PATH_PROG([BASH_PROG], [bash], [/bin/bash])
 AC_ARG_VAR([NINIT_TEST_KERNEL], [kernel image the qemu tests boot])
+# a make variable of this name would hide one set in the environment of make check
+AM_SUBST_NOTMAKE([NINIT_TEST_KERNEL])
 
 AS_CASE([$host_os], [linux*], [], [AC_MSG_ERROR([ninit requires linux, not $host_os])])
 

@@ -236,12 +236,16 @@ TEST_EXTENSIONS = .test
 LOG_DRIVER = env AM_TAP_AWK='$(AWK)' $(SHELL) $(top_srcdir)/build-aux/tap-driver.sh
 TEST_LOG_DRIVER = $(LOG_DRIVER)
 TEST_LOG_COMPILER = $(BASH_PROG)
-# a sanitizer build reports the memory a short lived ninitctl leaves to exit as a failure
+ninit_test_kernel = @NINIT_TEST_KERNEL@
+
+# a sanitizer build reports the memory a short lived ninitctl leaves to exit as a failure,
+# the environment and the make command line name the test kernel before configure does
 AM_TESTS_ENVIRONMENT = \
 	top_srcdir='$(abs_top_srcdir)'; top_builddir='$(abs_top_builddir)'; \
 	NINIT_SHELL='$(ninit_shell)'; NINIT_SHELL_NAME='$(ninit_shell_name)'; NINIT_SVCDIR='$(ninit_svcdir)'; \
 	ASAN_OPTIONS=$${ASAN_OPTIONS:-detect_leaks=0}; \
-	export top_srcdir top_builddir NINIT_SHELL NINIT_SHELL_NAME NINIT_SVCDIR ASAN_OPTIONS;
+	NINIT_TEST_KERNEL=$${NINIT_TEST_KERNEL:-'$(ninit_test_kernel)'}; \
+	export top_srcdir top_builddir NINIT_SHELL NINIT_SHELL_NAME NINIT_SVCDIR ASAN_OPTIONS NINIT_TEST_KERNEL;
 
 graph: ninitctl$(EXEEXT)
 	$(AM_V_at)./ninitctl init -d '$(ninit_svcdir)' -o '$(ninit_svcdir)/depgraph'

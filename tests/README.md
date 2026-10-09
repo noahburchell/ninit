@@ -40,7 +40,7 @@ linux before 7.3 kills a process created with `CLONE_INTO_CGROUP` in a cgroup th
 
 | variable | default | meaning |
 |---|---|---|
-| `NINIT_TEST_KERNEL` | none | kernel image. the qemu tests are skipped without it |
+| `NINIT_TEST_KERNEL` | none | kernel image. the qemu tests are skipped without it. the environment and the `make` command line take precedence over the value given to `configure` |
 | `NINIT_TEST_QEMU` | `qemu-system-x86_64` | qemu binary |
 | `NINIT_TEST_BUSYBOX` | `busybox` in `PATH` | busybox for the guest userland and the initramfs |
 | `NINIT_TEST_ACCEL` | `kvm` if `/dev/kvm` is usable, else `tcg` | qemu accelerator |
