@@ -182,18 +182,27 @@ static void note(const char **why, const char *msg)
 // parses /etc/locale.conf
 int ng_locale_env(char (*out)[NG_LOCALE_LEN], int max, const char **why)
 {
-	char raw[NG_LOCALE_FILE];
-	size_t len = 0;
-	int seen[NG_LOCALE_MAX] = { 0 };
-	int n = 0, fd;
-	char *p;
-
 	*why = NULL;
 	if (max <= 0)
 		return 0;
-	fd = open(NG_LOCALE_CONF, O_RDONLY | O_CLOEXEC | O_NOCTTY);
+	return ng_locale_fd(open(NG_LOCALE_CONF, O_RDONLY | O_CLOEXEC | O_NOCTTY), out, max, why);
+}
+
+int ng_locale_fd(int fd, char (*out)[NG_LOCALE_LEN], int max, const char **why)
+{
+	char raw[NG_LOCALE_FILE];
+	size_t len = 0;
+	int seen[NG_LOCALE_MAX] = { 0 };
+	int n = 0;
+	char *p;
+
+	*why = NULL;
 	if (fd < 0)
 		return 0;
+	if (max <= 0) {
+		close(fd);
+		return 0;
+	}
 	for (;;) {
 		ssize_t k = read(fd, raw + len, sizeof(raw) - 1 - len);
 

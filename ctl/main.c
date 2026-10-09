@@ -13,7 +13,7 @@ static void usage(FILE *f)
 	fputs("Usage: ninitctl COMMAND [OPTION]...\n"
 	      "\n"
 	      "Configuration commands:\n"
-	      "  init [-d DIR] [-o FILE] [-n] [--no-check]\n"
+	      "  init [-d DIR] [-o FILE] [-n] [--no-check] [--root ROOT]\n"
 	      "                              compile DIR into a depgraph\n"
 	      "  show [-f FILE] [-v]         print the compiled depgraph\n"
 	      "  add [-d DIR] [--] NAME...   move services out of DIR/unused\n"
@@ -29,6 +29,7 @@ static void usage(FILE *f)
 	      "  resume                      retry failed and skipped services\n"
 	      "\n"
 	      "DIR defaults to " NG_DEFAULT_DIR ", FILE to " NG_DEFAULT_FILE ".\n"
+	      "With --root, DIR defaults to ROOT" NG_DEFAULT_DIR ".\n"
 	      "A rebuilt depgraph takes effect on the next boot.\n",
 	      f);
 }
@@ -36,7 +37,7 @@ static void usage(FILE *f)
 static int takes_value(const char *a)
 {
 	return !strcmp(a, "-d") || !strcmp(a, "--dir") ||
-	       !strcmp(a, "-o") || !strcmp(a, "--out") ||
+	       !strcmp(a, "-o") || !strcmp(a, "--out") || !strcmp(a, "--root") ||
 	       !strcmp(a, "-f") || !strcmp(a, "--file");
 }
 

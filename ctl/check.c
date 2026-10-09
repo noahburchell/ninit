@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -73,6 +74,22 @@ static pid_t reap_check(const pid_t *pids, long long *due, uint32_t live, const 
 	}
 }
 
+// a check for another root runs inside it, which needs CAP_SYS_CHROOT
+static int chroot_errno(void)
+{
+	pid_t pid = fork();
+	int st;
+
+	if (pid < 0)
+		return errno;
+	if (pid == 0)
+		_exit(chroot(g_root) < 0 ? errno : 0);
+	while (waitpid(pid, &st, 0) < 0)
+		if (errno != EINTR)
+			return errno;
+	return WIFEXITED(st) ? WEXITSTATUS(st) : EPERM;
+}
+
 void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 {
 	static char path[] = NG_PATH;
@@ -89,14 +106,15 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 	uint32_t *who;
 	char **failed;
 	uint8_t *late;
-	int devnull;
+	int devnull, e;
 	struct sigaction dfl = { .sa_handler = SIG_DFL }, old_chld;
 	sigset_t chld, old_mask;
+	struct stat sh;
 
 	// an interpreter #! names was found runnable when the file was read, the shell was not
-	if (access(NG_SHELL, X_OK) != 0) {
-		fprintf(stderr, "ninitctl: warning: %s is not executable, "
-			"skipping the syntax check of shell scripts\n", NG_SHELL);
+	if (sys_stat(NG_SHELL, &sh) < 0 || sys_exec_ok(NG_SHELL, &sh) < 0) {
+		fprintf(stderr, "ninitctl: warning: %s%s is not executable, "
+			"skipping the syntax check of shell scripts\n", g_root_pfx, NG_SHELL);
 		shell_ok = 0;
 	}
 	if (slots > 32)
@@ -114,6 +132,11 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 	sigaddset(&chld, SIGCHLD);
 	sigaction(SIGCHLD, &dfl, &old_chld);
 	sigprocmask(SIG_BLOCK, &chld, &old_mask);
+	if (g_root && (e = chroot_errno())) {
+		fprintf(stderr, "ninitctl: warning: chroot %s: %s, skipping the syntax check\n",
+			g_root, strerror(e));
+		giveup = 1;
+	}
 
 	for (i = 0; i <= n; i++) {
 		char *argv[16];
@@ -212,6 +235,8 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 			die("fork: %s", strerror(errno));
 		if (pid == 0) {
 			sigprocmask(SIG_SETMASK, &old_mask, NULL);
+			if (g_root && (chroot(g_root) < 0 || chdir("/") < 0))
+				_exit(127);
 			dup2(sfd, 0);
 			if (devnull >= 0)
 				dup2(devnull, 1);

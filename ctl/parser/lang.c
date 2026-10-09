@@ -144,7 +144,7 @@ static int runnable(const char *path)
 {
 	struct stat st;
 
-	return stat(path, &st) == 0 && S_ISREG(st.st_mode) && access(path, X_OK) == 0;
+	return sys_stat(path, &st) == 0 && S_ISREG(st.st_mode) && sys_exec_ok(path, &st) == 0;
 }
 
 // DIR/PROG with DIR canonical, /usr/sbin is often a link to /usr/bin, PROG keeps its own
@@ -156,7 +156,7 @@ static char *found_in(const char *dir, size_t dl, const struct shebang *sb)
 
 	memcpy(d, dir, dl);
 	d[dl] = '\0';
-	real = realpath(d, NULL);
+	real = sys_realpath(d);
 	if (!real)
 		return NULL;
 	rl = strlen(real);
@@ -185,12 +185,12 @@ static char *resolve(const char *fname, const struct shebang *sb)
 			    g_dir, fname, sb->len, NG_MAX_INTERP);
 		memcpy(path, sb->prog, sb->len);
 		path[sb->len] = '\0';
-		if (stat(path, &st) < 0)
-			die("%s/%s: %s: %s", g_dir, fname, path, strerror(errno));
+		if (sys_stat(path, &st) < 0)
+			die("%s/%s: %s%s: %s", g_dir, fname, g_root_pfx, path, strerror(errno));
 		if (!S_ISREG(st.st_mode))
-			die("%s/%s: %s is not a regular file", g_dir, fname, path);
-		if (access(path, X_OK) < 0)
-			die("%s/%s: %s: %s", g_dir, fname, path, strerror(errno));
+			die("%s/%s: %s%s is not a regular file", g_dir, fname, g_root_pfx, path);
+		if (sys_exec_ok(path, &st) < 0)
+			die("%s/%s: %s%s: %s", g_dir, fname, g_root_pfx, path, strerror(errno));
 		return xstrndup(path, sb->len);
 	}
 	for (const char *d = &NG_PATH[5]; *d;) {
@@ -210,7 +210,8 @@ static char *resolve(const char *fname, const struct shebang *sb)
 		}
 		d += dl + (c != NULL);
 	}
-	die("%s/%s: '%.*s' is not in %s", g_dir, fname, (int)sb->len, sb->prog, &NG_PATH[5]);
+	die("%s/%s: '%.*s' is not in %s%s%s", g_dir, fname, (int)sb->len, sb->prog, &NG_PATH[5],
+	    g_root ? " below " : "", g_root ? g_root : "");
 }
 
 // the language a #! line selects, the configured shell for anything no language claims
