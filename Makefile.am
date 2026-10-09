@@ -165,7 +165,8 @@ unit_tests = \
 	tests/unit/t-fail-sulogin \
 	tests/unit/t-ninit-shutdown \
 	tests/unit/t-build \
-	tests/unit/t-ninit
+	tests/unit/t-ninit \
+	tests/unit/t-shutdown
 
 ctl_tests = \
 	tests/ctl/compact.test \
@@ -215,6 +216,7 @@ tests_unit_t_fail_sulogin_CPPFLAGS = $(AM_CPPFLAGS) -DNINIT_SULOGIN=1 \
 tests_unit_t_ninit_shutdown_SOURCES = tests/unit/t-ninit-shutdown.c $(unit_headers)
 tests_unit_t_build_SOURCES = tests/unit/t-build.c src/ngraph.c $(unit_headers)
 tests_unit_t_ninit_SOURCES = tests/unit/t-ninit.c src/logging.c src/ngraph.c $(unit_headers)
+tests_unit_t_shutdown_SOURCES = tests/unit/t-shutdown.c src/logging.c $(unit_headers)
 tests_helpers_czdump_SOURCES = tests/helpers/czdump.c $(ninitctl_parser) src/ngraph.c
 tests_helpers_nctl_raw_SOURCES = tests/helpers/nctl-raw.c
 tests_helpers_fakectl_SOURCES = tests/helpers/fakectl.c
