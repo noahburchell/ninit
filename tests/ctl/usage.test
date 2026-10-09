@@ -51,6 +51,12 @@ run "$NINITCTL" init -d "$T" -o
 t_is "$rc$err" "2ninitctl: init: -o needs a file" "init -o without a value"
 run "$NINITCTL" init -d "$T" extra
 t_is "$rc$err" "2ninitctl: init: unexpected argument 'extra'" "init with an operand"
+run "$NINITCTL" init --root
+t_is "$rc$err" "2ninitctl: init: --root needs a directory" "init --root without a value"
+run "$NINITCTL" init --root "$T/none"
+t_is "$rc$err" "1ninitctl: open $T/none: No such file or directory" "init --root with a missing directory"
+run "$NINITCTL" init --root -h
+t_is "$rc$err" "1ninitctl: open -h: No such file or directory" "-h as the value of --root is a directory"
 
 for v in start stop restart; do
 	run "$NINITCTL" "$v"

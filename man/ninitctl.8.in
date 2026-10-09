@@ -10,6 +10,8 @@ ninitctl \- compile, inspect and control the ninit service graph
 .IR file ]
 .RB [ \-n ]
 .RB [ \-\-no\-check ]
+.RB [ \-\-root
+.IR root ]
 .br
 .B ninitctl show
 .RB [ \-v ]
@@ -241,6 +243,29 @@ except writing the output
 .B \-\-no\-check
 skip the syntax check of
 .B init
+.TP
+.BR \-\-root " \fIroot\fR"
+build the graph for the system whose root directory is
+.IR root .
+.B init
+looks up
+.B #!\&
+interpreters and
+.I /etc/locale.conf
+below
+.I root
+as that system sees them, absolute links and
+.B ..\&
+included, and runs every syntax check chrooted into
+.IR root ,
+which requires
+.BR CAP_SYS_CHROOT .
+.I dir
+defaults to
+.IR root @ninit_svcdir@ .
+the lookup uses
+.BR openat2 (2),
+linux 5.6 or newer
 .TP
 .BR \-v ", " \-\-verbose
 with

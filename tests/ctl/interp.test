@@ -105,6 +105,47 @@ t_has "$init_err" "warning: $d/a: '#!/usr/bin/ruby' is ignored, the script runs 
 	"any other interpreter still runs under the shell, with a warning"
 t_unlike "$(svc_lines a)" "runs " "and names no interpreter"
 
+# a graph for another root, README 4.1
+r=$T/root
+mkdir -p "$r/etc/ninit.d" "$r/usr/bin" "$r/bin"
+ln -s /usr/bin "$r/usr/sbin"
+printf '#!/bin/sh\n[ -e /marker ] || { echo outside >&2; exit 1; }\n' >"$r/usr/bin/python3.99"
+chmod 755 "$r/usr/bin/python3.99"
+ln -s /usr/bin/python3.99 "$r/usr/bin/python3"
+printf '#!/usr/bin/env python3\nprint(1)\n' >"$r/etc/ninit.d/a"
+run "$NINITCTL" init --root "$r" --no-check
+t_is "$rc" 0 "--root builds ROOT/etc/ninit.d" || t_diag "$err"
+run "$NINITCTL" show -v "$r/etc/ninit.d/depgraph"
+t_has "$out" "runs /usr/bin/python3 -I -B -u -c SCRIPT a" "env looks below the root, through its absolute links"
+t_has "$err$(cd "$r" && "$NINITCTL" init --root . --no-check -n 2>&1)" "./etc/locale.conf is missing" \
+	"locale.conf is read below the root"
+printf '#!/usr/bin/python3.98\nprint(1)\n' >"$r/etc/ninit.d/b"
+run "$NINITCTL" init --root "$r/" --no-check -n
+t_has "$err" "ninitctl: $r/etc/ninit.d/b: $r/usr/bin/python3.98: No such file or directory" \
+	"a missing interpreter is named below the root"
+rm "$r/etc/ninit.d/b"
+if [ "$(id -u)" != 0 ]; then
+	run "$NINITCTL" init --root "$r" -n
+	t_has "$err" "ninitctl: warning: chroot $r: Operation not permitted, skipping the syntax check" \
+		"without CAP_SYS_CHROOT the check cannot run"
+	t_has "$err" "could not be checked, use --no-check to skip" "and the build says how to skip it"
+else
+	t_skip "without CAP_SYS_CHROOT the check cannot run, running as root"
+	t_skip "and the build says how to skip it, running as root"
+fi
+bb=$(command -v busybox)
+if [ -n "$bb" ] && ! ldd "$bb" >/dev/null 2>&1 && unshare -r true 2>/dev/null; then
+	cp "$bb" "$r/bin/sh"
+	run unshare -r "$NINITCTL" init --root "$r" -n
+	t_has "$err" "ninitctl: $r/etc/ninit.d/a: outside" "the check runs chrooted into the root"
+	touch "$r/marker"
+	run unshare -r "$NINITCTL" init --root "$r" -n
+	t_is "$rc" 0 "and passes there" || t_diag "$err"
+else
+	t_skip "the check runs chrooted into the root, needs a static busybox and unshare -r"
+	t_skip "and passes there, needs a static busybox and unshare -r"
+fi
+
 d=$T/mixed
 mkdir -p "$d"
 if py=$(interp python3); then

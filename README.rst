@@ -461,7 +461,7 @@ lua       lua, luaN.N, luajit and its versioned names
 perl      perl, perlN.N
 ========  ========================================
 
-the interpreter is named directly, as in ``#!/usr/bin/python3``, or through env, as in ``#!/usr/bin/env lua``. ninitctl init resolves it once, when the graph is built, and the graph holds its absolute path. ninit never runs env, so the options and NAME=VALUE words before the program, read as gnu and busybox env read them, have no effect. a path in the #! line is kept as written. env is resolved through the PATH services run with, see `3.8`_, with the directory made canonical and the program keeping its own name, so ``env python3`` is /usr/bin/python3 where /usr/sbin links to /usr/bin. an interpreter that does not exist or is not executable fails the build. the #! line of a file without commands, which runs nothing, is not read. the words after the interpreter are separate arguments, as ``env -S`` splits them, and come before the script
+the interpreter is named directly, as in ``#!/usr/bin/python3``, or through env, as in ``#!/usr/bin/env lua``. ninitctl init resolves it once, when the graph is built, on the running system or below the ``--root`` directory of `4.1`_, and the graph holds its absolute path. ninit never runs env, so the options and NAME=VALUE words before the program, read as gnu and busybox env read them, have no effect. a path in the #! line is kept as written. env is resolved through the PATH services run with, see `3.8`_, with the directory made canonical and the program keeping its own name, so ``env python3`` is /usr/bin/python3 where /usr/sbin links to /usr/bin. an interpreter that does not exist or is not executable fails the build. the #! line of a file without commands, which runs nothing, is not read. the words after the interpreter are separate arguments, as ``env -S`` splits them, and come before the script
 
 the build fails on an argument that keeps the stored script from running. a letter counts inside a cluster of options, as in ``-Bc``:
 
@@ -506,7 +506,7 @@ ninitctl has configuration commands, described here, and runtime commands, descr
 
 ::
 
-   ninitctl init [-d DIR] [-o FILE] [-n] [--no-check]
+   ninitctl init [-d DIR] [-o FILE] [-n] [--no-check] [--root ROOT]
 
 ======================  ========================================
 option                  effect
@@ -515,6 +515,7 @@ option                  effect
 ``-o``, ``--out FILE``  output file. default DIR/depgraph
 ``-n``, ``--dry-run``   perform every step except writing the output
 ``--no-check``          skip the syntax check
+``--root ROOT``         build for the system whose root directory is ROOT. default DIR ROOT/etc/ninit.d
 ======================  ========================================
 
 ``init`` performs, in order:
@@ -527,6 +528,8 @@ option                  effect
 6. resolve the default onfail of each service and count its dependents
 7. build the image and verify it with the checks ninit applies at boot
 8. write it to a temporary file in the output directory and fsync it, hard link the current graph to FILE.old, rename the new file over FILE, fsync the directory
+
+with ``--root``, the interpreters of `3.12`_ and /etc/locale.conf are looked up below ROOT as the system booted from it sees them, absolute links and ``..`` included, and every syntax check runs chrooted into ROOT. the chroot requires CAP_SYS_CHROOT, without it no script can be checked and the build requires ``--no-check``. DIR and FILE are paths on the running system. the lookup uses openat2, linux 5.6 or newer
 
 a failed build writes nothing and leaves the existing graph in place. if FILE or FILE.old exists and is not a graph, the build fails instead of replacing it. the output mode is 0644 less the umask, and less group or other read permission if any service file lacks it
 
