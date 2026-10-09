@@ -90,7 +90,8 @@ and a python, lua or perl script as
 describes, and report every syntax error, in service order.
 bash checks with
 .B extglob
-on
+on.
+a check still running after 30 s is killed and reported as not finished
 .IP 4. 4
 resolve dependencies and reject unknown names, self dependencies and cycles
 .IP 5. 4

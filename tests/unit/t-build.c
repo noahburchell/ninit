@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <setjmp.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +34,7 @@ static jmp_buf die_jb;
 #include "../../ctl/output.c"
 #include "../../ctl/sources.c"
 #include "../../ctl/graph.c"
+#define CHECK_MS 1000
 #include "../../ctl/check.c"
 #include "../../ctl/image.c"
 #include "../../ctl/build.c"
@@ -734,9 +736,84 @@ static void test_languages(void)
 	rmdir(dir);
 }
 
+static void call_check(void *p)
+{
+	check_syntax(p, 1, "/d");
+}
+
+// an interpreter at DIR/NAME running BODY under sh
+static void fake_script(char *path, size_t cap, const char *dir, const char *name, const char *body)
+{
+	int fd;
+
+	snprintf(path, cap, "%s/%s", dir, name);
+	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+	if (fd >= 0) {
+		(void)!write(fd, "#!/bin/sh\n", 10);
+		(void)!write(fd, body, strlen(body));
+		close(fd);
+	}
+}
+
+static void test_check(void)
+{
+	char dir[] = "/tmp/ninit-t-build-check.XXXXXX", path[512];
+	static char name[] = "svc";
+	struct src s = { .name = name, .lang = &lang_perl, .script = "print 1;\n" };
+	sigset_t chld;
+	long long t0;
+	int rc;
+
+	if (!mkdtemp(dir)) {
+		ok(0, "mkdtemp: %s", strerror(errno));
+		return;
+	}
+	sigemptyset(&chld);
+	sigaddset(&chld, SIGCHLD);
+
+	fake_script(path, sizeof(path), dir, "perl", "exec sleep 10\n");
+	s.interp = path;
+	t0 = mono_ms();
+	rc = capture(call_check, &s);
+	if (!ok(rc == 1001 && !strcmp(errtext, "ninitctl: /d/svc: the syntax check did not finish in 1 s\n"
+				  "ninitctl: 1 service script could not be checked, use --no-check to skip\n"),
+		"a check still running at its deadline fails the build"))
+		tap_diag("%d %s", rc, errtext);
+	ok(mono_ms() - t0 < 5000, "it is killed at the deadline");
+	sigprocmask(SIG_UNBLOCK, &chld, NULL);
+	signal(SIGCHLD, SIG_DFL);
+
+	fake_script(path, sizeof(path), dir, "perl", "echo 'syntax error at - line 1' >&2\nexit 255\n");
+	signal(SIGCHLD, SIG_IGN);
+	rc = capture(call_check, &s);
+	if (!ok(rc == 1001 && strstr(errtext, "ninitctl: /d/svc: syntax error at - line 1\n") &&
+		strstr(errtext, "failed the "), "a failure is reported with SIGCHLD ignored by the caller"))
+		tap_diag("%d %s", rc, errtext);
+	sigprocmask(SIG_UNBLOCK, &chld, NULL);
+	signal(SIGCHLD, SIG_DFL);
+
+	fake_script(path, sizeof(path), dir, "perl", "exit 0\n");
+	signal(SIGCHLD, SIG_IGN);
+	rc = capture(call_check, &s);
+	ok(!rc && !*errtext, "and a check that passes leaves SIGCHLD as the caller set it");
+	{
+		struct sigaction sa;
+		sigset_t now;
+
+		sigaction(SIGCHLD, NULL, &sa);
+		sigprocmask(SIG_BLOCK, NULL, &now);
+		ok(sa.sa_handler == SIG_IGN && !sigismember(&now, SIGCHLD), "with its mask restored");
+	}
+	signal(SIGCHLD, SIG_DFL);
+
+	unlink(path);
+	rmdir(dir);
+}
+
 int main(void)
 {
 	test_parse_ms();
+	test_check();
 	test_helpers();
 	test_shebang();
 	test_languages();
