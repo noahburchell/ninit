@@ -606,11 +606,11 @@ static void test_languages(void)
 		is_str(s.exec_pre.v[2], "$| = 1; $0 = 'it\\'s\\\\x';", "the perl line escapes the name");
 	}
 	{
-		static char x[] = "-X", dev[] = "dev", name[] = "svc";
+		static char name[] = "svc";
 		struct src s = { .name = name, .interp = "/usr/bin/python3" };
 
-		strv_push(&s.iargs, x);
-		strv_push(&s.iargs, dev);
+		strv_push(&s.iargs, "-X");
+		strv_push(&s.iargs, "dev");
 		lang_python.exec_args(&s);
 		ok(s.exec_pre.n == 7 && !strcmp(s.exec_pre.v[1], "-I") && !strcmp(s.exec_pre.v[2], "-B") &&
 		   !strcmp(s.exec_pre.v[3], "-u") && !strcmp(s.exec_pre.v[4], "-X") &&
