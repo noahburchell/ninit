@@ -77,9 +77,9 @@ and
 .B del
 take
 .IP 2. 4
-parse every service file, resolve the python, lua or perl interpreter a
+parse every service file, resolve the python, lua or perl interpreter the
 .B #!\&
-line names, and strip the comments from a shell script when the interpreter lexes like sh, see
+line of a file with commands names, and strip the comments from a shell script when the interpreter lexes like sh, see
 .BR ninit.d (5).
 the first error ends the command
 .IP 3. 4
