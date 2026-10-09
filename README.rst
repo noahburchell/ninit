@@ -463,6 +463,17 @@ perl      perl, perlN.N
 
 the interpreter is named directly, as in ``#!/usr/bin/python3``, or through env, as in ``#!/usr/bin/env lua``. ninitctl init resolves it once, when the graph is built, and the graph holds its absolute path. ninit never runs env. a path in the #! line is kept as written. env is resolved through the PATH services run with, see `3.8`_, with the directory made canonical and the program keeping its own name, so ``env python3`` is /usr/bin/python3 where /usr/sbin links to /usr/bin. an interpreter that does not exist or is not executable fails the build. the words after the interpreter are separate arguments, as ``env -S`` splits them, and come before the script
 
+the build fails on an argument that keeps the stored script from running. a letter counts inside a cluster of options, as in ``-Bc``:
+
+========  ========================================
+language  refused #! arguments
+========  ========================================
+all       a word that is neither an option nor an option argument, ``-``, ``--``
+python    ``-c``, ``-m``, ``-h``, ``-V``, ``--help``, ``--version``, and ``-W``, ``-X`` or ``--check-hash-based-pycs`` without their argument
+lua       ``-e``, luajit ``-b``, and ``-l`` or luajit ``-j`` without their argument
+perl      ``-e``, ``-E``, ``-x``, ``-c``, ``-h``, ``-u``, ``-v``, ``-V``, ``-d`` without a module, ``-n``, ``-p``, ``-a``, ``-F``, and ``-I`` without its argument
+========  ========================================
+
 the header, #! line and directives included, is stored as empty lines and the rest of the file as written. nothing is stripped and a #% line after the header draws no warning. line numbers in interpreter messages match the file. in lua a ``#`` line is valid only in the header
 
 each start runs:

@@ -3,6 +3,13 @@
 #include <stddef.h>
 
 struct src;
+struct strv;
+
+// why a #! argument is refused
+#define ARG_SCRIPT	"replaces the script"
+#define ARG_CODE	"adds code outside the script"
+#define ARG_EXIT	"exits before the script runs"
+#define ARG_LOOP	"loops the script over stdin, which is /dev/null"
 
 struct lang {
 	const char *name;
@@ -14,6 +21,8 @@ struct lang {
 	const char *(*check_argv)(const struct src *s, char **argv, size_t cap);
 	// fills s->exec_pre and s->exec_suf, the argv ninit puts around the script
 	void (*exec_args)(struct src *s);
+	// the reason the #! arguments keep the script from running as stored, with the word
+	const char *(*bad_arg)(const struct strv *a, const char **word);
 };
 
 extern const struct lang lang_shell, lang_python, lang_lua, lang_perl;

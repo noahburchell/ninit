@@ -177,7 +177,7 @@ const struct lang *lang_select(struct src *s, const char *fname, const char *bod
 {
 	static const struct lang *const langs[] = { &lang_python, &lang_lua, &lang_perl };
 	struct shebang sb;
-	const char *nl, *w, *p, *a;
+	const char *nl, *w, *p, *a, *why, *word;
 	size_t n, len, al;
 
 	s->interp = NG_SHELL;
@@ -193,10 +193,13 @@ const struct lang *lang_select(struct src *s, const char *fname, const char *bod
 		if (!langs[k]->claims(w, len))
 			continue;
 		parse_shebang(body, n, &sb);
-		s->interp = resolve(fname, &sb);
 		// the kernel would pass these as one argument, they are split as env -S does
 		for (p = sb.rest; (a = word_at(&p, sb.end, &al));)
 			strv_push(&s->iargs, xstrndup(a, al));
+		why = langs[k]->bad_arg(&s->iargs, &word);
+		if (why)
+			die("%s/%s: #! argument '%s' %s", g_dir, fname, word, why);
+		s->interp = resolve(fname, &sb);
 		return langs[k];
 	}
 	while (n && (body[n - 1] == ' ' || body[n - 1] == '\t' || body[n - 1] == '\r'))
