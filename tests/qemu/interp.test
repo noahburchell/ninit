@@ -26,7 +26,8 @@ PERL=$(interp perl)
 
 q_new interp
 
-# python with the modules a -I -B -u startup loads, lib-dynload marks the platform library
+# python with the modules a -I -B -u startup loads, lib-dynload marks the platform library,
+# and python names it in sys.path wherever the distribution put it
 copy_python() {
 	local f
 	q_copy_elf "$Q/root" "$PY" || return 1
@@ -35,7 +36,9 @@ for m in list(sys.modules.values()):
 	f = getattr(m, "__file__", None)
 	if f:
 		print(f)
-print(os.path.join(sys.base_exec_prefix, sys.platlibdir, "python%d.%d" % sys.version_info[:2], "lib-dynload"))' |
+dyn = [p for p in sys.path if os.path.basename(p) == "lib-dynload"]
+print(dyn[0] if dyn else os.path.join(sys.base_exec_prefix, getattr(sys, "platlibdir", "lib"),
+	"python%d.%d" % sys.version_info[:2], "lib-dynload"))' |
 		while read -r f; do
 			case $f in
 			*/lib-dynload) mkdir -p "$Q/root$f" ;;
