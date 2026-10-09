@@ -662,7 +662,7 @@ ninit performs, in order:
 10. raise its own RLIMIT_NOFILE
 11. read /etc/locale.conf
 12. print ``Welcome to NAME!``, where NAME is PRETTY_NAME from /etc/os-release or /usr/lib/os-release
-13. load and verify the graph. on failure, start the emergency shell
+13. load and verify the graph. on failure, log the reason and load the graph at the same path with ``.old`` appended, the one the last ninitctl init replaced. if that does not exist or fails too, start the emergency shell
 14. start every root
 
 ==============  ========  ========================================
@@ -874,7 +874,7 @@ tools-install operates in sbindir. each existing shutdown, poweroff, halt, reboo
 
 the emergency shell starts when:
 
-- the graph is missing, unreadable, empty or fails verification, which includes a version mismatch
+- the graph is missing, unreadable, empty or fails verification, which includes a version mismatch, and the graph with ``.old`` appended to its path does not exist or fails the same way, see `5.2`_
 - a service with onfail: shell exhausts its start-tries
 - memory runs out while ninit allocates its tables at boot
 
@@ -895,7 +895,7 @@ when the shell exits it is started again. ninit stops restarting it after 5 cons
 9 depgraph format
 =================
 
-a graph is loaded only if its version equals the NG_VERSION ninit was built with, defined in src/ngraph.h, currently 8. after upgrading ninit, run ``ninitctl init`` before rebooting. an older graph is refused and the boot ends in the emergency shell
+a graph is loaded only if its version equals the NG_VERSION ninit was built with, defined in src/ngraph.h, currently 8. after upgrading ninit, run ``ninitctl init`` before rebooting. an older graph is refused. ninit then loads depgraph.old, which after an upgrade is as old unless ninitctl init ran twice, and the boot ends in the emergency shell when that is refused too
 
 ninit reads the whole graph into private read-only memory and verifies it before use. every offset and length is bounds checked, sections must not overlap, the checksum must match, every edge must point to a higher index, stored counts must agree with the edge list, names must be valid and unique, and every field must be in range. a graph that fails any check is not used. ninitctl show applies the same checks
 
@@ -1019,7 +1019,7 @@ path                                  description
 /etc/ninit.d/                         service directory
 /etc/ninit.d/unused/                  disabled services
 /etc/ninit.d/depgraph                 compiled graph
-/etc/ninit.d/depgraph.old             graph replaced by the last ninitctl init
+/etc/ninit.d/depgraph.old             graph replaced by the last ninitctl init, loaded when depgraph fails
 DOCDIR/ninit.d/                       example service set, see `3.11`_
 /etc/locale.conf                      locale for services
 /etc/adjtime                          hardware clock mode for hwclock at shutdown, UTC or LOCAL on its third line

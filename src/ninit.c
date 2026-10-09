@@ -123,6 +123,29 @@ static void start_graph(void)
 	}
 }
 
+// the graph the last ninitctl init replaced boots in place of one that fails to load
+static const void *load_previous(const char *graph, const char *why)
+{
+	char old[4096], msg[sizeof(old) + 128];
+	const void *m;
+
+	if (snprintf(old, sizeof(old), "%s.old", graph) >= (int)sizeof(old) ||
+	    access(old, F_OK) < 0) {
+		snprintf(msg, sizeof(msg), "depgraph: %s: %s", graph, why);
+		fail_emergency_shell(msg);
+		return NULL;
+	}
+	log_err("depgraph: %s: %s", graph, why);
+	m = load_graph(old, &why);
+	if (m) {
+		log_warn("depgraph: loaded %s instead", old);
+		return m;
+	}
+	snprintf(msg, sizeof(msg), "depgraph: %s: %s", old, why);
+	fail_emergency_shell(msg);
+	return NULL;
+}
+
 int main(int argc, char **argv)
 {
 	static struct pollfd sig_only[1];
@@ -177,14 +200,10 @@ int main(int argc, char **argv)
 	if (argc > 1 && argv[1][0] == '/')
 		graph = argv[1];
 	map = load_graph(graph, &why);
-	if (map) {
+	if (!map)
+		map = load_previous(graph, why);
+	if (map)
 		start_graph();
-	} else {
-		char msg[256];
-
-		snprintf(msg, sizeof(msg), "depgraph: %s: %s", graph, why);
-		fail_emergency_shell(msg);
-	}
 
 	pfds = calloc(4 + CTL_MAX + 2 * (size_t)n_svc, sizeof(*pfds));
 	pf_idx = calloc(4 + CTL_MAX + 2 * (size_t)n_svc, sizeof(*pf_idx));

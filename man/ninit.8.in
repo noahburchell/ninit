@@ -104,7 +104,12 @@ with mode 0700 and listens on
 with mode 0600
 .IP 12. 4
 loads and verifies the graph.
-if that fails, it starts the emergency shell
+if that fails, it logs the reason and loads the graph at the same path with
+.I .old
+appended, the one the last
+.B ninitctl init
+replaced.
+if that does not exist or fails too, it starts the emergency shell
 .IP 13. 4
 starts every service that has no prerequisites
 .PP
@@ -319,7 +324,9 @@ is called with the requested action
 .PP
 no service is restarted and the emergency shell is not respawned during shutdown
 .SH EMERGENCY SHELL
-the emergency shell is started when the graph is missing, unreadable, of another version or fails verification, when a service with
+the emergency shell is started when the graph is missing, unreadable, of another version or fails verification and the graph with
+.I .old
+appended to its path does not exist or fails the same way, when a service with
 .B onfail: shell
 exhausts its start attempts, and when memory runs out while it allocates its tables at boot.
 .B ninit
@@ -386,6 +393,13 @@ as process 1 it does not exit
 .TP
 .I @ninit_svcdir@/depgraph
 the compiled graph
+.TP
+.I @ninit_svcdir@/depgraph.old
+the graph replaced by the last
+.BR "ninitctl init" ,
+loaded when
+.I depgraph
+fails
 .TP
 .I /etc/locale.conf
 locale variables for services

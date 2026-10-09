@@ -88,6 +88,23 @@ for kind in crc version empty magic; do
 	q_poweroff_ok
 done
 
+# both graphs of another version
+q_new graph-both
+Q_PIPE=1
+q_svc a <<<':'
+q_graph
+q_graph
+for g in "$Q"/root/etc/ninit.d/depgraph "$Q"/root/etc/ninit.d/depgraph.old; do
+	printf '\x06' | dd of="$g" bs=1 seek=4 conv=notrunc status=none
+done
+q_start
+q_see "FAIL > depgraph: /etc/ninit.d/depgraph: version mismatch" "the graph is refused"
+q_see "FAIL > depgraph: /etc/ninit.d/depgraph.old: version mismatch" "and so is the one it replaced"
+q_see "$PROMPT" "and the shell starts"
+q_send 'poweroff\n'
+q_finish
+q_poweroff_ok
+
 # onfail shell stops what depends on the service and leaves the rest running
 q_new onfail-shell
 Q_PIPE=1
