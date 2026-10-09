@@ -402,7 +402,12 @@ it is named directly or through
 .BR env .
 .B ninitctl init
 resolves it when the graph is built and stores its absolute path, ninit never runs
-.BR env .
+.BR env ,
+so the options and
+.IB name = value
+words before the program, read as gnu and busybox
+.B env
+read them, have no effect.
 .B env
 is resolved through the
 .B PATH

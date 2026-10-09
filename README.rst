@@ -461,7 +461,7 @@ lua       lua, luaN.N, luajit and its versioned names
 perl      perl, perlN.N
 ========  ========================================
 
-the interpreter is named directly, as in ``#!/usr/bin/python3``, or through env, as in ``#!/usr/bin/env lua``. ninitctl init resolves it once, when the graph is built, and the graph holds its absolute path. ninit never runs env. a path in the #! line is kept as written. env is resolved through the PATH services run with, see `3.8`_, with the directory made canonical and the program keeping its own name, so ``env python3`` is /usr/bin/python3 where /usr/sbin links to /usr/bin. an interpreter that does not exist or is not executable fails the build. the words after the interpreter are separate arguments, as ``env -S`` splits them, and come before the script
+the interpreter is named directly, as in ``#!/usr/bin/python3``, or through env, as in ``#!/usr/bin/env lua``. ninitctl init resolves it once, when the graph is built, and the graph holds its absolute path. ninit never runs env, so the options and NAME=VALUE words before the program, read as gnu and busybox env read them, have no effect. a path in the #! line is kept as written. env is resolved through the PATH services run with, see `3.8`_, with the directory made canonical and the program keeping its own name, so ``env python3`` is /usr/bin/python3 where /usr/sbin links to /usr/bin. an interpreter that does not exist or is not executable fails the build. the words after the interpreter are separate arguments, as ``env -S`` splits them, and come before the script
 
 the build fails on an argument that keeps the stored script from running. a letter counts inside a cluster of options, as in ``-Bc``:
 
