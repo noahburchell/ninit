@@ -54,4 +54,14 @@ mkgraph /etc/ninit.d current
 Q_ARGS="ninit_graph=/etc/ninit.d/depgraph.old"
 booted previous
 
+# a graph that fails to load gives way to the one it replaced
+q_new fallback
+mkgraph /etc/ninit.d previous
+mkgraph /etc/ninit.d current
+g=$Q/root/etc/ninit.d/depgraph
+printf '\x58' | dd of="$g" bs=1 seek=$(($(stat -c %s "$g") - 3)) conv=notrunc status=none
+booted previous
+q_has "FAIL > depgraph: /etc/ninit.d/depgraph: crc mismatch" "the failure is logged"
+q_has "WARN > depgraph: loaded /etc/ninit.d/depgraph.old instead" "and the graph loaded in its place"
+
 t_done

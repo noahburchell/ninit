@@ -488,7 +488,12 @@ is written by
 the previous graph is kept as
 .IR depgraph.old .
 .BR ninit (8)
-loads a graph only if its version equals the one it was built with, currently 8.
+loads a graph only if its version equals the one it was built with, currently 8,
+and loads
+.I depgraph.old
+when
+.I depgraph
+fails.
 the graph must be rebuilt after
 .B ninit
 is upgraded
