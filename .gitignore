@@ -10,7 +10,7 @@
 /tests/unit/t-logging-quiet
 /tests/unit/t-fail
 /tests/unit/t-fail-sulogin
-/tests/unit/t-shutdown
+/tests/unit/t-ninit-shutdown
 /tests/unit/t-build
 /tests/unit/t-ninit
 /tests/helpers/czdump

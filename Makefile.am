@@ -28,7 +28,7 @@ ninit_core = \
 	src/spawn.c \
 	src/state.c \
 	src/stop.c \
-	src/teardown.c \
+	src/shutdown.c \
 	src/ninit.c
 
 ninit_headers = \
@@ -48,7 +48,7 @@ ninit_headers = \
 	src/spawn.h \
 	src/state.h \
 	src/stop.h \
-	src/teardown.h
+	src/shutdown.h
 
 ninit_SOURCES = \
 	$(ninit_core) \
@@ -163,7 +163,7 @@ unit_tests = \
 	tests/unit/t-logging-quiet \
 	tests/unit/t-fail \
 	tests/unit/t-fail-sulogin \
-	tests/unit/t-shutdown \
+	tests/unit/t-ninit-shutdown \
 	tests/unit/t-build \
 	tests/unit/t-ninit
 
@@ -212,7 +212,7 @@ tests_unit_t_fail_SOURCES = tests/unit/t-fail.c src/logging.c src/ngraph.c $(uni
 tests_unit_t_fail_sulogin_SOURCES = $(tests_unit_t_fail_SOURCES)
 tests_unit_t_fail_sulogin_CPPFLAGS = $(AM_CPPFLAGS) -DNINIT_SULOGIN=1 \
 	-DNINIT_BUSYBOX='"/bin/busybox"'
-tests_unit_t_shutdown_SOURCES = tests/unit/t-shutdown.c $(unit_headers)
+tests_unit_t_ninit_shutdown_SOURCES = tests/unit/t-ninit-shutdown.c $(unit_headers)
 tests_unit_t_build_SOURCES = tests/unit/t-build.c src/ngraph.c $(unit_headers)
 tests_unit_t_ninit_SOURCES = tests/unit/t-ninit.c src/logging.c src/ngraph.c $(unit_headers)
 tests_helpers_czdump_SOURCES = tests/helpers/czdump.c $(ninitctl_parser) src/ngraph.c
