@@ -6,7 +6,7 @@
 
 | suite | path | requires | covers |
 |---|---|---|---|
-| unit | `tests/unit/t-*.c` | nothing | graph verifier, crc32c, names, `/etc/locale.conf`, log ring and console, failure reporting, emergency shell state machine, `ninit-shutdown` argument handling, comment stripper, pid table, scheduler simulation, the swap, clock and remount steps of shutdown, graph loading and the descriptor limit of pid 1 |
+| unit | `tests/unit/t-*.c` | nothing | graph verifier, crc32c, names, `/etc/locale.conf`, log ring and console, failure reporting, emergency shell state machine, `ninit-shutdown` argument handling, comment stripper, pid table, scheduler simulation, the swap, clock and remount steps of shutdown, graph loading and the descriptor limit of pid 1, the graph writes and link moves of `ninitctl` |
 | ninitctl | `tests/ctl/*.test` | bash, coreutils | `init`, `show`, `add`, `del`, directives, ordering, limits, locking, `make tools-install`, the examples in `docs/ninit.d` against README 4.2 |
 | interpreters | `tests/ctl/interp.test`, `tests/qemu/interp.test` | python3, lua and perl, each part skips without its interpreter | `#!` selection, build time resolution, argv, syntax checks, and python, lua and perl services run by ninit |
 | client | `tests/ctl/client.test` | `unshare(1)`, unprivileged user namespaces | the `ninitctl` client against a fake control socket in a private mount namespace |

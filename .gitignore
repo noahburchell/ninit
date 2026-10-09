@@ -15,6 +15,7 @@
 /tests/unit/t-ninit
 /tests/unit/t-shutdown
 /tests/unit/t-boot
+/tests/unit/t-ctlfs
 /tests/helpers/czdump
 /tests/helpers/nctl-raw
 /tests/helpers/fakectl
