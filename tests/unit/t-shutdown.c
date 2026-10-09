@@ -16,13 +16,15 @@
 // the shutdown steps run against files the test writes, nothing reaches the system
 
 static long long fake_ms = 100000;
-static const char *swaps_path, *adjtime_path;
+static const char *mounts_path, *swaps_path, *adjtime_path;
 
 static int shim_open(const char *path, int flags, ...)
 {
 	const char *to = NULL;
 
-	if (!strcmp(path, "/proc/swaps"))
+	if (!strcmp(path, "/proc/self/mounts"))
+		to = mounts_path;
+	else if (!strcmp(path, "/proc/swaps"))
 		to = swaps_path;
 	else if (!strcmp(path, "/etc/adjtime"))
 		to = adjtime_path;
@@ -57,36 +59,112 @@ static int shim_swapoff(const char *path)
 	return 0;
 }
 
-[[noreturn]] static void shim_forbidden(void)
+struct fake_mnt {
+	const char *path;
+	// remounts refused before one succeeds, -1 refuses every one
+	int ro_fails;
+	int umount_ok;
+	int ro, gone, detached;
+};
+
+static struct fake_mnt mnts[8];
+static int n_mnts, n_sync, n_remount;
+
+static struct fake_mnt *mnt_of(const char *path)
 {
+	for (int k = 0; k < n_mnts; k++)
+		if (!strcmp(mnts[k].path, path))
+			return &mnts[k];
 	abort();
 }
 
-static int shim_mount(const char *a, const char *b, const char *c, unsigned long d, const void *e)
+static int shim_mount(const char *src, const char *dst, const char *type, unsigned long flags,
+		      const void *data)
 {
-	(void)a;
-	(void)b;
-	(void)c;
-	(void)d;
-	(void)e;
-	shim_forbidden();
+	struct fake_mnt *m = mnt_of(dst);
+
+	if (src || type || data || flags != (MS_REMOUNT | MS_RDONLY))
+		abort();
+	n_remount++;
+	if (m->ro_fails) {
+		if (m->ro_fails > 0)
+			m->ro_fails--;
+		errno = EBUSY;
+		return -1;
+	}
+	m->ro = 1;
+	return 0;
 }
 
-static int shim_umount2(const char *a, int b)
+static int shim_umount2(const char *path, int flags)
 {
-	(void)a;
-	(void)b;
-	shim_forbidden();
+	struct fake_mnt *m = mnt_of(path);
+
+	if (flags == MNT_DETACH) {
+		m->detached = 1;
+		return 0;
+	}
+	if (flags)
+		abort();
+	if (!m->umount_ok) {
+		errno = EBUSY;
+		return -1;
+	}
+	m->gone = 1;
+	return 0;
 }
 
 static void shim_sync(void)
 {
-	shim_forbidden();
+	n_sync++;
 }
+
+// hwclock never runs, its pid only answers waitpid and kill
+static const pid_t hw_pid = 4200000;
+static int hw_exits, hw_killed, hw_forks, fork_fail;
 
 static pid_t shim_fork(void)
 {
-	shim_forbidden();
+	if (fork_fail) {
+		errno = EAGAIN;
+		return -1;
+	}
+	hw_forks++;
+	return hw_pid;
+}
+
+static pid_t shim_waitpid(pid_t pid, int *st, int flags)
+{
+	if (pid != hw_pid || flags != WNOHANG)
+		abort();
+	if (!hw_exits && !hw_killed)
+		return 0;
+	*st = 0;
+	return pid;
+}
+
+static int shim_kill(pid_t pid, int sig)
+{
+	if (pid != hw_pid || sig != SIGKILL)
+		abort();
+	hw_killed = 1;
+	return 0;
+}
+
+static int shim_poll(struct pollfd *p, nfds_t n, int ms)
+{
+	(void)p;
+	(void)n;
+	fake_ms += ms;
+	return 0;
+}
+
+static int shim_execve(const char *p, char *const *a, char *const *e)
+{
+	(void)p;
+	(void)a;
+	(void)e;
+	abort();
 }
 
 #define open shim_open
@@ -95,21 +173,21 @@ static pid_t shim_fork(void)
 #define umount2 shim_umount2
 #define sync shim_sync
 #define fork shim_fork
-// the forbidden shims make callers such as remount_ro noreturn here, never in ninit
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wsuggest-attribute=noreturn"
-#endif
+#define waitpid shim_waitpid
+#define kill shim_kill
+#define poll shim_poll
+#define execve shim_execve
 #include "../../src/shutdown.c"
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
 #undef open
 #undef swapoff
 #undef mount
 #undef umount2
 #undef sync
 #undef fork
+#undef waitpid
+#undef kill
+#undef poll
+#undef execve
 
 #include "logcap.h"
 
@@ -201,10 +279,97 @@ static void test_adjtime(void)
 	adjtime_path = NULL;
 }
 
+static void add_mnt(const char *path, int ro_fails, int umount_ok)
+{
+	mnts[n_mnts++] = (struct fake_mnt){ .path = path, .ro_fails = ro_fails, .umount_ok = umount_ok };
+}
+
+static void test_remount(void)
+{
+	char path[] = "/tmp/ninit-t-shutdown-mounts.XXXXXX";
+	int fd = mkstemp(path);
+
+	close(fd);
+	mounts_path = path;
+	put_file(path, "/dev/sda1 / ext4 rw 0 0\n"
+		       "proc /proc proc rw 0 0\n"
+		       "/dev/sda3 /home ext4 rw 0 0\n"
+		       "/dev/sda4 /var ext4 rw 0 0\n"
+		       "/dev/sda5 /mnt/a\\040b ext4 rw 0 0\n"
+		       "/dev/sda6 /data ext4 rw 0 0\n");
+	n_mnts = n_sync = n_remount = 0;
+	add_mnt("/", -1, 0);
+	add_mnt("/proc", 0, 0);
+	add_mnt("/home", 2, 0);
+	add_mnt("/var", -1, 1);
+	add_mnt("/mnt/a b", 3, 0);
+	add_mnt("/data", -1, 0);
+	logcap_begin();
+	remount_ro();
+	ok(mnts[1].ro && mnts[2].ro, "a busy mount is read-only by the third pass");
+	ok(mnts[3].gone && logcap_count("WARN > shutdown: /var: remount read-only failed, unmounted") == 1,
+	   "one that stays writable is unmounted, with a warning");
+	ok(mnts[4].ro && n_sync == 1 &&
+	   logcap_count("WARN > shutdown: /mnt/a b: remounted read-only on retry") == 1,
+	   "one that can be neither is remounted once more after a sync, its escape undone");
+	ok(mnts[5].detached &&
+	   logcap_count("FAIL > shutdown: /data: still mounted writable (Device or resource busy), detaching") == 1,
+	   "one that fails that too is detached and reported");
+	ok(!mnts[0].ro && logcap_count("FAIL > shutdown: /: remount read-only failed: Device or resource busy") == 1,
+	   "a root that stays writable is reported");
+	ok(!mnts[0].gone && !mnts[0].detached, "and never unmounted");
+
+	n_mnts = n_sync = n_remount = 0;
+	add_mnt("/", 0, 0);
+	add_mnt("/proc", 0, 0);
+	add_mnt("/home", 0, 0);
+	add_mnt("/var", 0, 0);
+	add_mnt("/mnt/a b", 0, 0);
+	add_mnt("/data", 0, 0);
+	logcap_begin();
+	remount_ro();
+	ok(n_remount == 7 && !n_sync && !*logcap_text(), "a clean remount takes one pass, then / once more, quietly");
+
+	unlink(path);
+	mounts_path = NULL;
+	n_mnts = n_remount = 0;
+	add_mnt("/", 0, 0);
+	remount_ro();
+	ok(n_remount == 1 && mnts[0].ro, "without a mount table / is still remounted");
+}
+
+static void test_hwclock(void)
+{
+	long long t0;
+
+	hw_exits = 1;
+	hw_killed = hw_forks = 0;
+	logcap_begin();
+	t0 = fake_ms;
+	save_hwclock();
+	ok(hw_forks == 1 && !hw_killed && fake_ms == t0 && !*logcap_text(), "an hwclock that exits is waited for");
+
+	hw_exits = 0;
+	logcap_begin();
+	t0 = fake_ms;
+	save_hwclock();
+	ok(hw_killed && fake_ms - t0 >= 5000 && fake_ms - t0 < 5000 + SHUTDOWN_DRAIN_MS,
+	   "one still running after 5 s is killed");
+	ok(logcap_count("WARN > shutdown: hwclock did not exit in 5 s, killing it") == 1, "with a warning");
+
+	fork_fail = 1;
+	hw_forks = 0;
+	save_hwclock();
+	ok(!hw_forks, "a failed fork skips the clock");
+	fork_fail = 0;
+}
+
 int main(void)
 {
 	logcap_quiet();
 	test_swap();
 	test_adjtime();
+	test_remount();
+	test_hwclock();
 	return tap_done();
 }
