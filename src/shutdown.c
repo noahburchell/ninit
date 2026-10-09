@@ -9,7 +9,6 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
@@ -38,37 +37,46 @@ static void unescape_mount(char *s)
 	*w = '\0';
 }
 
+// the whole of a /proc file, which reports no size, or NULL
+static char *read_proc(const char *path, const char *what)
+{
+	char *buf = NULL;
+	size_t cap = 0, len = 0;
+	int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOCTTY);
+
+	if (fd < 0)
+		return NULL;
+	for (;;) {
+		ssize_t k;
+
+		if (len + 4096 > cap) {
+			char *nb = realloc(buf, cap = cap ? cap * 2 : 16384);
+
+			if (!nb) {
+				log_warn("shutdown: out of memory reading %s", what);
+				break;
+			}
+			buf = nb;
+		}
+		k = read(fd, buf + len, cap - len - 1);
+		if (k < 0 && errno == EINTR)
+			continue;
+		if (k <= 0)
+			break;
+		len += (size_t)k;
+	}
+	close(fd);
+	if (buf)
+		buf[len] = '\0';
+	return buf;
+}
+
 void remount_ro(void)
 {
-	char *buf = NULL, *p, **mps = NULL;
-	size_t cap = 0, len = 0, n = 0, mcap = 0;
-	int fd = open("/proc/self/mounts", O_RDONLY | O_CLOEXEC | O_NOCTTY);
-
-	if (fd >= 0) {
-		for (;;) {
-			ssize_t k;
-
-			if (len + 4096 > cap) {
-				char *nb = realloc(buf, cap = cap ? cap * 2 : 16384);
-
-				if (!nb) {
-					log_warn("shutdown: out of memory reading the mount table");
-					break;
-				}
-				buf = nb;
-			}
-			k = read(fd, buf + len, cap - len - 1);
-			if (k < 0 && errno == EINTR)
-				continue;
-			if (k <= 0)
-				break;
-			len += (size_t)k;
-		}
-		close(fd);
-	}
+	char *buf = read_proc("/proc/self/mounts", "the mount table"), *p, **mps = NULL;
+	size_t n = 0, mcap = 0;
 
 	if (buf) {
-		buf[len] = '\0';
 		for (p = buf; *p; ) {
 			char *nl = strchr(p, '\n'), *sp, *mp;
 
@@ -160,28 +168,26 @@ void remount_ro(void)
 // the hardware clock and swap both need the filesystems still writable
 void stop_swap(void)
 {
-	char line[512];
-	FILE *f = fopen("/proc/swaps", "re");
+	char *buf = read_proc("/proc/swaps", "/proc/swaps"), *p;
 
-	if (!f)
+	if (!buf)
 		return;
-	if (!fgets(line, sizeof(line), f)) { // header
-		fclose(f);
-		return;
-	}
-	while (fgets(line, sizeof(line), f)) {
-		char *sp = strchr(line, ' ');
+	// the first line is a header
+	for (p = strchr(buf, '\n'); p; ) {
+		char *line = p + 1, *end;
 
-		if (!sp)
-			sp = strchr(line, '\t');
-		if (!sp)
+		p = strchr(line, '\n');
+		if (p)
+			*p = '\0';
+		end = line + strcspn(line, " \t");
+		if (!*end)
 			continue;
-		*sp = '\0';
+		*end = '\0';
 		unescape_mount(line);
 		if (swapoff(line) < 0)
 			log_warn("shutdown: swapoff %s: %s", line, strerror(errno));
 	}
-	fclose(f);
+	free(buf);
 }
 
 static int wait_pid_ms(pid_t pid, long long ms)
@@ -210,7 +216,7 @@ static int wait_pid_ms(pid_t pid, long long ms)
 
 static int rtc_local(void)
 {
-	char buf[256], *p;
+	char buf[4096], *p;
 	ssize_t k;
 	int fd = open("/etc/adjtime", O_RDONLY | O_CLOEXEC | O_NOCTTY);
 

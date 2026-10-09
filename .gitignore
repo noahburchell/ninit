@@ -13,6 +13,7 @@
 /tests/unit/t-ninit-shutdown
 /tests/unit/t-build
 /tests/unit/t-ninit
+/tests/unit/t-shutdown
 /tests/helpers/czdump
 /tests/helpers/nctl-raw
 /tests/helpers/fakectl
