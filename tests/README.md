@@ -59,7 +59,7 @@ each boot leaves `console.log` (the serial console without colour), `tap.log` (t
 
 ### guest layout
 
-the initramfs is `tests/qemu/base.cpio`, built once per build tree from `ninit`, `ninitctl`, `ninit-shutdown`, the configured shell and its libraries, busybox and `tests/qemu/guest.sh`, followed by the files of the scenario. `interp.test` adds python with the modules its startup loads, lua and perl to its scenario, at the paths `ninitctl init` resolves on the build system. ninit is started with `rdinit=/sbin/ninit`. a dynamically linked musl build cannot be copied into the guest, link it statically with `LDFLAGS=-static`
+the initramfs is `tests/qemu/base.cpio`, built once per build tree from `ninit`, `ninitctl`, `ninit-shutdown`, the configured shell and its libraries, busybox and `tests/qemu/guest.sh`, followed by the files of the scenario. `interp.test` adds python with the modules its startup loads, lua and perl to its scenario, at the paths `ninitctl init` resolves on the build system. ninit is started with `rdinit=/sbin/ninit`. the shared objects of a dynamically linked program are found with `ldd`, or with the loader itself for musl
 
 ## writing tests
 

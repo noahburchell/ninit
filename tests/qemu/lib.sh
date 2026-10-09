@@ -86,12 +86,23 @@ q_visible() {
 	return 0
 }
 
+# the program interpreter, whose path the first page of a dynamic ELF file holds
+q_interp() {
+	head -c 4096 "$1" | tr '\0' '\n' | grep -a -m1 '^/.*/ld-.*\.so'
+}
+
 # copies FILE and the shared objects it needs into ROOT, at the same paths
 q_copy_elf() {
-	local root=$1 f=$2 dst=${3:-$2} lib
+	local root=$1 f=$2 dst=${3:-$2} lib libs interp
 	mkdir -p "$root${dst%/*}"
 	cp -L "$f" "$root$dst" || return 1
-	for lib in $(ldd "$f" 2>/dev/null | grep -o '/[^ )]*'); do
+	# the ldd of glibc cannot list a musl program, the musl loader can
+	interp=$(q_interp "$f")
+	case $interp in
+	*/ld-musl-*) libs=$("$interp" --list "$f" 2>/dev/null) ;;
+	*) libs=$(ldd "$f" 2>/dev/null) ;;
+	esac
+	for lib in $(grep -o '/[^ )]*' <<<"$libs"); do
 		[ -e "$root$lib" ] && continue
 		mkdir -p "$root${lib%/*}"
 		cp -L "$lib" "$root$lib" || return 1
