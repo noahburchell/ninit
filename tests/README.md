@@ -10,7 +10,7 @@
 | ninitctl | `tests/ctl/*.test` | bash, coreutils | `init`, `show`, `add`, `del`, directives, ordering, limits, locking, `make tools-install`, the examples in `docs/ninit.d` against README 4.2 |
 | interpreters | `tests/ctl/interp.test`, `tests/qemu/interp.test` | python3, lua and perl, each part skips without its interpreter | `#!` selection, build time resolution, argv, syntax checks, and python, lua and perl services run by ninit |
 | client | `tests/ctl/client.test` | `unshare(1)`, unprivileged user namespaces | the `ninitctl` client against a fake control socket in a private mount namespace |
-| qemu | `tests/qemu/*.test` | qemu, a static busybox, a kernel image | ninit as pid 1 of a virtual machine: boot, readiness, failures, restart, dependencies, control socket, output, shutdown, signals, emergency shell, cgroups, console stalls |
+| qemu | `tests/qemu/*.test` | qemu, a static busybox, a kernel image | ninit as pid 1 of a virtual machine: boot, readiness, failures, restart, dependencies, control socket, output, shutdown, signals, emergency shell, cgroups, console stalls, the fallbacks for kernels without clone3, signalfd or cgroup2 |
 
 a suite whose requirement is missing reports SKIP. no test contacts the control socket or pid 1 of the machine running the tests. the unit tests replace `fork`, `kill`, `reboot`, `mount` and the other system calls with in-process stubs, and abort on any attempt to reach a real process
 
@@ -25,6 +25,7 @@ the kernel is named by `NINIT_TEST_KERNEL`. it needs, built in and not as module
 - `CGROUPS`, `UNIX`, `SIGNALFD`, `UNIX98_PTYS`
 - `BINFMT_ELF`, `BINFMT_SCRIPT`
 - `ACPI`, for poweroff to end the virtual machine
+- `SECCOMP_FILTER`, for `fallback.test` to take clone3 and signalfd away, without it the checks of that log are skipped
 - `SERIO_I8042` and `KEYBOARD_ATKBD`, for the ctrl-alt-del test
 
 most distribution kernels qualify. the one on an installation image is enough, no modules are loaded:
