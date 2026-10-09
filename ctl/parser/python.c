@@ -3,6 +3,7 @@
 #include "../util.h"
 
 #include <stdint.h>
+#include <string.h>
 
 static int python_claims(const char *base, size_t len)
 {
@@ -43,10 +44,42 @@ static void python_exec_args(struct src *s)
 	strv_push(&s->exec_suf, s->name);
 }
 
+// python stops at the first word that is no option and runs it as the script
+static const char *python_bad_arg(const struct strv *a, const char **word)
+{
+	for (uint32_t k = 0; k < a->n; k++) {
+		const char *w = *word = a->v[k];
+
+		if (w[0] != '-' || !w[1] || !strcmp(w, "--"))
+			return ARG_SCRIPT;
+		if (w[1] == '-') {
+			if (!strncmp(w, "--help", 6) || !strcmp(w, "--version"))
+				return ARG_EXIT;
+			if (!strcmp(w, "--check-hash-based-pycs") && ++k == a->n)
+				return ARG_SCRIPT;
+			continue;
+		}
+		for (const char *c = w + 1; *c; c++) {
+			if (*c == 'c' || *c == 'm')
+				return ARG_SCRIPT;
+			if (*c == 'h' || *c == '?' || *c == 'V')
+				return ARG_EXIT;
+			// the option argument is the rest of the word or the next word
+			if (*c == 'W' || *c == 'X') {
+				if (!c[1] && ++k == a->n)
+					return ARG_SCRIPT;
+				break;
+			}
+		}
+	}
+	return NULL;
+}
+
 const struct lang lang_python = {
 	.name = "python",
 	.claims = python_claims,
 	.store = blank_header,
 	.check_argv = python_check_argv,
 	.exec_args = python_exec_args,
+	.bad_arg = python_bad_arg,
 };

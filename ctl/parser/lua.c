@@ -48,10 +48,28 @@ static void lua_exec_args(struct src *s)
 	strv_push(&s->exec_pre, dashe);
 }
 
+// lua takes no option clusters, and luajit -b compiles the arguments that follow it
+static const char *lua_bad_arg(const struct strv *a, const char **word)
+{
+	for (uint32_t k = 0; k < a->n; k++) {
+		const char *w = *word = a->v[k];
+
+		if (w[0] != '-' || !w[1] || !strcmp(w, "--") || w[1] == 'b')
+			return ARG_SCRIPT;
+		if (w[1] == 'e')
+			return ARG_CODE;
+		// -l or -j last takes the -e after it as its argument, and lua exits with an error
+		if ((w[1] == 'l' || w[1] == 'j') && !w[2] && ++k == a->n)
+			return ARG_EXIT;
+	}
+	return NULL;
+}
+
 const struct lang lang_lua = {
 	.name = "lua",
 	.claims = lua_claims,
 	.store = blank_header,
 	.check_argv = lua_check_argv,
 	.exec_args = lua_exec_args,
+	.bad_arg = lua_bad_arg,
 };

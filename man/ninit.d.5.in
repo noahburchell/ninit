@@ -412,6 +412,20 @@ the words after the interpreter are separate arguments, as
 .B env \-S
 splits them, and come before the script
 .PP
+the build fails on an argument that keeps the stored script from running.
+a letter counts inside a cluster of options:
+.PP
+.TS
+tab(|);
+l l.
+all|a word that is neither an option nor an option argument, \-, \-\-
+python|\-c, \-m, \-h, \-V, \-\-help, \-\-version, and \-W, \-X or
+\^|\-\-check\-hash\-based\-pycs without their argument
+lua|\-e, luajit \-b, and \-l or luajit \-j without their argument
+perl|\-e, \-E, \-x, \-c, \-h, \-u, \-v, \-V, \-d without a module,
+\^|\-n, \-p, \-a, \-F, and \-I without its argument
+.TE
+.PP
 the header, the
 .B #!\&
 line and directives included, is stored as empty lines and the rest of the file as written.

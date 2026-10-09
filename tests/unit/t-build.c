@@ -641,7 +641,7 @@ static void test_languages(void)
 	rc = capture(call_parse, &a);
 	ok(!rc && a.s.lang == &lang_perl && a.s.iargs.n == 1, "a #! line naming perl selects perl");
 
-	snprintf(text, sizeof(text), "#!%s/python3 -a -b -c -d -e -f -g -h -i -j -k\nprint(1)\n", dir);
+	snprintf(text, sizeof(text), "#!%s/python3 -b -d -E -i -O -P -q -R -s -S -v\nprint(1)\n", dir);
 	rc = capture(call_parse, &a);
 	if (!ok(rc == 1001 && !strcmp(errtext, "ninitctl: /d/svc: 17 interpreter arguments, the maximum is 16\n"),
 		"more than 16 interpreter arguments are refused"))
@@ -662,6 +662,50 @@ static void test_languages(void)
 	if (!ok(rc == 1001 && !strcmp(errtext, "ninitctl: /d/svc: 'bin/python3' is not an absolute path\n"),
 		"a relative interpreter path fails the build"))
 		tap_diag("%d %s", rc, errtext);
+
+	{
+		static const struct {
+			const char *interp, *args, *word, *why;
+		} v[] = {
+			{ "python3", "foo.py", "foo.py", ARG_SCRIPT },
+			{ "python3", "-m http.server", "-m", ARG_SCRIPT },
+			{ "python3", "-Bc pass", "-Bc", ARG_SCRIPT },
+			{ "python3", "-", "-", ARG_SCRIPT },
+			{ "python3", "-u --", "--", ARG_SCRIPT },
+			{ "python3", "-X dev -W", "-W", ARG_SCRIPT },
+			{ "python3", "--check-hash-based-pycs", "--check-hash-based-pycs", ARG_SCRIPT },
+			{ "python3", "-V", "-V", ARG_EXIT },
+			{ "python3", "--help-env", "--help-env", ARG_EXIT },
+			{ "python3", "-W error -X dev -Xutf8 --check-hash-based-pycs never -OO", NULL, NULL },
+			{ "lua5.4", "foo.lua", "foo.lua", ARG_SCRIPT },
+			{ "lua5.4", "-e x=1", "-e", ARG_CODE },
+			{ "lua5.4", "-E --", "--", ARG_SCRIPT },
+			{ "lua5.4", "-l", "-l", ARG_EXIT },
+			{ "lua5.4", "-b", "-b", ARG_SCRIPT },
+			{ "lua5.4", "-E -W -l string -lstring -j off -O3", NULL, NULL },
+			{ "perl", "foo.pl", "foo.pl", ARG_SCRIPT },
+			{ "perl", "-wle", "-wle", ARG_CODE },
+			{ "perl", "-x", "-x", ARG_SCRIPT },
+			{ "perl", "-I", "-I", ARG_SCRIPT },
+			{ "perl", "-c", "-c", ARG_EXIT },
+			{ "perl", "-dt", "-dt", ARG_EXIT },
+			{ "perl", "-n", "-n", ARG_LOOP },
+			{ "perl", "-F:", "-F:", ARG_LOOP },
+			{ "perl", "-wT -0777 -0xFF -l012 -CSDA -Mstrict -I /tmp -i.bak -d:Foo", NULL, NULL },
+		};
+
+		for (size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
+			snprintf(text, sizeof(text), "#!%s/%s %s\n:\n", dir, v[k].interp, v[k].args);
+			a.text = text;
+			rc = capture(call_parse, &a);
+			if (v[k].why)
+				snprintf(want, sizeof(want), "ninitctl: /d/svc: #! argument '%s' %s\n",
+					 v[k].word, v[k].why);
+			if (!ok(v[k].why ? rc == 1001 && !strcmp(errtext, want) : !rc,
+				"%s %s is %s", v[k].interp, v[k].args, v[k].why ? "refused" : "accepted"))
+				tap_diag("%d %s", rc, errtext);
+		}
+	}
 
 	snprintf(text, sizeof(text), "%s/python3", dir);
 	unlink(text);
