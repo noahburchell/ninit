@@ -133,6 +133,11 @@ else
 	t_skip "without CAP_SYS_CHROOT the check cannot run, running as root"
 	t_skip "and the build says how to skip it, running as root"
 fi
+run "$HELPERS/deny" openat2 -- "$NINITCTL" init --root "$r" --no-check -n
+case $err in
+"deny: "*) t_skip "without openat2 --root fails and says why, seccomp is unavailable" ;;
+*) t_is "$rc$err" "1ninitctl: --root: openat2: Function not implemented" "without openat2 --root fails and says why" ;;
+esac
 bb=$(command -v busybox)
 if [ -n "$bb" ] && ! ldd "$bb" >/dev/null 2>&1 && unshare -r true 2>/dev/null; then
 	cp "$bb" "$r/bin/sh"

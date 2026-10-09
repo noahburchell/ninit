@@ -19,6 +19,7 @@
 /tests/helpers/czdump
 /tests/helpers/nctl-raw
 /tests/helpers/fakectl
+/tests/helpers/deny
 /tests/qemu/base.cpio
 /tests/qemu/base.cpio.tmp
 /tests/qemu/base.root/

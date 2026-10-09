@@ -201,9 +201,11 @@ qemu_tests = \
 	tests/qemu/cgroup.test \
 	tests/qemu/scale.test \
 	tests/qemu/console.test \
-	tests/qemu/interp.test
+	tests/qemu/interp.test \
+	tests/qemu/fallback.test
 
-check_PROGRAMS = $(unit_tests) tests/helpers/czdump tests/helpers/nctl-raw tests/helpers/fakectl
+check_PROGRAMS = $(unit_tests) tests/helpers/czdump tests/helpers/nctl-raw tests/helpers/fakectl \
+	tests/helpers/deny
 
 unit_headers = tests/unit/tap.h tests/unit/gbuild.h tests/unit/logcap.h
 
@@ -224,6 +226,7 @@ tests_unit_t_ctlfs_SOURCES = tests/unit/t-ctlfs.c src/ngraph.c $(unit_headers)
 tests_helpers_czdump_SOURCES = tests/helpers/czdump.c $(ninitctl_parser) src/ngraph.c
 tests_helpers_nctl_raw_SOURCES = tests/helpers/nctl-raw.c
 tests_helpers_fakectl_SOURCES = tests/helpers/fakectl.c
+tests_helpers_deny_SOURCES = tests/helpers/deny.c
 
 TESTS = $(unit_tests) $(ctl_tests) $(qemu_tests)
 
