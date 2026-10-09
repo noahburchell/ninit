@@ -490,7 +490,7 @@ runs
 .B BEGIN
 blocks and
 .B use
-statements as it compiles.
+statements as it compiles, one that blocks is killed after 30 s and fails the build.
 the interpreter must exist at its path when the service starts, a failed exec prints
 .BI "ninit: exec " path ": errno " n
 .SH OUTPUT

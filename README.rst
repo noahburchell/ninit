@@ -490,7 +490,7 @@ perl      ``INTERP ARGS -e '$| = 1; $0 = '\''NAME'\'';' -e '#line 1' -e SCRIPT``
 
 everything else in `3.8`_ applies: the environment, the descriptors, the notify fd and the cgroup. a daemon without notify is ready once its interpreter has been executed
 
-the syntax check of `4.1`_ compiles python through compile() and lua through load(), neither runs the script. perl has no check that runs nothing, ``perl -c`` runs BEGIN blocks and ``use`` statements as it compiles. ``--no-check`` skips every check
+the syntax check of `4.1`_ compiles python through compile() and lua through load(), neither runs the script. perl has no check that runs nothing, ``perl -c`` runs BEGIN blocks and ``use`` statements as it compiles. one that blocks is killed after 30 s and fails the build. ``--no-check`` skips every check
 
 the interpreter must exist at its path when the service starts. with /usr on its own filesystem, a service whose interpreter is under /usr needs to depend on the service that mounts it. when the exec fails the service prints ``ninit: exec PATH: errno N`` and fails
 
@@ -521,7 +521,7 @@ option                  effect
 
 1. take an exclusive flock on DIR. ``add`` and ``del`` take the same lock
 2. read and parse every service file, see `3`_, resolve the interpreter a #! line names, see `3.12`_, and strip the comments from a shell script. the first error stops the build
-3. check every script, up to 32 in parallel, a shell script with ``bash -n`` and the others as in `3.12`_. bash runs the check with extglob on, since ``-n`` never runs the shopt that would turn it on. every syntax error is reported with its service name and the failures print in service order. any error stops the build
+3. check every script, up to 32 in parallel, a shell script with ``bash -n`` and the others as in `3.12`_. bash runs the check with extglob on, since ``-n`` never runs the shopt that would turn it on. every syntax error is reported with its service name and the failures print in service order. a check still running after 30 s is killed and reported as not finished. any error stops the build
 4. resolve depon and depof, merge duplicate edges, reject cycles
 5. order the services topologically. among the services ready to be placed, roots come first, then the service with the longest chain of dependents, then the first by name
 6. resolve the default onfail of each service and count its dependents
@@ -993,6 +993,7 @@ notify                                            fd 3 to 255
 interpreter path from a #! line                   255 bytes
 interpreter arguments, those ninit adds included  16, of 4096 bytes each
 output kept per service                           1024 bytes
+syntax check messages kept per script             4095 bytes
 service output line                               256 bytes, longer lines are split
 log ring                                          128 KiB
 repeating block of log lines                      16 lines
@@ -1005,6 +1006,7 @@ concurrent log watchers                           4
 =========================================  =======================================
 interval                                   value
 =========================================  =======================================
+syntax check of one script                 30 s
 minimum delay between start attempts       10 ms
 restart delays                             100, 250, 500, 1000, 2000, then 5000 ms
 uptime that resets the restart delay       10 s

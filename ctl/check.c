@@ -5,6 +5,8 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,7 +14,12 @@
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
+
+#ifndef CHECK_MS
+#define CHECK_MS	30000
+#endif
 
 // the shell saw a memfd, so each line gets the path of the service
 static void print_failure(const char *dir, const char *name, char *msg)
@@ -29,6 +36,43 @@ static void print_failure(const char *dir, const char *name, char *msg)
 	}
 }
 
+static long long mono_ms(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+// waits for a check to end, killing each one still running at its deadline, due -1 marks it
+static pid_t reap_check(const pid_t *pids, long long *due, uint32_t live, const sigset_t *chld, int *st)
+{
+	for (;;) {
+		pid_t got = waitpid(-1, st, WNOHANG);
+		long long now, next = LLONG_MAX;
+		struct timespec ts;
+
+		if (got)
+			return got;
+		now = mono_ms();
+		for (uint32_t k = 0; k < live; k++) {
+			if (due[k] < 0)
+				continue;
+			if (due[k] <= now) {
+				kill(pids[k], SIGKILL);
+				due[k] = -1;
+			} else if (due[k] < next) {
+				next = due[k];
+			}
+		}
+		if (next == LLONG_MAX)
+			next = now + 1000;
+		ts.tv_sec = (time_t)((next - now) / 1000);
+		ts.tv_nsec = (long)((next - now) % 1000 * 1000000);
+		sigtimedwait(chld, NULL, &ts);
+	}
+}
+
 void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 {
 	static char path[] = NG_PATH;
@@ -40,10 +84,14 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 	int shell_ok = 1;
 	int giveup = 0;
 	pid_t *pids;
+	long long *due;
 	int *errfd;
 	uint32_t *who;
 	char **failed;
+	uint8_t *late;
 	int devnull;
+	struct sigaction dfl = { .sa_handler = SIG_DFL }, old_chld;
+	sigset_t chld, old_mask;
 
 	// an interpreter #! names was found runnable when the file was read, the shell was not
 	if (access(NG_SHELL, X_OK) != 0) {
@@ -54,11 +102,18 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 	if (slots > 32)
 		slots = 32;
 	pids = xmalloc(slots * sizeof(*pids));
+	due = xmalloc(slots * sizeof(*due));
 	errfd = xmalloc(slots * sizeof(*errfd));
 	who = xmalloc(slots * sizeof(*who));
 	// checks end in any order, their messages print in service order
 	failed = xmalloc(n * sizeof(*failed));
+	late = xmalloc(n);
 	devnull = open("/dev/null", O_WRONLY | O_CLOEXEC);
+	// an ignored SIGCHLD would reap the checks before waitpid sees them
+	sigemptyset(&chld);
+	sigaddset(&chld, SIGCHLD);
+	sigaction(SIGCHLD, &dfl, &old_chld);
+	sigprocmask(SIG_BLOCK, &chld, &old_mask);
 
 	for (i = 0; i <= n; i++) {
 		char *argv[16];
@@ -69,7 +124,7 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 
 		while (live == slots || ((i == n || giveup) && live)) {
 			int st;
-			pid_t got = wait(&st);
+			pid_t got = reap_check(pids, due, live, &chld, &st);
 			uint32_t k;
 
 			if (got < 0) {
@@ -89,15 +144,23 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 					break;
 			if (k == live)
 				continue;
-			if (!WIFEXITED(st) || WEXITSTATUS(st)) {
+			if (due[k] < 0 || !WIFEXITED(st) || WEXITSTATUS(st)) {
 				char msg[4096];
 				ssize_t mn;
-				size_t ml;
+				size_t ml = 0;
 
-				bad++;
+				if (due[k] < 0) {
+					late[who[k]] = 1;
+					unchecked++;
+					ml = (size_t)snprintf(msg, sizeof(msg),
+							      "the syntax check did not finish in %d s\n",
+							      CHECK_MS / 1000);
+				} else {
+					bad++;
+				}
 				lseek(errfd[k], 0, SEEK_SET);
-				mn = read(errfd[k], msg, sizeof(msg) - 1);
-				ml = mn > 0 ? (size_t)mn : 0;
+				mn = read(errfd[k], msg + ml, sizeof(msg) - 1 - ml);
+				ml += mn > 0 ? (size_t)mn : 0;
 				msg[ml] = '\0';
 				failed[who[k]] = xmalloc(ml + 1);
 				memcpy(failed[who[k]], msg, ml + 1);
@@ -105,6 +168,7 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 			close(errfd[k]);
 			live--;
 			pids[k] = pids[live];
+			due[k] = due[live];
 			errfd[k] = errfd[live];
 			who[k] = who[live];
 		}
@@ -147,6 +211,7 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 		if (pid < 0)
 			die("fork: %s", strerror(errno));
 		if (pid == 0) {
+			sigprocmask(SIG_SETMASK, &old_mask, NULL);
 			dup2(sfd, 0);
 			if (devnull >= 0)
 				dup2(devnull, 1);
@@ -156,11 +221,14 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 		}
 		close(sfd);
 		pids[live] = pid;
+		due[live] = mono_ms() + CHECK_MS;
 		errfd[live] = efd;
 		who[live] = i;
 		live++;
 	}
 
+	sigprocmask(SIG_SETMASK, &old_mask, NULL);
+	sigaction(SIGCHLD, &old_chld, NULL);
 	if (devnull >= 0)
 		close(devnull);
 	for (i = 0; i < n; i++) {
@@ -168,13 +236,17 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 			continue;
 		print_failure(dir, srcs[i].name, failed[i]);
 		free(failed[i]);
+		if (late[i])
+			continue;
 		if (!what)
 			what = srcs[i].interp;
 		else if (strcmp(what, srcs[i].interp))
 			what = "";
 	}
 	free(failed);
+	free(late);
 	free(pids);
+	free(due);
 	free(errfd);
 	free(who);
 	if (bad)
