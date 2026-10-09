@@ -22,6 +22,36 @@ static jmp_buf die_jb;
 	longjmp(die_jb, 1000 + code);
 }
 
+// the syntax check with memfd_create, the staging write or waitpid failing
+static int memfd_fail, stage_fail, wait_fail;
+
+static int shim_memfd_create(const char *name, unsigned flags)
+{
+	if (memfd_fail) {
+		errno = ENOSYS;
+		return -1;
+	}
+	return memfd_create(name, flags);
+}
+
+static ssize_t shim_write(int fd, const void *buf, size_t n)
+{
+	if (stage_fail) {
+		errno = ENOSPC;
+		return n > 1 ? 1 : -1;
+	}
+	return write(fd, buf, n);
+}
+
+static pid_t shim_waitpid(pid_t pid, int *st, int flags)
+{
+	if (wait_fail) {
+		errno = ECHILD;
+		return -1;
+	}
+	return waitpid(pid, st, flags);
+}
+
 #define exit shim_exit
 #include "../../ctl/util.c"
 #include "../../ctl/parser/compact.c"
@@ -35,7 +65,13 @@ static jmp_buf die_jb;
 #include "../../ctl/sources.c"
 #include "../../ctl/graph.c"
 #define CHECK_MS 1000
+#define memfd_create shim_memfd_create
+#define write shim_write
+#define waitpid shim_waitpid
 #include "../../ctl/check.c"
+#undef memfd_create
+#undef write
+#undef waitpid
 #include "../../ctl/image.c"
 #include "../../ctl/build.c"
 #undef exit
@@ -805,6 +841,32 @@ static void test_check(void)
 		ok(sa.sa_handler == SIG_IGN && !sigismember(&now, SIGCHLD), "with its mask restored");
 	}
 	signal(SIGCHLD, SIG_DFL);
+
+	memfd_fail = 1;
+	rc = capture(call_check, &s);
+	memfd_fail = 0;
+	ok(rc == 1001 && !strcmp(errtext, "ninitctl: warning: memfd_create: Function not implemented, "
+				 "skipping the syntax check\n"
+				 "ninitctl: 1 service script could not be checked, use --no-check to skip\n"),
+	   "without memfd_create nothing can be checked");
+	stage_fail = 1;
+	rc = capture(call_check, &s);
+	stage_fail = 0;
+	ok(rc == 1001 && !strcmp(errtext, "ninitctl: warning: /d/svc: cannot stage the script for the syntax "
+				 "check: No space left on device\n"
+				 "ninitctl: 1 service script could not be checked, use --no-check to skip\n"),
+	   "a script that cannot be staged is not checked");
+	wait_fail = 1;
+	rc = capture(call_check, &s);
+	wait_fail = 0;
+	if (!ok(rc == 1001 && strstr(errtext, "ninitctl: warning: wait: No child processes\n") &&
+		strstr(errtext, "ninitctl: 1 service script could not be checked, use --no-check to skip\n"),
+		"a check that cannot be waited for is not checked"))
+		tap_diag("%d %s", rc, errtext);
+	sigprocmask(SIG_UNBLOCK, &chld, NULL);
+	signal(SIGCHLD, SIG_DFL);
+	while (waitpid(-1, NULL, WNOHANG) > 0)
+		;
 
 	unlink(path);
 	rmdir(dir);
