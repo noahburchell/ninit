@@ -56,7 +56,7 @@ void *xrealloc(void *p, size_t n)
 	return q;
 }
 
-void strv_push(struct strv *s, char *v)
+void strv_push(struct strv *s, const char *v)
 {
 	if (s->n == s->cap) {
 		s->cap = s->cap ? s->cap * 2 : 4;

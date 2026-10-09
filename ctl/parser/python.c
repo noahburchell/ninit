@@ -32,15 +32,13 @@ static const char *python_check_argv(const struct src *s, char **argv, size_t ca
 // -I keeps / off sys.path, -B writes no __pycache__ as root, -u keeps output in step with the log
 static void python_exec_args(struct src *s)
 {
-	static char isolated[] = "-I", nocache[] = "-B", unbuffered[] = "-u", dashc[] = "-c";
-
-	strv_push(&s->exec_pre, (char *)(uintptr_t)s->interp);
-	strv_push(&s->exec_pre, isolated);
-	strv_push(&s->exec_pre, nocache);
-	strv_push(&s->exec_pre, unbuffered);
+	strv_push(&s->exec_pre, s->interp);
+	strv_push(&s->exec_pre, "-I");
+	strv_push(&s->exec_pre, "-B");
+	strv_push(&s->exec_pre, "-u");
 	for (uint32_t k = 0; k < s->iargs.n; k++)
 		strv_push(&s->exec_pre, s->iargs.v[k]);
-	strv_push(&s->exec_pre, dashc);
+	strv_push(&s->exec_pre, "-c");
 	strv_push(&s->exec_suf, s->name);
 }
 

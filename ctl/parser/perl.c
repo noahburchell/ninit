@@ -26,7 +26,6 @@ static const char *perl_check_argv(const struct src *s, char **argv, size_t cap)
 // a first line flushes stdout per line for the log and names the script, #line restores line 1
 static void perl_exec_args(struct src *s)
 {
-	static char dashe[] = "-e", line1[] = "#line 1";
 	static const char head[] = "$| = 1; $0 = '";
 	char *pre = xmalloc(sizeof(head) + 2 * strlen(s->name) + 4), *p = pre;
 
@@ -39,14 +38,14 @@ static void perl_exec_args(struct src *s)
 	}
 	memcpy(p, "';", 3);
 
-	strv_push(&s->exec_pre, (char *)(uintptr_t)s->interp);
+	strv_push(&s->exec_pre, s->interp);
 	for (uint32_t k = 0; k < s->iargs.n; k++)
 		strv_push(&s->exec_pre, s->iargs.v[k]);
-	strv_push(&s->exec_pre, dashe);
+	strv_push(&s->exec_pre, "-e");
 	strv_push(&s->exec_pre, pre);
-	strv_push(&s->exec_pre, dashe);
-	strv_push(&s->exec_pre, line1);
-	strv_push(&s->exec_pre, dashe);
+	strv_push(&s->exec_pre, "-e");
+	strv_push(&s->exec_pre, "#line 1");
+	strv_push(&s->exec_pre, "-e");
 }
 
 // the reason one switch cluster is refused, *next is set when its argument is the next word
