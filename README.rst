@@ -870,9 +870,10 @@ ninit-shutdown performs, in order:
 
 1. if /proc/1/comm is readable and is not ninit, execute NAME.old from its own directory with the same arguments
 2. with ``-f``, sync and call reboot(2)
-3. if TIME is in the future, print a notice on /dev/console and wait in the foreground. ctrl-c cancels
-4. as root, send the signal from `7.1`_ to pid 1
-5. otherwise, call org.freedesktop.login1.Manager.PowerOff, Reboot or Halt through ``dbus-send --system``, leaving the decision to elogind and polkit. if that fails, exit with ``permission denied``
+3. without root and with TIME in the future, call org.freedesktop.login1.Manager.CanPowerOff, CanReboot or CanHalt through ``dbus-send --system``. unless the answer is yes or challenge, exit with ``permission denied`` before waiting
+4. if TIME is in the future, print a notice on /dev/console and wait in the foreground. ctrl-c cancels
+5. as root, send the signal from `7.1`_ to pid 1
+6. otherwise, call org.freedesktop.login1.Manager.PowerOff, Reboot or Halt through ``dbus-send --system``, leaving the decision to elogind and polkit. if that fails, exit with ``permission denied``
 
 .. code:: sh
 
