@@ -238,3 +238,5 @@ int ng_reserved_name(const char *name);
 const char *ng_onfailname(uint8_t policy);
 
 int ng_locale_env(char (*out)[NG_LOCALE_LEN], int max, const char **why);
+// the same for an open locale.conf, which it closes, a negative fd is a missing file
+int ng_locale_fd(int fd, char (*out)[NG_LOCALE_LEN], int max, const char **why);

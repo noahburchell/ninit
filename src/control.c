@@ -160,7 +160,7 @@ static int ctl_flush(struct ctl *c)
 	return 1;
 }
 
-// a burst can outrun the poll loop, so a watcher half a ring behind is written now.
+// a burst can outrun the poll loop, so a watcher half a ring behind is written now,
 // a full socket is left to the poll loop and nothing is dropped here
 void ctl_feed(void)
 {

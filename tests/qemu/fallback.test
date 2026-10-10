@@ -1,0 +1,96 @@
+# the fallbacks for kernels without clone3, signalfd or cgroup2, README 3.8 and 5.2
+# a wrapper is pid 1 first, it takes the feature away and executes ninit
+
+. "$top_srcdir/tests/lib.sh"
+. "$top_srcdir/tests/qemu/lib.sh"
+q_require
+
+# a daemon with a child, and orphans for pid 1 to reap
+services() {
+	q_svc daemon <<'EOF'
+#%type: daemon
+sleep 1000 &
+echo $! >/run/daemon.child
+exec sleep 1000
+EOF
+	q_svc orphans <<'EOF'
+for k in 1 2 3 4 5; do
+	( sleep 0.3 & )
+done
+EOF
+}
+
+q_new no-clone3-signalfd
+services
+q_copy_elf "$Q/root" "$HELPERS/deny" /t/bin/deny || t_bail "cannot copy the deny helper"
+# a kernel without seccomp boots ninit as it is, and the checks of the log are skipped
+q_file /t/bin/init 755 <<'EOF'
+#!/bin/sh
+if /t/bin/deny clone3 -- /bin/true; then
+	exec /t/bin/deny clone3 signalfd signalfd4 -- /sbin/ninit "$@"
+fi
+echo "deny: no seccomp" >/dev/console
+exec /sbin/ninit "$@"
+EOF
+Q_RDINIT=/t/bin/init
+q_check <<'EOF'
+st_is daemon up
+st_is orphans up
+cg=$(cg_of "$(idx_of daemon)")
+procs=$(cat $cg/cgroup.procs)
+has "$procs" "$(pid_of daemon)" "without clone3 the main process joins the service cgroup after fork"
+has "$procs" "$(cat /run/daemon.child)" "and its children follow"
+child=$(cat /run/daemon.child)
+out=$(ninitctl stop daemon)
+is "$?:$out" "0:daemon stopped" "a stop is acknowledged while ninit polls for signals"
+check "the cgroup is killed" wait_for 2000 test ! -e /proc/$child
+sleep 0.6
+zombies=$(grep -l '^State:.*Z' /proc/[0-9]*/status 2>/dev/null | wc -l)
+is "$zombies" 0 "orphans are reaped without signalfd"
+EOF
+q_boot
+q_import
+q_poweroff_ok
+if grep -q 'deny: no seccomp' "$Q/console.log"; then
+	t_skip "the signalfd failure is logged, the kernel has no seccomp"
+	t_skip "so is the move to fork and join, the kernel has no seccomp"
+	t_skip "polling continues while signalfd stays unavailable, the kernel has no seccomp"
+else
+	q_has "FAIL > signalfd: Function not implemented, polling for signals instead" "the signalfd failure is logged"
+	q_has "WARN > cgroup: this kernel cannot fork into a cgroup, joining after fork instead" \
+		"so is the move to fork and join"
+	q_lacks "signalfd: recovered" "polling continues while signalfd stays unavailable"
+fi
+
+q_new no-cgroup2
+services
+q_file /t/bin/init 755 <<'EOF'
+#!/bin/sh
+mount -t sysfs sys /sys && mkdir -p /sys/fs/cgroup && mount -t tmpfs none /sys/fs/cgroup
+exec /sbin/ninit "$@"
+EOF
+Q_RDINIT=/t/bin/init
+q_check <<'EOF'
+st_is daemon up
+st_is orphans up
+pid=$(pid_of daemon)
+child=$(cat /run/daemon.child)
+pgrp() {
+	set -- $(sed 's/.*) //' /proc/$1/stat)
+	echo "$3"
+}
+is "$(pgrp "$pid"):$(pgrp "$child")" "$pid:$pid" "without cgroup2 a service and its children share a process group"
+check "and no service cgroup is made" test ! -e /sys/fs/cgroup/ninit.services
+out=$(ninitctl stop daemon)
+is "$?:$out" "0:daemon stopped" "a stop is acknowledged"
+check "the process group is killed" wait_for 2000 test ! -e /proc/$child
+sleep 0.6
+zombies=$(grep -l '^State:.*Z' /proc/[0-9]*/status 2>/dev/null | wc -l)
+is "$zombies" 0 "orphans are reaped"
+EOF
+q_boot
+q_import
+q_poweroff_ok
+q_has "WARN > cgroup: /sys/fs/cgroup is not a cgroup2 mount, using process groups" "the fallback is logged"
+
+t_done

@@ -24,10 +24,10 @@ static const char *lua_check_argv(const struct src *s, char **argv, size_t cap)
 	return s->interp;
 }
 
-// lua -e names no script, so a first chunk sets arg[0] and flushes stdout per line for the log
+// lua -e names no script, so a first chunk sets arg[0] and flushes stdout per line for the log,
+// exec_suf stays empty since lua would run a word after the last chunk as a script file
 static void lua_exec_args(struct src *s)
 {
-	static char dashe[] = "-e";
 	static const char head[] = "io.stdout:setvbuf(\"line\") arg = { [0] = \"";
 	char *pre = xmalloc(sizeof(head) + 2 * strlen(s->name) + 4), *p = pre;
 
@@ -40,12 +40,29 @@ static void lua_exec_args(struct src *s)
 	}
 	memcpy(p, "\" }", 4);
 
-	strv_push(&s->exec_pre, (char *)(uintptr_t)s->interp);
+	strv_push(&s->exec_pre, s->interp);
 	for (uint32_t k = 0; k < s->iargs.n; k++)
 		strv_push(&s->exec_pre, s->iargs.v[k]);
-	strv_push(&s->exec_pre, dashe);
+	strv_push(&s->exec_pre, "-e");
 	strv_push(&s->exec_pre, pre);
-	strv_push(&s->exec_pre, dashe);
+	strv_push(&s->exec_pre, "-e");
+}
+
+// lua takes no option clusters, and luajit -b compiles the arguments that follow it
+static const char *lua_bad_arg(const struct strv *a, const char **word)
+{
+	for (uint32_t k = 0; k < a->n; k++) {
+		const char *w = *word = a->v[k];
+
+		if (w[0] != '-' || !w[1] || !strcmp(w, "--") || w[1] == 'b')
+			return ARG_SCRIPT;
+		if (w[1] == 'e')
+			return ARG_CODE;
+		// -l or -j last takes the -e after it as its argument, and lua exits with an error
+		if ((w[1] == 'l' || w[1] == 'j') && !w[2] && ++k == a->n)
+			return ARG_EXIT;
+	}
+	return NULL;
 }
 
 const struct lang lang_lua = {
@@ -54,4 +71,5 @@ const struct lang lang_lua = {
 	.store = blank_header,
 	.check_argv = lua_check_argv,
 	.exec_args = lua_exec_args,
+	.bad_arg = lua_bad_arg,
 };
