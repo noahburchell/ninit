@@ -10,8 +10,6 @@ ninitctl \- compile, inspect and control the ninit service graph
 .IR file ]
 .RB [ \-n ]
 .RB [ \-\-no\-check ]
-.RB [ \-\-root
-.IR root ]
 .br
 .B ninitctl show
 .RB [ \-v ]
@@ -79,9 +77,9 @@ and
 .B del
 take
 .IP 2. 4
-parse every service file, resolve the python, lua or perl interpreter the
+parse every service file, resolve the python, lua or perl interpreter a
 .B #!\&
-line of a file with commands names, and strip the comments from a shell script when the interpreter lexes like sh, see
+line names, and strip the comments from a shell script when the interpreter lexes like sh, see
 .BR ninit.d (5).
 the first error ends the command
 .IP 3. 4
@@ -92,8 +90,7 @@ and a python, lua or perl script as
 describes, and report every syntax error, in service order.
 bash checks with
 .B extglob
-on.
-a check still running after 30 s is killed and reported as not finished
+on
 .IP 4. 4
 resolve dependencies and reject unknown names, self dependencies and cycles
 .IP 5. 4
@@ -243,29 +240,6 @@ except writing the output
 .B \-\-no\-check
 skip the syntax check of
 .B init
-.TP
-.BR \-\-root " \fIroot\fR"
-build the graph for the system whose root directory is
-.IR root .
-.B init
-looks up
-.B #!\&
-interpreters and
-.I /etc/locale.conf
-below
-.I root
-as that system sees them, absolute links and
-.B ..\&
-included, and runs every syntax check chrooted into
-.IR root ,
-which requires
-.BR CAP_SYS_CHROOT .
-.I dir
-defaults to
-.IR root @ninit_svcdir@ .
-the lookup uses
-.BR openat2 (2),
-linux 5.6 or newer
 .TP
 .BR \-v ", " \-\-verbose
 with

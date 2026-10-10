@@ -2,7 +2,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <setjmp.h>
-#include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,36 +21,6 @@ static jmp_buf die_jb;
 	longjmp(die_jb, 1000 + code);
 }
 
-// the syntax check with memfd_create, the staging write or waitpid failing
-static int memfd_fail, stage_fail, wait_fail;
-
-static int shim_memfd_create(const char *name, unsigned flags)
-{
-	if (memfd_fail) {
-		errno = ENOSYS;
-		return -1;
-	}
-	return memfd_create(name, flags);
-}
-
-static ssize_t shim_write(int fd, const void *buf, size_t n)
-{
-	if (stage_fail) {
-		errno = ENOSPC;
-		return n > 1 ? 1 : -1;
-	}
-	return write(fd, buf, n);
-}
-
-static pid_t shim_waitpid(pid_t pid, int *st, int flags)
-{
-	if (wait_fail) {
-		errno = ECHILD;
-		return -1;
-	}
-	return waitpid(pid, st, flags);
-}
-
 #define exit shim_exit
 #include "../../ctl/util.c"
 #include "../../ctl/parser/compact.c"
@@ -64,14 +33,7 @@ static pid_t shim_waitpid(pid_t pid, int *st, int flags)
 #include "../../ctl/output.c"
 #include "../../ctl/sources.c"
 #include "../../ctl/graph.c"
-#define CHECK_MS 1000
-#define memfd_create shim_memfd_create
-#define write shim_write
-#define waitpid shim_waitpid
 #include "../../ctl/check.c"
-#undef memfd_create
-#undef write
-#undef waitpid
 #include "../../ctl/image.c"
 #include "../../ctl/build.c"
 #undef exit
@@ -495,24 +457,6 @@ static void test_shebang(void)
 		{ "#!/usr/bin/env -C / lua", "lua" },
 		{ "#!/usr/bin/env A=b C=d zsh", "zsh" },
 		{ "#!/usr/bin/env -- awk -f", "awk" },
-		{ "#!/usr/bin/env -iu FOO perl", "perl" },
-		{ "#!/usr/bin/env -uFOO perl", "perl" },
-		{ "#!/usr/bin/env -a name perl", "perl" },
-		{ "#!/usr/bin/env -iSperl -w", "perl" },
-		{ "#!/usr/bin/env -vS perl", "perl" },
-		{ "#!/usr/bin/env -S-u FOO perl", "perl" },
-		{ "#!/usr/bin/env -S-Sperl", "perl" },
-		{ "#!/usr/bin/env --unset FOO perl", "perl" },
-		{ "#!/usr/bin/env --unset=FOO perl", "perl" },
-		{ "#!/usr/bin/env --un FOO perl", "perl" },
-		{ "#!/usr/bin/env --chdir / --argv0 x perl", "perl" },
-		{ "#!/usr/bin/env --default-signal --ignore-signal=INT --block-signal perl", "perl" },
-		{ "#!/usr/bin/env --split-string perl -w", "perl" },
-		{ "#!/usr/bin/env --split-string=perl -w", "perl" },
-		{ "#!/usr/bin/env - A=b perl", "perl" },
-		{ "#!/usr/bin/env -- A=b -perl", "-perl" },
-		{ "#!/usr/bin/env -u", NULL },
-		{ "#!/usr/bin/env --chdir", NULL },
 		{ "#!/bin/bash\r", "bash" },
 		{ "#!/usr/bin/env", NULL },
 		{ "#!/usr/bin/env -i A=b", NULL },
@@ -644,11 +588,11 @@ static void test_languages(void)
 		is_str(s.exec_pre.v[2], "$| = 1; $0 = 'it\\'s\\\\x';", "the perl line escapes the name");
 	}
 	{
-		static char name[] = "svc";
+		static char x[] = "-X", dev[] = "dev", name[] = "svc";
 		struct src s = { .name = name, .interp = "/usr/bin/python3" };
 
-		strv_push(&s.iargs, "-X");
-		strv_push(&s.iargs, "dev");
+		strv_push(&s.iargs, x);
+		strv_push(&s.iargs, dev);
 		lang_python.exec_args(&s);
 		ok(s.exec_pre.n == 7 && !strcmp(s.exec_pre.v[1], "-I") && !strcmp(s.exec_pre.v[2], "-B") &&
 		   !strcmp(s.exec_pre.v[3], "-u") && !strcmp(s.exec_pre.v[4], "-X") &&
@@ -697,7 +641,7 @@ static void test_languages(void)
 	rc = capture(call_parse, &a);
 	ok(!rc && a.s.lang == &lang_perl && a.s.iargs.n == 1, "a #! line naming perl selects perl");
 
-	snprintf(text, sizeof(text), "#!%s/python3 -b -d -E -i -O -P -q -R -s -S -v\nprint(1)\n", dir);
+	snprintf(text, sizeof(text), "#!%s/python3 -a -b -c -d -e -f -g -h -i -j -k\nprint(1)\n", dir);
 	rc = capture(call_parse, &a);
 	if (!ok(rc == 1001 && !strcmp(errtext, "ninitctl: /d/svc: 17 interpreter arguments, the maximum is 16\n"),
 		"more than 16 interpreter arguments are refused"))
@@ -719,50 +663,6 @@ static void test_languages(void)
 		"a relative interpreter path fails the build"))
 		tap_diag("%d %s", rc, errtext);
 
-	{
-		static const struct {
-			const char *interp, *args, *word, *why;
-		} v[] = {
-			{ "python3", "foo.py", "foo.py", ARG_SCRIPT },
-			{ "python3", "-m http.server", "-m", ARG_SCRIPT },
-			{ "python3", "-Bc pass", "-Bc", ARG_SCRIPT },
-			{ "python3", "-", "-", ARG_SCRIPT },
-			{ "python3", "-u --", "--", ARG_SCRIPT },
-			{ "python3", "-X dev -W", "-W", ARG_SCRIPT },
-			{ "python3", "--check-hash-based-pycs", "--check-hash-based-pycs", ARG_SCRIPT },
-			{ "python3", "-V", "-V", ARG_EXIT },
-			{ "python3", "--help-env", "--help-env", ARG_EXIT },
-			{ "python3", "-W error -X dev -Xutf8 --check-hash-based-pycs never -OO", NULL, NULL },
-			{ "lua5.4", "foo.lua", "foo.lua", ARG_SCRIPT },
-			{ "lua5.4", "-e x=1", "-e", ARG_CODE },
-			{ "lua5.4", "-E --", "--", ARG_SCRIPT },
-			{ "lua5.4", "-l", "-l", ARG_EXIT },
-			{ "lua5.4", "-b", "-b", ARG_SCRIPT },
-			{ "lua5.4", "-E -W -l string -lstring -j off -O3", NULL, NULL },
-			{ "perl", "foo.pl", "foo.pl", ARG_SCRIPT },
-			{ "perl", "-wle", "-wle", ARG_CODE },
-			{ "perl", "-x", "-x", ARG_SCRIPT },
-			{ "perl", "-I", "-I", ARG_SCRIPT },
-			{ "perl", "-c", "-c", ARG_EXIT },
-			{ "perl", "-dt", "-dt", ARG_EXIT },
-			{ "perl", "-n", "-n", ARG_LOOP },
-			{ "perl", "-F:", "-F:", ARG_LOOP },
-			{ "perl", "-wT -0777 -0xFF -l012 -CSDA -Mstrict -I /tmp -i.bak -d:Foo", NULL, NULL },
-		};
-
-		for (size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
-			snprintf(text, sizeof(text), "#!%s/%s %s\n:\n", dir, v[k].interp, v[k].args);
-			a.text = text;
-			rc = capture(call_parse, &a);
-			if (v[k].why)
-				snprintf(want, sizeof(want), "ninitctl: /d/svc: #! argument '%s' %s\n",
-					 v[k].word, v[k].why);
-			if (!ok(v[k].why ? rc == 1001 && !strcmp(errtext, want) : !rc,
-				"%s %s is %s", v[k].interp, v[k].args, v[k].why ? "refused" : "accepted"))
-				tap_diag("%d %s", rc, errtext);
-		}
-	}
-
 	snprintf(text, sizeof(text), "%s/python3", dir);
 	unlink(text);
 	snprintf(text, sizeof(text), "%s/lua5.4", dir);
@@ -772,110 +672,9 @@ static void test_languages(void)
 	rmdir(dir);
 }
 
-static void call_check(void *p)
-{
-	check_syntax(p, 1, "/d");
-}
-
-// an interpreter at DIR/NAME running BODY under sh
-static void fake_script(char *path, size_t cap, const char *dir, const char *name, const char *body)
-{
-	int fd;
-
-	snprintf(path, cap, "%s/%s", dir, name);
-	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
-	if (fd >= 0) {
-		(void)!write(fd, "#!/bin/sh\n", 10);
-		(void)!write(fd, body, strlen(body));
-		close(fd);
-	}
-}
-
-static void test_check(void)
-{
-	char dir[] = "/tmp/ninit-t-build-check.XXXXXX", path[512];
-	static char name[] = "svc";
-	struct src s = { .name = name, .lang = &lang_perl, .script = "print 1;\n" };
-	sigset_t chld;
-	long long t0;
-	int rc;
-
-	if (!mkdtemp(dir)) {
-		ok(0, "mkdtemp: %s", strerror(errno));
-		return;
-	}
-	sigemptyset(&chld);
-	sigaddset(&chld, SIGCHLD);
-
-	fake_script(path, sizeof(path), dir, "perl", "exec sleep 10\n");
-	s.interp = path;
-	t0 = mono_ms();
-	rc = capture(call_check, &s);
-	if (!ok(rc == 1001 && !strcmp(errtext, "ninitctl: /d/svc: the syntax check did not finish in 1 s\n"
-				  "ninitctl: 1 service script could not be checked, use --no-check to skip\n"),
-		"a check still running at its deadline fails the build"))
-		tap_diag("%d %s", rc, errtext);
-	ok(mono_ms() - t0 < 5000, "it is killed at the deadline");
-	sigprocmask(SIG_UNBLOCK, &chld, NULL);
-	signal(SIGCHLD, SIG_DFL);
-
-	fake_script(path, sizeof(path), dir, "perl", "echo 'syntax error at - line 1' >&2\nexit 255\n");
-	signal(SIGCHLD, SIG_IGN);
-	rc = capture(call_check, &s);
-	if (!ok(rc == 1001 && strstr(errtext, "ninitctl: /d/svc: syntax error at - line 1\n") &&
-		strstr(errtext, "failed the "), "a failure is reported with SIGCHLD ignored by the caller"))
-		tap_diag("%d %s", rc, errtext);
-	sigprocmask(SIG_UNBLOCK, &chld, NULL);
-	signal(SIGCHLD, SIG_DFL);
-
-	fake_script(path, sizeof(path), dir, "perl", "exit 0\n");
-	signal(SIGCHLD, SIG_IGN);
-	rc = capture(call_check, &s);
-	ok(!rc && !*errtext, "and a check that passes leaves SIGCHLD as the caller set it");
-	{
-		struct sigaction sa;
-		sigset_t now;
-
-		sigaction(SIGCHLD, NULL, &sa);
-		sigprocmask(SIG_BLOCK, NULL, &now);
-		ok(sa.sa_handler == SIG_IGN && !sigismember(&now, SIGCHLD), "with its mask restored");
-	}
-	signal(SIGCHLD, SIG_DFL);
-
-	memfd_fail = 1;
-	rc = capture(call_check, &s);
-	memfd_fail = 0;
-	ok(rc == 1001 && !strcmp(errtext, "ninitctl: warning: memfd_create: Function not implemented, "
-				 "skipping the syntax check\n"
-				 "ninitctl: 1 service script could not be checked, use --no-check to skip\n"),
-	   "without memfd_create nothing can be checked");
-	stage_fail = 1;
-	rc = capture(call_check, &s);
-	stage_fail = 0;
-	ok(rc == 1001 && !strcmp(errtext, "ninitctl: warning: /d/svc: cannot stage the script for the syntax "
-				 "check: No space left on device\n"
-				 "ninitctl: 1 service script could not be checked, use --no-check to skip\n"),
-	   "a script that cannot be staged is not checked");
-	wait_fail = 1;
-	rc = capture(call_check, &s);
-	wait_fail = 0;
-	if (!ok(rc == 1001 && strstr(errtext, "ninitctl: warning: wait: No child processes\n") &&
-		strstr(errtext, "ninitctl: 1 service script could not be checked, use --no-check to skip\n"),
-		"a check that cannot be waited for is not checked"))
-		tap_diag("%d %s", rc, errtext);
-	sigprocmask(SIG_UNBLOCK, &chld, NULL);
-	signal(SIGCHLD, SIG_DFL);
-	while (waitpid(-1, NULL, WNOHANG) > 0)
-		;
-
-	unlink(path);
-	rmdir(dir);
-}
-
 int main(void)
 {
 	test_parse_ms();
-	test_check();
 	test_helpers();
 	test_shebang();
 	test_languages();

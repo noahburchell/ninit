@@ -86,23 +86,12 @@ q_visible() {
 	return 0
 }
 
-# the program interpreter, whose path the first page of a dynamic ELF file holds
-q_interp() {
-	head -c 4096 "$1" | tr '\0' '\n' | grep -a -m1 '^/.*/ld-.*\.so'
-}
-
 # copies FILE and the shared objects it needs into ROOT, at the same paths
 q_copy_elf() {
-	local root=$1 f=$2 dst=${3:-$2} lib libs interp
+	local root=$1 f=$2 dst=${3:-$2} lib
 	mkdir -p "$root${dst%/*}"
 	cp -L "$f" "$root$dst" || return 1
-	# the ldd of glibc cannot list a musl program, the musl loader can
-	interp=$(q_interp "$f")
-	case $interp in
-	*/ld-musl-*) libs=$("$interp" --list "$f" 2>/dev/null) ;;
-	*) libs=$(ldd "$f" 2>/dev/null) ;;
-	esac
-	for lib in $(grep -o '/[^ )]*' <<<"$libs"); do
+	for lib in $(ldd "$f" 2>/dev/null | grep -o '/[^ )]*'); do
 		[ -e "$root$lib" ] && continue
 		mkdir -p "$root${lib%/*}"
 		cp -L "$lib" "$root$lib" || return 1
@@ -158,7 +147,6 @@ q_new() {
 	Q_NAME=$1
 	mkdir -p "$Q/root/etc/ninit.d" "$Q/root/t"
 	Q_ARGS=
-	Q_RDINIT=/sbin/ninit
 	Q_HALT=
 	Q_PIPE=
 	Q_NOGRAPH=
@@ -225,7 +213,7 @@ q_start() {
 	args=(-nodefaults -no-user-config -display none -no-reboot
 		-accel "$Q_ACCEL" -cpu "$Q_CPU" -m 384 -smp 2
 		-kernel "$Q_KERNEL" -initrd "$Q/initrd"
-		-append "console=$Q_CON rdinit=$Q_RDINIT panic=-1 loglevel=1 $Q_ARGS")
+		-append "console=$Q_CON rdinit=/sbin/ninit panic=-1 loglevel=1 $Q_ARGS")
 	if [ -n "$Q_PIPE" ]; then
 		mkfifo "$Q/con.in" "$Q/con.out"
 		exec {Q_CONFD}<>"$Q/con.in"

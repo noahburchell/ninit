@@ -401,40 +401,16 @@ runs under that interpreter.
 it is named directly or through
 .BR env .
 .B ninitctl init
-resolves it when the graph is built, below the
-.B \-\-root
-directory if one is given, and stores its absolute path, ninit never runs
-.BR env ,
-so the options and
-.IB name = value
-words before the program, read as gnu and busybox
-.B env
-read them, have no effect.
+resolves it when the graph is built and stores its absolute path, ninit never runs
+.BR env .
 .B env
 is resolved through the
 .B PATH
 services run with, with the directory made canonical and the program keeping its own name.
 a missing or non-executable interpreter fails the build.
-the
-.B #!\&
-line of a file without commands, which runs nothing, is not read.
 the words after the interpreter are separate arguments, as
 .B env \-S
 splits them, and come before the script
-.PP
-the build fails on an argument that keeps the stored script from running.
-a letter counts inside a cluster of options:
-.PP
-.TS
-tab(|);
-l l.
-all|a word that is neither an option nor an option argument, \-, \-\-
-python|\-c, \-m, \-h, \-V, \-\-help, \-\-version, and \-W, \-X or
-\^|\-\-check\-hash\-based\-pycs without their argument
-lua|\-e, luajit \-b, and \-l or luajit \-j without their argument
-perl|\-e, \-E, \-x, \-c, \-h, \-u, \-v, \-V, \-d without a module,
-\^|\-n, \-p, \-a, \-F, and \-I without its argument
-.TE
 .PP
 the header, the
 .B #!\&
@@ -495,7 +471,7 @@ runs
 .B BEGIN
 blocks and
 .B use
-statements as it compiles, one that blocks is killed after 30 s and fails the build.
+statements as it compiles.
 the interpreter must exist at its path when the service starts, a failed exec prints
 .BI "ninit: exec " path ": errno " n
 .SH OUTPUT
@@ -512,12 +488,7 @@ is written by
 the previous graph is kept as
 .IR depgraph.old .
 .BR ninit (8)
-loads a graph only if its version equals the one it was built with, currently 8,
-and loads
-.I depgraph.old
-when
-.I depgraph
-fails.
+loads a graph only if its version equals the one it was built with, currently 8.
 the graph must be rebuilt after
 .B ninit
 is upgraded

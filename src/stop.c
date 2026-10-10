@@ -7,7 +7,7 @@
 #include "reap.h"
 #include "signals.h"
 #include "state.h"
-#include "shutdown.h"
+#include "teardown.h"
 
 #include <dirent.h>
 #include <errno.h>
