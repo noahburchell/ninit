@@ -101,8 +101,7 @@ void parse_src(struct src *s, const char *fname, char *body, size_t len)
 	if (!s->name)
 		die("out of memory");
 	s->type = NG_TYPE_TARGET;
-	s->lang = &lang_shell;
-	s->interp = NG_SHELL;
+	s->lang = lang_select(s, fname, body);
 
 	while (line && *line) {
 		char *nl = strchr(line, '\n');
@@ -236,8 +235,6 @@ void parse_src(struct src *s, const char *fname, char *body, size_t len)
 		if (!code)
 			die("%s/%s: type:%s has no commands to run",
 			    g_dir, fname, ng_typename(s->type));
-		// only a file with commands runs its #! interpreter, so only then must it exist
-		s->lang = lang_select(s, fname, body);
 		len = s->lang->store(s, body, len, line ? (size_t)(line - scratch) : len);
 		if (len > NG_MAX_SCRIPT)
 			die("%s/%s: script is %zu bytes%s, the maximum is %u", g_dir, fname, len,

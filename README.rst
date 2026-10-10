@@ -201,7 +201,7 @@ DIR/unused/ holds disabled services and is not read by ninitctl init. ninitctl d
 
 a service file is a shell script. its header is every line before the first line that is neither blank nor a comment. a directive is a header line of the form ``#%key: value``. whitespace around the key and the value is ignored
 
-the #! line is an ordinary comment unless it names python, lua or perl, see `3.12`_. otherwise the interpreter is the configured one, /bin/bash by default. the file does not need to be executable. ninitctl init warns when the first line of a file with commands is a #! line naming any other interpreter, directly or through env. ``#!/bin/sh`` draws no warning when the configured shell lexes like sh
+the #! line is an ordinary comment unless it names python, lua or perl, see `3.12`_. otherwise the interpreter is the configured one, /bin/bash by default. the file does not need to be executable. ninitctl init warns when the first line is a #! line naming any other interpreter, directly or through env. ``#!/bin/sh`` draws no warning when the configured shell lexes like sh
 
 ninitctl init stores the script without its comments, indentation or trailing blanks, and with runs of blanks collapsed to one space. text inside quotes and here-documents is stored as written, and so is the rest of the file after a construct it cannot follow exactly, such as a line continuation inside a word. a removed line stays as an empty line, so line numbers in shell errors match the file
 
@@ -461,20 +461,9 @@ lua       lua, luaN.N, luajit and its versioned names
 perl      perl, perlN.N
 ========  ========================================
 
-the interpreter is named directly, as in ``#!/usr/bin/python3``, or through env, as in ``#!/usr/bin/env lua``. ninitctl init resolves it once, when the graph is built, on the running system or below the ``--root`` directory of `4.1`_, and the graph holds its absolute path. ninit never runs env, so the options and NAME=VALUE words before the program, read as gnu and busybox env read them, have no effect. a path in the #! line is kept as written. env is resolved through the PATH services run with, see `3.8`_, with the directory made canonical and the program keeping its own name, so ``env python3`` is /usr/bin/python3 where /usr/sbin links to /usr/bin. an interpreter that does not exist or is not executable fails the build. the #! line of a file without commands, which runs nothing, is not read. the words after the interpreter are separate arguments, as ``env -S`` splits them, and come before the script
+the interpreter is named directly, as in ``#!/usr/bin/python3``, or through env, as in ``#!/usr/bin/env lua``. ninitctl init resolves it once, when the graph is built, and the graph holds its absolute path. ninit never runs env. a path in the #! line is kept as written. env is resolved through the PATH services run with, see `3.8`_, with the directory made canonical and the program keeping its own name, so ``env python3`` is /usr/bin/python3 where /usr/sbin links to /usr/bin. an interpreter that does not exist or is not executable fails the build. the words after the interpreter are separate arguments, as ``env -S`` splits them, and come before the script
 
-the build fails on an argument that keeps the stored script from running. a letter counts inside a cluster of options, as in ``-Bc``:
-
-========  ========================================
-language  refused #! arguments
-========  ========================================
-all       a word that is neither an option nor an option argument, ``-``, ``--``
-python    ``-c``, ``-m``, ``-h``, ``-V``, ``--help``, ``--version``, and ``-W``, ``-X`` or ``--check-hash-based-pycs`` without their argument
-lua       ``-e``, luajit ``-b``, and ``-l`` or luajit ``-j`` without their argument
-perl      ``-e``, ``-E``, ``-x``, ``-c``, ``-h``, ``-u``, ``-v``, ``-V``, ``-d`` without a module, ``-n``, ``-p``, ``-a``, ``-F``, and ``-I`` without its argument
-========  ========================================
-
-the header, #! line and directives included, is stored as empty lines and the rest of the file as written. nothing is stripped and a #% line after the header draws no warning. line numbers in interpreter messages match the file. in lua a ``#`` line is valid only in the header. crlf line ends are stored as written, and the three interpreters read them as lf, in strings and here-documents too
+the header, #! line and directives included, is stored as empty lines and the rest of the file as written. nothing is stripped and a #% line after the header draws no warning. line numbers in interpreter messages match the file. in lua a ``#`` line is valid only in the header
 
 each start runs:
 
@@ -490,7 +479,7 @@ perl      ``INTERP ARGS -e '$| = 1; $0 = '\''NAME'\'';' -e '#line 1' -e SCRIPT``
 
 everything else in `3.8`_ applies: the environment, the descriptors, the notify fd and the cgroup. a daemon without notify is ready once its interpreter has been executed
 
-the syntax check of `4.1`_ compiles python through compile() and lua through load(), neither runs the script. perl has no check that runs nothing, ``perl -c`` runs BEGIN blocks and ``use`` statements as it compiles. one that blocks is killed after 30 s and fails the build. ``--no-check`` skips every check
+the syntax check of `4.1`_ compiles python through compile() and lua through load(), neither runs the script. perl has no check that runs nothing, ``perl -c`` runs BEGIN blocks and ``use`` statements as it compiles. ``--no-check`` skips every check
 
 the interpreter must exist at its path when the service starts. with /usr on its own filesystem, a service whose interpreter is under /usr needs to depend on the service that mounts it. when the exec fails the service prints ``ninit: exec PATH: errno N`` and fails
 
@@ -506,7 +495,7 @@ ninitctl has configuration commands, described here, and runtime commands, descr
 
 ::
 
-   ninitctl init [-d DIR] [-o FILE] [-n] [--no-check] [--root ROOT]
+   ninitctl init [-d DIR] [-o FILE] [-n] [--no-check]
 
 ======================  ========================================
 option                  effect
@@ -515,21 +504,18 @@ option                  effect
 ``-o``, ``--out FILE``  output file. default DIR/depgraph
 ``-n``, ``--dry-run``   perform every step except writing the output
 ``--no-check``          skip the syntax check
-``--root ROOT``         build for the system whose root directory is ROOT. default DIR ROOT/etc/ninit.d
 ======================  ========================================
 
 ``init`` performs, in order:
 
 1. take an exclusive flock on DIR. ``add`` and ``del`` take the same lock
-2. read and parse every service file, see `3`_, resolve the interpreter the #! line of a file with commands names, see `3.12`_, and strip the comments from a shell script. the first error stops the build
-3. check every script, up to 32 in parallel, a shell script with ``bash -n`` and the others as in `3.12`_. bash runs the check with extglob on, since ``-n`` never runs the shopt that would turn it on. every syntax error is reported with its service name and the failures print in service order. a check still running after 30 s is killed and reported as not finished. any error stops the build
+2. read and parse every service file, see `3`_, resolve the interpreter a #! line names, see `3.12`_, and strip the comments from a shell script. the first error stops the build
+3. check every script, up to 32 in parallel, a shell script with ``bash -n`` and the others as in `3.12`_. bash runs the check with extglob on, since ``-n`` never runs the shopt that would turn it on. every syntax error is reported with its service name and the failures print in service order. any error stops the build
 4. resolve depon and depof, merge duplicate edges, reject cycles
 5. order the services topologically. among the services ready to be placed, roots come first, then the service with the longest chain of dependents, then the first by name
 6. resolve the default onfail of each service and count its dependents
 7. build the image and verify it with the checks ninit applies at boot
 8. write it to a temporary file in the output directory and fsync it, hard link the current graph to FILE.old, rename the new file over FILE, fsync the directory
-
-with ``--root``, the interpreters of `3.12`_ and /etc/locale.conf are looked up below ROOT as the system booted from it sees them, absolute links and ``..`` included, and every syntax check runs chrooted into ROOT. the chroot requires CAP_SYS_CHROOT, without it no script can be checked and the build requires ``--no-check``. DIR and FILE are paths on the running system. the lookup uses openat2, linux 5.6 or newer
 
 a failed build writes nothing and leaves the existing graph in place. if FILE or FILE.old exists and is not a graph, the build fails instead of replacing it. the output mode is 0644 less the umask, and less group or other read permission if any service file lacks it
 
@@ -676,7 +662,7 @@ ninit performs, in order:
 10. raise its own RLIMIT_NOFILE
 11. read /etc/locale.conf
 12. print ``Welcome to NAME!``, where NAME is PRETTY_NAME from /etc/os-release or /usr/lib/os-release
-13. load and verify the graph. on failure, log the reason and load the graph at the same path with ``.old`` appended, the one the last ninitctl init replaced. if that does not exist or fails too, start the emergency shell
+13. load and verify the graph. on failure, start the emergency shell
 14. start every root
 
 ==============  ========  ========================================
@@ -888,7 +874,7 @@ tools-install operates in sbindir. each existing shutdown, poweroff, halt, reboo
 
 the emergency shell starts when:
 
-- the graph is missing, unreadable, empty or fails verification, which includes a version mismatch, and the graph with ``.old`` appended to its path does not exist or fails the same way, see `5.2`_
+- the graph is missing, unreadable, empty or fails verification, which includes a version mismatch
 - a service with onfail: shell exhausts its start-tries
 - memory runs out while ninit allocates its tables at boot
 
@@ -909,7 +895,7 @@ when the shell exits it is started again. ninit stops restarting it after 5 cons
 9 depgraph format
 =================
 
-a graph is loaded only if its version equals the NG_VERSION ninit was built with, defined in src/ngraph.h, currently 8. after upgrading ninit, run ``ninitctl init`` before rebooting. an older graph is refused. ninit then loads depgraph.old, which after an upgrade is as old unless ninitctl init ran twice, and the boot ends in the emergency shell when that is refused too
+a graph is loaded only if its version equals the NG_VERSION ninit was built with, defined in src/ngraph.h, currently 8. after upgrading ninit, run ``ninitctl init`` before rebooting. an older graph is refused and the boot ends in the emergency shell
 
 ninit reads the whole graph into private read-only memory and verifies it before use. every offset and length is bounds checked, sections must not overlap, the checksum must match, every edge must point to a higher index, stored counts must agree with the edge list, names must be valid and unique, and every field must be in range. a graph that fails any check is not used. ninitctl show applies the same checks
 
@@ -996,7 +982,6 @@ notify                                            fd 3 to 255
 interpreter path from a #! line                   255 bytes
 interpreter arguments, those ninit adds included  16, of 4096 bytes each
 output kept per service                           1024 bytes
-syntax check messages kept per script             4095 bytes
 service output line                               256 bytes, longer lines are split
 log ring                                          128 KiB
 repeating block of log lines                      16 lines
@@ -1009,7 +994,6 @@ concurrent log watchers                           4
 =========================================  =======================================
 interval                                   value
 =========================================  =======================================
-syntax check of one script                 30 s
 minimum delay between start attempts       10 ms
 restart delays                             100, 250, 500, 1000, 2000, then 5000 ms
 uptime that resets the restart delay       10 s
@@ -1035,7 +1019,7 @@ path                                  description
 /etc/ninit.d/                         service directory
 /etc/ninit.d/unused/                  disabled services
 /etc/ninit.d/depgraph                 compiled graph
-/etc/ninit.d/depgraph.old             graph replaced by the last ninitctl init, loaded when depgraph fails
+/etc/ninit.d/depgraph.old             graph replaced by the last ninitctl init
 DOCDIR/ninit.d/                       example service set, see `3.11`_
 /etc/locale.conf                      locale for services
 /etc/adjtime                          hardware clock mode for hwclock at shutdown, UTC or LOCAL on its third line

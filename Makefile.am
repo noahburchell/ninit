@@ -28,7 +28,7 @@ ninit_core = \
 	src/spawn.c \
 	src/state.c \
 	src/stop.c \
-	src/shutdown.c \
+	src/teardown.c \
 	src/ninit.c
 
 ninit_headers = \
@@ -48,7 +48,7 @@ ninit_headers = \
 	src/spawn.h \
 	src/state.h \
 	src/stop.h \
-	src/shutdown.h
+	src/teardown.h
 
 ninit_SOURCES = \
 	$(ninit_core) \
@@ -163,12 +163,9 @@ unit_tests = \
 	tests/unit/t-logging-quiet \
 	tests/unit/t-fail \
 	tests/unit/t-fail-sulogin \
-	tests/unit/t-ninit-shutdown \
-	tests/unit/t-build \
-	tests/unit/t-ninit \
 	tests/unit/t-shutdown \
-	tests/unit/t-boot \
-	tests/unit/t-ctlfs
+	tests/unit/t-build \
+	tests/unit/t-ninit
 
 ctl_tests = \
 	tests/ctl/compact.test \
@@ -201,11 +198,9 @@ qemu_tests = \
 	tests/qemu/cgroup.test \
 	tests/qemu/scale.test \
 	tests/qemu/console.test \
-	tests/qemu/interp.test \
-	tests/qemu/fallback.test
+	tests/qemu/interp.test
 
-check_PROGRAMS = $(unit_tests) tests/helpers/czdump tests/helpers/nctl-raw tests/helpers/fakectl \
-	tests/helpers/deny
+check_PROGRAMS = $(unit_tests) tests/helpers/czdump tests/helpers/nctl-raw tests/helpers/fakectl
 
 unit_headers = tests/unit/tap.h tests/unit/gbuild.h tests/unit/logcap.h
 
@@ -217,16 +212,12 @@ tests_unit_t_fail_SOURCES = tests/unit/t-fail.c src/logging.c src/ngraph.c $(uni
 tests_unit_t_fail_sulogin_SOURCES = $(tests_unit_t_fail_SOURCES)
 tests_unit_t_fail_sulogin_CPPFLAGS = $(AM_CPPFLAGS) -DNINIT_SULOGIN=1 \
 	-DNINIT_BUSYBOX='"/bin/busybox"'
-tests_unit_t_ninit_shutdown_SOURCES = tests/unit/t-ninit-shutdown.c $(unit_headers)
+tests_unit_t_shutdown_SOURCES = tests/unit/t-shutdown.c $(unit_headers)
 tests_unit_t_build_SOURCES = tests/unit/t-build.c src/ngraph.c $(unit_headers)
 tests_unit_t_ninit_SOURCES = tests/unit/t-ninit.c src/logging.c src/ngraph.c $(unit_headers)
-tests_unit_t_shutdown_SOURCES = tests/unit/t-shutdown.c src/logging.c $(unit_headers)
-tests_unit_t_boot_SOURCES = tests/unit/t-boot.c src/logging.c src/ngraph.c $(unit_headers)
-tests_unit_t_ctlfs_SOURCES = tests/unit/t-ctlfs.c src/ngraph.c $(unit_headers)
 tests_helpers_czdump_SOURCES = tests/helpers/czdump.c $(ninitctl_parser) src/ngraph.c
 tests_helpers_nctl_raw_SOURCES = tests/helpers/nctl-raw.c
 tests_helpers_fakectl_SOURCES = tests/helpers/fakectl.c
-tests_helpers_deny_SOURCES = tests/helpers/deny.c
 
 TESTS = $(unit_tests) $(ctl_tests) $(qemu_tests)
 
@@ -243,16 +234,12 @@ TEST_EXTENSIONS = .test
 LOG_DRIVER = env AM_TAP_AWK='$(AWK)' $(SHELL) $(top_srcdir)/build-aux/tap-driver.sh
 TEST_LOG_DRIVER = $(LOG_DRIVER)
 TEST_LOG_COMPILER = $(BASH_PROG)
-ninit_test_kernel = @NINIT_TEST_KERNEL@
-
-# a sanitizer build reports the memory a short lived ninitctl leaves to exit as a failure,
-# the environment and the make command line name the test kernel before configure does
+# a sanitizer build reports the memory a short lived ninitctl leaves to exit as a failure
 AM_TESTS_ENVIRONMENT = \
 	top_srcdir='$(abs_top_srcdir)'; top_builddir='$(abs_top_builddir)'; \
 	NINIT_SHELL='$(ninit_shell)'; NINIT_SHELL_NAME='$(ninit_shell_name)'; NINIT_SVCDIR='$(ninit_svcdir)'; \
 	ASAN_OPTIONS=$${ASAN_OPTIONS:-detect_leaks=0}; \
-	NINIT_TEST_KERNEL=$${NINIT_TEST_KERNEL:-'$(ninit_test_kernel)'}; \
-	export top_srcdir top_builddir NINIT_SHELL NINIT_SHELL_NAME NINIT_SVCDIR ASAN_OPTIONS NINIT_TEST_KERNEL;
+	export top_srcdir top_builddir NINIT_SHELL NINIT_SHELL_NAME NINIT_SVCDIR ASAN_OPTIONS;
 
 graph: ninitctl$(EXEEXT)
 	$(AM_V_at)./ninitctl init -d '$(ninit_svcdir)' -o '$(ninit_svcdir)/depgraph'

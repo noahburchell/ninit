@@ -42,52 +42,11 @@ struct shebang {
 	const char *end;
 };
 
-enum { ENV_PROG, ENV_SKIP, ENV_ARG, ENV_SPLIT, ENV_END };
-
-// what a word of an env command line is, as gnu and busybox env parse it
-static int env_word(const char *w, size_t wl, int opts, size_t *off)
-{
-	static const char *const takes[] = { "argv0", "chdir", "unset" };
-	const char *eq;
-	size_t nl;
-
-	if (!opts || w[0] != '-')
-		return memchr(w, '=', wl) ? ENV_SKIP : ENV_PROG;
-	if (wl == 1)
-		return ENV_SKIP;
-	if (w[1] != '-') {
-		for (size_t k = 1; k < wl; k++) {
-			// the -S argument is split into words that env parses again
-			if (w[k] == 'S') {
-				*off = k + 1;
-				return ENV_SPLIT;
-			}
-			if (w[k] == 'a' || w[k] == 'C' || w[k] == 'u')
-				return k + 1 == wl ? ENV_ARG : ENV_SKIP;
-		}
-		return ENV_SKIP;
-	}
-	eq = memchr(w, '=', wl);
-	nl = (eq ? (size_t)(eq - w) : wl) - 2;
-	if (!nl)
-		return ENV_END;
-	// getopt_long takes any unambiguous prefix of a long option
-	if (nl <= 12 && !memcmp(w + 2, "split-string", nl)) {
-		*off = eq ? (size_t)(eq - w) + 1 : wl;
-		return ENV_SPLIT;
-	}
-	for (size_t k = 0; !eq && k < sizeof(takes) / sizeof(*takes); k++)
-		if (nl <= strlen(takes[k]) && !memcmp(w + 2, takes[k], nl))
-			return ENV_ARG;
-	return ENV_SKIP;
-}
-
 // the program a #! line runs and what follows it, looking through env and its options
 static int parse_shebang(const char *line, size_t n, struct shebang *sb)
 {
 	const char *p = line + 2, *end = line + n, *w, *b;
-	size_t wl, bl, off;
-	int opts = 1, what;
+	size_t wl, bl;
 
 	w = word_at(&p, end, &wl);
 	if (!w)
@@ -95,19 +54,19 @@ static int parse_shebang(const char *line, size_t n, struct shebang *sb)
 	bl = wl;
 	b = base_of(w, &bl);
 	if (bl == 3 && !memcmp(b, "env", 3)) {
-		for (w = word_at(&p, end, &wl); w; w = word_at(&p, end, &wl)) {
-			what = env_word(w, wl, opts, &off);
-			while (what == ENV_SPLIT && off < wl) {
-				w += off;
-				wl -= off;
-				what = env_word(w, wl, opts, &off);
-			}
-			if (what == ENV_PROG)
+		while ((w = word_at(&p, end, &wl))) {
+			if (wl > 2 && w[0] == '-' && w[1] == 'S') {
+				w += 2;
+				wl -= 2;
 				break;
-			if (what == ENV_END)
-				opts = 0;
-			else if (what == ENV_ARG && !word_at(&p, end, &wl))
-				return 0;
+			}
+			if (w[0] == '-') {
+				if (wl == 2 && (w[1] == 'u' || w[1] == 'C'))
+					word_at(&p, end, &wl);
+				continue;
+			}
+			if (!memchr(w, '=', wl))
+				break;
 		}
 		if (!w)
 			return 0;
@@ -144,7 +103,7 @@ static int runnable(const char *path)
 {
 	struct stat st;
 
-	return sys_stat(path, &st) == 0 && S_ISREG(st.st_mode) && sys_exec_ok(path, &st) == 0;
+	return stat(path, &st) == 0 && S_ISREG(st.st_mode) && access(path, X_OK) == 0;
 }
 
 // DIR/PROG with DIR canonical, /usr/sbin is often a link to /usr/bin, PROG keeps its own
@@ -156,7 +115,7 @@ static char *found_in(const char *dir, size_t dl, const struct shebang *sb)
 
 	memcpy(d, dir, dl);
 	d[dl] = '\0';
-	real = sys_realpath(d);
+	real = realpath(d, NULL);
 	if (!real)
 		return NULL;
 	rl = strlen(real);
@@ -185,12 +144,12 @@ static char *resolve(const char *fname, const struct shebang *sb)
 			    g_dir, fname, sb->len, NG_MAX_INTERP);
 		memcpy(path, sb->prog, sb->len);
 		path[sb->len] = '\0';
-		if (sys_stat(path, &st) < 0)
-			die("%s/%s: %s%s: %s", g_dir, fname, g_root_pfx, path, strerror(errno));
+		if (stat(path, &st) < 0)
+			die("%s/%s: %s: %s", g_dir, fname, path, strerror(errno));
 		if (!S_ISREG(st.st_mode))
-			die("%s/%s: %s%s is not a regular file", g_dir, fname, g_root_pfx, path);
-		if (sys_exec_ok(path, &st) < 0)
-			die("%s/%s: %s%s: %s", g_dir, fname, g_root_pfx, path, strerror(errno));
+			die("%s/%s: %s is not a regular file", g_dir, fname, path);
+		if (access(path, X_OK) < 0)
+			die("%s/%s: %s: %s", g_dir, fname, path, strerror(errno));
 		return xstrndup(path, sb->len);
 	}
 	for (const char *d = &NG_PATH[5]; *d;) {
@@ -210,8 +169,7 @@ static char *resolve(const char *fname, const struct shebang *sb)
 		}
 		d += dl + (c != NULL);
 	}
-	die("%s/%s: '%.*s' is not in %s%s%s", g_dir, fname, (int)sb->len, sb->prog, &NG_PATH[5],
-	    g_root ? " below " : "", g_root ? g_root : "");
+	die("%s/%s: '%.*s' is not in %s", g_dir, fname, (int)sb->len, sb->prog, &NG_PATH[5]);
 }
 
 // the language a #! line selects, the configured shell for anything no language claims
@@ -219,7 +177,7 @@ const struct lang *lang_select(struct src *s, const char *fname, const char *bod
 {
 	static const struct lang *const langs[] = { &lang_python, &lang_lua, &lang_perl };
 	struct shebang sb;
-	const char *nl, *w, *p, *a, *why, *word;
+	const char *nl, *w, *p, *a;
 	size_t n, len, al;
 
 	s->interp = NG_SHELL;
@@ -235,13 +193,10 @@ const struct lang *lang_select(struct src *s, const char *fname, const char *bod
 		if (!langs[k]->claims(w, len))
 			continue;
 		parse_shebang(body, n, &sb);
+		s->interp = resolve(fname, &sb);
 		// the kernel would pass these as one argument, they are split as env -S does
 		for (p = sb.rest; (a = word_at(&p, sb.end, &al));)
 			strv_push(&s->iargs, xstrndup(a, al));
-		why = langs[k]->bad_arg(&s->iargs, &word);
-		if (why)
-			die("%s/%s: #! argument '%s' %s", g_dir, fname, word, why);
-		s->interp = resolve(fname, &sb);
 		return langs[k];
 	}
 	while (n && (body[n - 1] == ' ' || body[n - 1] == '\t' || body[n - 1] == '\r'))
