@@ -51,6 +51,11 @@ ok() {
 	return 1
 }
 
+skip() {
+	t_n=$((t_n + 1))
+	t_emit "ok $t_n - $* # SKIP"
+}
+
 check() {
 	local what=$1
 	shift

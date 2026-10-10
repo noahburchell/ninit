@@ -97,8 +97,12 @@ fi
 # a user without root goes through logind, which this guest lacks
 q_new non-root
 q_check <<'EOF'
-out=$(chpst -u nobody:nobody /sbin/poweroff 2>&1)
-is "$?:$out" "1:poweroff: permission denied, must be run as root" "poweroff as a user without logind is refused"
+if command -v chpst >/dev/null; then
+	out=$(chpst -u nobody:nobody /sbin/poweroff 2>&1)
+	is "$?:$out" "1:poweroff: permission denied, must be run as root" "poweroff as a user without logind is refused"
+else
+	skip "poweroff as a user without logind is refused, busybox has no chpst"
+fi
 out=$(/sbin/shutdown 2>&1)
 like "$out" "shutdown: missing time operand" "shutdown without TIME is refused"
 out=$(/sbin/shutdown -c 2>&1)

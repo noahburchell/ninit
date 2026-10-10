@@ -112,3 +112,4 @@ the guest library provides `ok`, `is`, `like`, `unlike`, `has`, `lacks` and `che
 | `nctl [OPTION]... REQUEST` | raw control socket client, see `tests/helpers/nctl-raw.c` |
 | `idx_of NAME`, `cg_of INDEX` | graph index of NAME, cgroup path of an index |
 | `now_ms` | wall clock in milliseconds |
+| `skip WHAT` | count WHAT as skipped, for a check the guest cannot run |
