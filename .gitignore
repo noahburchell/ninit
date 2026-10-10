@@ -10,12 +10,16 @@
 /tests/unit/t-logging-quiet
 /tests/unit/t-fail
 /tests/unit/t-fail-sulogin
-/tests/unit/t-shutdown
+/tests/unit/t-ninit-shutdown
 /tests/unit/t-build
 /tests/unit/t-ninit
+/tests/unit/t-shutdown
+/tests/unit/t-boot
+/tests/unit/t-ctlfs
 /tests/helpers/czdump
 /tests/helpers/nctl-raw
 /tests/helpers/fakectl
+/tests/helpers/deny
 /tests/qemu/base.cpio
 /tests/qemu/base.cpio.tmp
 /tests/qemu/base.root/

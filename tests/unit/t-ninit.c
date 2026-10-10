@@ -241,7 +241,7 @@ int ninit_main(int argc, char **argv);
 #include "../../src/spawn.c"
 #include "../../src/state.c"
 #include "../../src/stop.c"
-#include "../../src/teardown.c"
+#include "../../src/shutdown.c"
 #include "../../src/ninit.c"
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop

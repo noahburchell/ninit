@@ -6,11 +6,11 @@
 
 | suite | path | requires | covers |
 |---|---|---|---|
-| unit | `tests/unit/t-*.c` | nothing | graph verifier, crc32c, names, `/etc/locale.conf`, log ring and console, failure reporting, emergency shell state machine, `ninit-shutdown` argument handling, comment stripper, pid table, scheduler simulation |
+| unit | `tests/unit/t-*.c` | nothing | graph verifier, crc32c, names, `/etc/locale.conf`, log ring and console, failure reporting, emergency shell state machine, `ninit-shutdown` argument handling, comment stripper, pid table, scheduler simulation, the swap, clock and remount steps of shutdown, graph loading and the descriptor limit of pid 1, the graph writes and link moves of `ninitctl` |
 | ninitctl | `tests/ctl/*.test` | bash, coreutils | `init`, `show`, `add`, `del`, directives, ordering, limits, locking, `make tools-install`, the examples in `docs/ninit.d` against README 4.2 |
 | interpreters | `tests/ctl/interp.test`, `tests/qemu/interp.test` | python3, lua and perl, each part skips without its interpreter | `#!` selection, build time resolution, argv, syntax checks, and python, lua and perl services run by ninit |
 | client | `tests/ctl/client.test` | `unshare(1)`, unprivileged user namespaces | the `ninitctl` client against a fake control socket in a private mount namespace |
-| qemu | `tests/qemu/*.test` | qemu, a static busybox, a kernel image | ninit as pid 1 of a virtual machine: boot, readiness, failures, restart, dependencies, control socket, output, shutdown, signals, emergency shell, cgroups, console stalls |
+| qemu | `tests/qemu/*.test` | qemu, a static busybox, a kernel image | ninit as pid 1 of a virtual machine: boot, readiness, failures, restart, dependencies, control socket, output, shutdown, signals, emergency shell, cgroups, console stalls, the fallbacks for kernels without clone3, signalfd or cgroup2 |
 
 a suite whose requirement is missing reports SKIP. no test contacts the control socket or pid 1 of the machine running the tests. the unit tests replace `fork`, `kill`, `reboot`, `mount` and the other system calls with in-process stubs, and abort on any attempt to reach a real process
 
@@ -25,6 +25,7 @@ the kernel is named by `NINIT_TEST_KERNEL`. it needs, built in and not as module
 - `CGROUPS`, `UNIX`, `SIGNALFD`, `UNIX98_PTYS`
 - `BINFMT_ELF`, `BINFMT_SCRIPT`
 - `ACPI`, for poweroff to end the virtual machine
+- `SECCOMP_FILTER`, for `fallback.test` to take clone3 and signalfd away, without it the checks of that log are skipped
 - `SERIO_I8042` and `KEYBOARD_ATKBD`, for the ctrl-alt-del test
 
 most distribution kernels qualify. the one on an installation image is enough, no modules are loaded:
@@ -40,7 +41,7 @@ linux before 7.3 kills a process created with `CLONE_INTO_CGROUP` in a cgroup th
 
 | variable | default | meaning |
 |---|---|---|
-| `NINIT_TEST_KERNEL` | none | kernel image. the qemu tests are skipped without it |
+| `NINIT_TEST_KERNEL` | none | kernel image. the qemu tests are skipped without it. the environment and the `make` command line take precedence over the value given to `configure` |
 | `NINIT_TEST_QEMU` | `qemu-system-x86_64` | qemu binary |
 | `NINIT_TEST_BUSYBOX` | `busybox` in `PATH` | busybox for the guest userland and the initramfs |
 | `NINIT_TEST_ACCEL` | `kvm` if `/dev/kvm` is usable, else `tcg` | qemu accelerator |
@@ -59,7 +60,7 @@ each boot leaves `console.log` (the serial console without colour), `tap.log` (t
 
 ### guest layout
 
-the initramfs is `tests/qemu/base.cpio`, built once per build tree from `ninit`, `ninitctl`, `ninit-shutdown`, the configured shell and its libraries, busybox and `tests/qemu/guest.sh`, followed by the files of the scenario. `interp.test` adds python with the modules its startup loads, lua and perl to its scenario, at the paths `ninitctl init` resolves on the build system. ninit is started with `rdinit=/sbin/ninit`. a dynamically linked musl build cannot be copied into the guest, link it statically with `LDFLAGS=-static`
+the initramfs is `tests/qemu/base.cpio`, built once per build tree from `ninit`, `ninitctl`, `ninit-shutdown`, the configured shell and its libraries, busybox and `tests/qemu/guest.sh`, followed by the files of the scenario. `interp.test` adds python with the modules its startup loads, lua and perl to its scenario, at the paths `ninitctl init` resolves on the build system. ninit is started with `rdinit=/sbin/ninit`. the shared objects of a dynamically linked program are found with `ldd`, or with the loader itself for musl
 
 ## writing tests
 

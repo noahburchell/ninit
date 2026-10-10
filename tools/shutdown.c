@@ -61,7 +61,7 @@ static const char *base(const char *p)
 static void usage(const char *me, FILE *f)
 {
 	fprintf(f,
-		"Usage: %s [OPTION]...%s\n"
+		"usage: %s [OPTION]...%s\n"
 		"\n"
 		"  -r         reboot\n"
 		"  -h, -P     power off\n"
@@ -70,8 +70,8 @@ static void usage(const char *me, FILE *f)
 		"  -c         report how to cancel a pending shutdown\n"
 		"      --help display this help and exit\n"
 		"\n"
-		"TIME is now, +MINUTES or HH:MM.\n"
-		"reboot, poweroff and halt accept the same options.\n",
+		"TIME is now, +MINUTES or HH:MM\n"
+		"reboot, poweroff and halt accept the same options\n",
 		me, strcmp(base(me), "shutdown") && strcmp(base(me), "ninit-shutdown") ? "" : " TIME");
 }
 

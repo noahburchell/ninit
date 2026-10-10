@@ -4,6 +4,7 @@
 #include "parser/parser.h"
 #include "../src/ngraph.h"
 
+#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -12,19 +13,18 @@ static void locale_note(void)
 {
 	char loc[NG_LOCALE_MAX][NG_LOCALE_LEN];
 	const char *bad;
-	int nl = ng_locale_env(loc, NG_LOCALE_MAX, &bad);
+	int fd = sys_open(NG_LOCALE_CONF, O_RDONLY | O_NOCTTY);
+	int nl = ng_locale_fd(fd, loc, NG_LOCALE_MAX, &bad);
 
 	fflush(stdout);
 	if (bad)
-		fprintf(stderr, "ninitctl: warning: %s %s\n", NG_LOCALE_CONF, bad);
+		fprintf(stderr, "ninitctl: warning: %s%s %s\n", g_root_pfx, NG_LOCALE_CONF, bad);
 	if (nl <= 0)
 		fprintf(stderr,
-			"ninitctl: %s %s, services will run with LANG=%s\n"
-			"ninitctl: for example: printf 'LANG=en_US.UTF-8\\n' > %s\n",
-			NG_LOCALE_CONF,
-			access(NG_LOCALE_CONF, R_OK) ? "is missing"
-						     : "sets no locale variable",
-			NG_FALLBACK_LANG, NG_LOCALE_CONF);
+			"ninitctl: %s%s %s, services will run with LANG=%s\n"
+			"ninitctl: for example: printf 'LANG=en_US.UTF-8\\n' > %s%s\n",
+			g_root_pfx, NG_LOCALE_CONF, fd < 0 ? "is missing" : "sets no locale variable",
+			NG_FALLBACK_LANG, g_root_pfx, NG_LOCALE_CONF);
 }
 
 int cmd_init(int argc, char **argv)
@@ -51,9 +51,22 @@ int cmd_init(int argc, char **argv)
 			dry = 1;
 		} else if (!strcmp(argv[k], "--no-check")) {
 			nocheck = 1;
+		} else if (!strcmp(argv[k], "--root")) {
+			if (++k == argc)
+				usage_die("init: %s needs a directory", argv[k - 1]);
+			set_root(argv[k]);
 		} else {
 			usage_die("init: unexpected argument '%s'", argv[k]);
 		}
+	}
+	if (g_root && !custom_dir) {
+		size_t pl = strlen(g_root_pfx);
+		char *rd = xmalloc(pl + sizeof(NG_DEFAULT_DIR));
+
+		memcpy(rd, g_root_pfx, pl);
+		memcpy(rd + pl, NG_DEFAULT_DIR, sizeof(NG_DEFAULT_DIR));
+		dir = rd;
+		custom_dir = 1;
 	}
 	g_dir = dir;
 	g_sh_lexed = sh_lexed(NG_SHELL_ARGV0);

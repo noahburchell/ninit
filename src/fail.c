@@ -96,7 +96,7 @@ enum fail_act fail_service(const void *map, uint32_t i, int status, unsigned att
 	if (tail_len)
 		log_raw(LOG_FAIL, tail, tail_len);
 
-	// restart: covers supervision after readines
+	// restart covers supervision after readiness
 	if (ng_restart(map, i))
 		log_warn("%s: restart applies after readiness, start-tries is %u", name, tries);
 
@@ -416,7 +416,7 @@ static void emerg_greet(void)
 		return;
 	emerg_greeted = 1;
 	ninit_log(LOG_DONE, "shell: started on the console, exit with reboot or poweroff");
-	// rebuilding the graph does not reload it: pid 1 read it once, at boot
+	// rebuilding the graph does not reload it, pid 1 read it once at boot
 	log_note("shell: 'ninitctl resume' retries failed services");
 	log_note("shell: 'ninitctl init' takes effect on the next boot");
 }

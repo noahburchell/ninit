@@ -14,7 +14,7 @@ int main(int argc, char **argv)
 	char *buf;
 
 	if (argc < 2 || argc > 3) {
-		fputs("Usage: czdump FILE [NAME]\n", stderr);
+		fputs("usage: czdump FILE [NAME]\n", stderr);
 		return 2;
 	}
 	name = argc == 3 ? argv[2] : strrchr(argv[1], '/') ? strrchr(argv[1], '/') + 1 : argv[1];
