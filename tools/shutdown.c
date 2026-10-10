@@ -248,7 +248,7 @@ static int logind_can(enum act a)
 	return !strcmp(w, "yes") || !strcmp(w, "challenge");
 }
 
-static void warn_console(enum act a, long secs)
+static void warn_console(const char *me, enum act a, long secs)
 {
 	char msg[160];
 	int fd = open("/dev/console", O_WRONLY | O_NOCTTY | O_CLOEXEC);
@@ -257,13 +257,11 @@ static void warn_console(enum act a, long secs)
 	if (fd < 0)
 		return;
 	if (secs >= 60)
-		n = snprintf(msg, sizeof(msg),
-			     "\r\nThe system is going down for %s in %ld minute%s\r\n",
-			     act_name[a], secs / 60, secs / 60 == 1 ? "" : "s");
+		n = snprintf(msg, sizeof(msg), "\r\n%s: %s in %ld minute%s\r\n",
+			     me, act_name[a], secs / 60, secs / 60 == 1 ? "" : "s");
 	else
-		n = snprintf(msg, sizeof(msg),
-			     "\r\nThe system is going down for %s in %ld second%s\r\n",
-			     act_name[a], secs, secs == 1 ? "" : "s");
+		n = snprintf(msg, sizeof(msg), "\r\n%s: %s in %ld second%s\r\n",
+			     me, act_name[a], secs, secs == 1 ? "" : "s");
 	if (n > 0)
 		(void)!write(fd, msg, (size_t)n);
 	close(fd);
@@ -366,11 +364,15 @@ int main(int argc, char **argv)
 	}
 
 	if (when > 0) {
-		warn_console(act, when);
+		warn_console(me, act, when);
 		printf("%s: %s in %ld seconds\n", me, act_name[act], when);
 		fflush(stdout);
-		while (when > 0)
-			when = (long)sleep((unsigned)when);
+		// sleep takes an unsigned int and +MINUTES can ask for more
+		while (when > 0) {
+			unsigned s = when > UINT_MAX ? UINT_MAX : (unsigned)when;
+
+			when -= (long)(s - sleep(s));
+		}
 	}
 
 	if (geteuid() != 0) {
