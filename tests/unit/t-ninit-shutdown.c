@@ -29,7 +29,8 @@ static struct {
 	int wait_status, wait_eintr;
 	char lp_args[12][96];
 	int lp_argc;
-	unsigned slept, sleep_calls, sleep_short;
+	unsigned long long slept;
+	unsigned sleep_calls, sleep_short;
 	uid_t euid;
 	time_t now;
 	const char *can;
@@ -451,18 +452,18 @@ static void test_time(void)
 	is_int(rc, 0, "+5 succeeds");
 	is_int(sh.slept, 300, "+5 waits 300 s");
 	has_str(out, "shutdown: poweroff in 300 seconds\n", "the delay is printed");
-	has_str(con, "\r\nThe system is going down for poweroff in 5 minutes\r\n", "and broadcast to the console");
+	has_str(con, "\r\nshutdown: poweroff in 5 minutes\r\n", "and broadcast to the console");
 	is_int(sh.kill_sig, SIGUSR2, "then pid 1 is signalled");
 
 	reset();
 	run("shutdown", "-r", "+1", NULL);
-	has_str(con, "going down for reboot in 1 minute\r\n", "one minute is singular");
+	has_str(con, "shutdown: reboot in 1 minute\r\n", "one minute is singular");
 	is_int(sh.slept, 60, "+1 waits 60 s");
 
 	reset();
 	run("shutdown", "-H", "12:01", NULL);
 	is_int(sh.slept, 30, "12:01 at 12:00:30 waits 30 s");
-	has_str(con, "going down for halt in 30 seconds\r\n", "under a minute is told in seconds");
+	has_str(con, "shutdown: halt in 30 seconds\r\n", "under a minute is told in seconds");
 
 	reset();
 	run("shutdown", "12:00", NULL);
@@ -492,6 +493,10 @@ static void test_time(void)
 	run("shutdown", "+2", NULL);
 	is_int(sh.slept, 120, "an interrupted sleep is resumed for the remainder");
 	ok(sh.sleep_calls > 1, "over several calls");
+
+	reset();
+	run("shutdown", "+71582789", NULL);
+	ok(sh.slept == 4294967340ull && sh.sleep_calls == 2, "a wait longer than sleep(3) takes is split");
 
 	reset();
 	sh.comm = "openrc-init\n";
