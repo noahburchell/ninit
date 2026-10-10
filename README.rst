@@ -527,11 +527,11 @@ option                  effect
 5. order the services topologically. among the services ready to be placed, roots come first, then the service with the longest chain of dependents, then the first by name
 6. resolve the default onfail of each service and count its dependents
 7. build the image and verify it with the checks ninit applies at boot
-8. write it to a temporary file in the output directory and fsync it, hard link the current graph to FILE.old, rename the new file over FILE, fsync the directory
+8. write it to a temporary file in the output directory and fsync it, hard link the current graph to a second temporary name and rename that over FILE.old, rename the new file over FILE, fsync the directory
 
 with ``--root``, the interpreters of `3.12`_ and /etc/locale.conf are looked up below ROOT as the system booted from it sees them, absolute links and ``..`` included, and every syntax check runs chrooted into ROOT. the chroot requires CAP_SYS_CHROOT, without it no script can be checked and the build requires ``--no-check``. DIR and FILE are paths on the running system. the lookup uses openat2, linux 5.6 or newer
 
-a failed build writes nothing and leaves the existing graph in place. if FILE or FILE.old exists and is not a graph, the build fails instead of replacing it. the output mode is 0644 less the umask, and less group or other read permission if any service file lacks it
+a failed build writes nothing and leaves the existing graph and FILE.old in place. if FILE or FILE.old exists and is not a graph, the build fails instead of replacing it. the output mode is 0644 less the umask, and less group or other read permission if any service file lacks it
 
 on success ``init`` prints ``FILE: N services, E edges, R roots, B bytes``. ``-n`` prints ``FILE: would write`` followed by the same figures and the mode
 

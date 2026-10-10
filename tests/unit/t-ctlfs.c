@@ -199,17 +199,18 @@ static int dot_files(const char *dir)
 
 static void test_atomic(void)
 {
-	// each message names the call and a path in the directory, the temporary one or the graph
+	// each message names the call and a path in the directory, keep is what .old holds after the failure
 	static const struct {
-		const char *call, *msg, *path;
+		const char *call, *msg, *path, *keep;
 		int after;
 	} v[] = {
-		{ "mkostemp", "mkstemp", ".depgraph.", 0 },
-		{ "fchmod", "fchmod", ".depgraph.", 0 },
-		{ "write", "write", ".depgraph.", 1 },
-		{ "fsync", "fsync", ".depgraph.", 0 },
-		{ "link", "link", "depgraph -> ", 0 },
-		{ "rename", "rename", ".depgraph.", 0 },
+		{ "mkostemp", "mkstemp", ".depgraph.", "first", 0 },
+		{ "fchmod", "fchmod", ".depgraph.", "first", 0 },
+		{ "write", "write", ".depgraph.", "first", 1 },
+		{ "fsync", "fsync", ".depgraph.", "first", 0 },
+		{ "link", "link", "depgraph -> ", "first", 0 },
+		{ "rename", "rename", ".depgraph.", "first", 0 },
+		{ "rename", "rename", ".depgraph.", "second", 1 },
 	};
 	char dir[] = "/tmp/ninit-t-ctlfs.XXXXXX", path[256], old[256], want[1024], got[64];
 	struct atomic_arg a = { path, "first", -1 };
@@ -241,6 +242,9 @@ static void test_atomic(void)
 			tap_diag("%d %s", rc, errtext);
 		slurp_to(path, got, sizeof(got));
 		ok(!strcmp(got, "second") && !dot_files(dir), "the graph is unchanged and no temporary file is left");
+		slurp_to(old, got, sizeof(got));
+		if (!ok(!strcmp(got, v[k].keep), "and .old holds a graph"))
+			tap_diag("'%s'", got);
 	}
 
 	fail("fsync dir", 0, -1);

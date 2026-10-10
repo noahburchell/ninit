@@ -45,8 +45,24 @@ static long long mono_ms(void)
 	return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
+struct slot {
+	pid_t pid;
+	int errfd;
+	uint32_t who;
+	long long due;
+};
+
+struct checks {
+	struct slot *slot;
+	char **failed;
+	uint8_t *late;
+	uint32_t nslot, live, bad, unchecked;
+	int devnull, giveup;
+	sigset_t chld, old_mask;
+};
+
 // waits for a check to end, killing each one still running at its deadline, due -1 marks it
-static pid_t reap_check(const pid_t *pids, long long *due, uint32_t live, const sigset_t *chld, int *st)
+static pid_t reap_check(struct checks *c, int *st)
 {
 	for (;;) {
 		pid_t got = waitpid(-1, st, WNOHANG);
@@ -56,22 +72,153 @@ static pid_t reap_check(const pid_t *pids, long long *due, uint32_t live, const 
 		if (got)
 			return got;
 		now = mono_ms();
-		for (uint32_t k = 0; k < live; k++) {
-			if (due[k] < 0)
+		for (uint32_t k = 0; k < c->live; k++) {
+			struct slot *s = &c->slot[k];
+
+			if (s->due < 0)
 				continue;
-			if (due[k] <= now) {
-				kill(pids[k], SIGKILL);
-				due[k] = -1;
-			} else if (due[k] < next) {
-				next = due[k];
+			if (s->due <= now) {
+				kill(s->pid, SIGKILL);
+				s->due = -1;
+			} else if (s->due < next) {
+				next = s->due;
 			}
 		}
 		if (next == LLONG_MAX)
 			next = now + 1000;
 		ts.tv_sec = (time_t)((next - now) / 1000);
 		ts.tv_nsec = (long)((next - now) % 1000 * 1000000);
-		sigtimedwait(chld, NULL, &ts);
+		sigtimedwait(&c->chld, NULL, &ts);
 	}
+}
+
+// keeps the messages of a check that failed or did not finish
+static void collect_one(struct checks *c)
+{
+	char msg[4096];
+	struct slot *s;
+	ssize_t mn;
+	size_t ml = 0;
+	uint32_t k;
+	pid_t got;
+	int st;
+
+	for (;;) {
+		got = reap_check(c, &st);
+		if (got < 0) {
+			if (errno == EINTR)
+				continue;
+			fprintf(stderr, "ninitctl: warning: wait: %s\n", strerror(errno));
+			for (k = 0; k < c->live; k++)
+				close(c->slot[k].errfd);
+			c->unchecked += c->live;
+			c->live = 0;
+			c->giveup = 1;
+			return;
+		}
+		for (k = 0; k < c->live; k++)
+			if (c->slot[k].pid == got)
+				break;
+		if (k < c->live)
+			break;
+	}
+	s = &c->slot[k];
+	if (s->due < 0 || !WIFEXITED(st) || WEXITSTATUS(st)) {
+		if (s->due < 0) {
+			c->late[s->who] = 1;
+			c->unchecked++;
+			ml = (size_t)snprintf(msg, sizeof(msg), "the syntax check did not finish in %d s\n",
+					      CHECK_MS / 1000);
+		} else {
+			c->bad++;
+		}
+		lseek(s->errfd, 0, SEEK_SET);
+		mn = read(s->errfd, msg + ml, sizeof(msg) - 1 - ml);
+		ml += mn > 0 ? (size_t)mn : 0;
+		msg[ml] = '\0';
+		c->failed[s->who] = xmalloc(ml + 1);
+		memcpy(c->failed[s->who], msg, ml + 1);
+	}
+	close(s->errfd);
+	*s = c->slot[--c->live];
+}
+
+static void start_one(struct checks *c, struct src *s, uint32_t i, const char *dir)
+{
+	static char path[] = NG_PATH;
+	static char *const envp[] = { path, NULL };
+	size_t len = strlen(s->script);
+	char *argv[16];
+	const char *prog;
+	int sfd, efd;
+	pid_t pid;
+
+	sfd = memfd_create(s->name, MFD_CLOEXEC);
+	efd = memfd_create("stderr", MFD_CLOEXEC);
+	if (sfd < 0 || efd < 0) {
+		if (sfd >= 0)
+			close(sfd);
+		if (efd >= 0)
+			close(efd);
+		fprintf(stderr, "ninitctl: warning: memfd_create: %s, "
+			"skipping the syntax check\n", strerror(errno));
+		c->giveup = 1;
+		c->unchecked++;
+		return;
+	}
+	if ((size_t)write(sfd, s->script, len) != len || lseek(sfd, 0, SEEK_SET) != 0) {
+		fprintf(stderr, "ninitctl: warning: %s/%s: cannot stage the script "
+			"for the syntax check: %s\n", dir, s->name, strerror(errno));
+		close(sfd);
+		close(efd);
+		c->unchecked++;
+		return;
+	}
+
+	prog = s->lang->check_argv(s, argv, sizeof(argv) / sizeof(*argv));
+	pid = fork();
+	if (pid < 0)
+		die("fork: %s", strerror(errno));
+	if (pid == 0) {
+		sigprocmask(SIG_SETMASK, &c->old_mask, NULL);
+		if (g_root && (chroot(g_root) < 0 || chdir("/") < 0))
+			_exit(127);
+		dup2(sfd, 0);
+		if (c->devnull >= 0)
+			dup2(c->devnull, 1);
+		dup2(efd, 2);
+		execve(prog, argv, envp);
+		_exit(127);
+	}
+	close(sfd);
+	c->slot[c->live++] = (struct slot){ .pid = pid, .errfd = efd, .who = i, .due = mono_ms() + CHECK_MS };
+}
+
+static void report(struct checks *c, struct src *srcs, uint32_t n, const char *dir)
+{
+	const char *what = NULL;
+
+	for (uint32_t i = 0; i < n; i++) {
+		if (!c->failed[i])
+			continue;
+		print_failure(dir, srcs[i].name, c->failed[i]);
+		free(c->failed[i]);
+		if (c->late[i])
+			continue;
+		if (!what)
+			what = srcs[i].interp;
+		else if (strcmp(what, srcs[i].interp))
+			what = "";
+	}
+	free(c->failed);
+	free(c->late);
+	free(c->slot);
+	if (c->bad)
+		die("%u service script%s failed the %s%ssyntax check", c->bad, c->bad == 1 ? "" : "s",
+		    what && *what ? what : "", what && *what ? " " : "");
+	if (c->unchecked)
+		die("%u service script%s could not be checked, use --no-check to skip", c->unchecked,
+		    c->unchecked == 1 ? "" : "s");
 }
 
 // a check for another root runs inside it, which needs CAP_SYS_CHROOT
@@ -92,24 +239,11 @@ static int chroot_errno(void)
 
 void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 {
-	static char path[] = NG_PATH;
-	static char *const envp[] = { path, NULL };
 	long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
-	uint32_t slots = ncpu > 1 ? (uint32_t)ncpu : 1;
-	uint32_t i, live = 0, bad = 0, unchecked = 0;
-	const char *what = NULL;
-	int shell_ok = 1;
-	int giveup = 0;
-	pid_t *pids;
-	long long *due;
-	int *errfd;
-	uint32_t *who;
-	char **failed;
-	uint8_t *late;
-	int devnull, e;
+	struct checks c = { .nslot = ncpu > 1 ? (uint32_t)ncpu : 1 };
 	struct sigaction dfl = { .sa_handler = SIG_DFL }, old_chld;
-	sigset_t chld, old_mask;
 	struct stat sh;
+	int shell_ok = 1, e;
 
 	// an interpreter #! names was found runnable when the file was read, the shell was not
 	if (sys_stat(NG_SHELL, &sh) < 0 || sys_exec_ok(NG_SHELL, &sh) < 0) {
@@ -117,167 +251,41 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 			"skipping the syntax check of shell scripts\n", g_root_pfx, NG_SHELL);
 		shell_ok = 0;
 	}
-	if (slots > 32)
-		slots = 32;
-	pids = xmalloc(slots * sizeof(*pids));
-	due = xmalloc(slots * sizeof(*due));
-	errfd = xmalloc(slots * sizeof(*errfd));
-	who = xmalloc(slots * sizeof(*who));
+	if (c.nslot > 32)
+		c.nslot = 32;
+	c.slot = xmalloc(c.nslot * sizeof(*c.slot));
 	// checks end in any order, their messages print in service order
-	failed = xmalloc(n * sizeof(*failed));
-	late = xmalloc(n);
-	devnull = open("/dev/null", O_WRONLY | O_CLOEXEC);
+	c.failed = xmalloc(n * sizeof(*c.failed));
+	c.late = xmalloc(n);
+	c.devnull = open("/dev/null", O_WRONLY | O_CLOEXEC);
 	// an ignored SIGCHLD would reap the checks before waitpid sees them
-	sigemptyset(&chld);
-	sigaddset(&chld, SIGCHLD);
+	sigemptyset(&c.chld);
+	sigaddset(&c.chld, SIGCHLD);
 	sigaction(SIGCHLD, &dfl, &old_chld);
-	sigprocmask(SIG_BLOCK, &chld, &old_mask);
+	sigprocmask(SIG_BLOCK, &c.chld, &c.old_mask);
 	if (g_root && (e = chroot_errno())) {
 		fprintf(stderr, "ninitctl: warning: chroot %s: %s, skipping the syntax check\n",
 			g_root, strerror(e));
-		giveup = 1;
+		c.giveup = 1;
 	}
 
-	for (i = 0; i <= n; i++) {
-		char *argv[16];
-		const char *prog;
-		size_t len;
-		int sfd, efd;
-		pid_t pid;
-
-		while (live == slots || ((i == n || giveup) && live)) {
-			int st;
-			pid_t got = reap_check(pids, due, live, &chld, &st);
-			uint32_t k;
-
-			if (got < 0) {
-				if (errno == EINTR)
-					continue;
-				fprintf(stderr, "ninitctl: warning: wait: %s\n",
-					strerror(errno));
-				for (k = 0; k < live; k++)
-					close(errfd[k]);
-				unchecked += live;
-				live = 0;
-				giveup = 1;
-				break;
-			}
-			for (k = 0; k < live; k++)
-				if (pids[k] == got)
-					break;
-			if (k == live)
-				continue;
-			if (due[k] < 0 || !WIFEXITED(st) || WEXITSTATUS(st)) {
-				char msg[4096];
-				ssize_t mn;
-				size_t ml = 0;
-
-				if (due[k] < 0) {
-					late[who[k]] = 1;
-					unchecked++;
-					ml = (size_t)snprintf(msg, sizeof(msg),
-							      "the syntax check did not finish in %d s\n",
-							      CHECK_MS / 1000);
-				} else {
-					bad++;
-				}
-				lseek(errfd[k], 0, SEEK_SET);
-				mn = read(errfd[k], msg + ml, sizeof(msg) - 1 - ml);
-				ml += mn > 0 ? (size_t)mn : 0;
-				msg[ml] = '\0';
-				failed[who[k]] = xmalloc(ml + 1);
-				memcpy(failed[who[k]], msg, ml + 1);
-			}
-			close(errfd[k]);
-			live--;
-			pids[k] = pids[live];
-			due[k] = due[live];
-			errfd[k] = errfd[live];
-			who[k] = who[live];
-		}
-		if (i == n)
-			break;
+	for (uint32_t i = 0; i < n; i++) {
+		while (c.live == c.nslot || (c.giveup && c.live))
+			collect_one(&c);
 		if (!srcs[i].script || (srcs[i].lang == &lang_shell && !shell_ok))
 			continue;
-		if (giveup) {
-			unchecked++;
+		if (c.giveup) {
+			c.unchecked++;
 			continue;
 		}
-
-		len = strlen(srcs[i].script);
-		sfd = memfd_create(srcs[i].name, MFD_CLOEXEC);
-		efd = memfd_create("stderr", MFD_CLOEXEC);
-		if (sfd < 0 || efd < 0) {
-			if (sfd >= 0)
-				close(sfd);
-			if (efd >= 0)
-				close(efd);
-			fprintf(stderr, "ninitctl: warning: memfd_create: %s, "
-				"skipping the syntax check\n", strerror(errno));
-			giveup = 1;
-			unchecked++;
-			continue;
-		}
-		if ((size_t)write(sfd, srcs[i].script, len) != len ||
-		    lseek(sfd, 0, SEEK_SET) != 0) {
-			fprintf(stderr, "ninitctl: warning: %s/%s: cannot stage the script "
-				"for the syntax check: %s\n", dir, srcs[i].name,
-				strerror(errno));
-			close(sfd);
-			close(efd);
-			unchecked++;
-			continue;
-		}
-
-		prog = srcs[i].lang->check_argv(&srcs[i], argv, sizeof(argv) / sizeof(*argv));
-		pid = fork();
-		if (pid < 0)
-			die("fork: %s", strerror(errno));
-		if (pid == 0) {
-			sigprocmask(SIG_SETMASK, &old_mask, NULL);
-			if (g_root && (chroot(g_root) < 0 || chdir("/") < 0))
-				_exit(127);
-			dup2(sfd, 0);
-			if (devnull >= 0)
-				dup2(devnull, 1);
-			dup2(efd, 2);
-			execve(prog, argv, envp);
-			_exit(127);
-		}
-		close(sfd);
-		pids[live] = pid;
-		due[live] = mono_ms() + CHECK_MS;
-		errfd[live] = efd;
-		who[live] = i;
-		live++;
+		start_one(&c, &srcs[i], i, dir);
 	}
+	while (c.live)
+		collect_one(&c);
 
-	sigprocmask(SIG_SETMASK, &old_mask, NULL);
+	sigprocmask(SIG_SETMASK, &c.old_mask, NULL);
 	sigaction(SIGCHLD, &old_chld, NULL);
-	if (devnull >= 0)
-		close(devnull);
-	for (i = 0; i < n; i++) {
-		if (!failed[i])
-			continue;
-		print_failure(dir, srcs[i].name, failed[i]);
-		free(failed[i]);
-		if (late[i])
-			continue;
-		if (!what)
-			what = srcs[i].interp;
-		else if (strcmp(what, srcs[i].interp))
-			what = "";
-	}
-	free(failed);
-	free(late);
-	free(pids);
-	free(due);
-	free(errfd);
-	free(who);
-	if (bad)
-		die("%u service script%s failed the %s%ssyntax check", bad, bad == 1 ? "" : "s",
-		    what && *what ? what : "", what && *what ? " " : "");
-	if (unchecked)
-		die("%u service script%s could not be checked, use --no-check to skip", unchecked,
-		    unchecked == 1 ? "" : "s");
+	if (c.devnull >= 0)
+		close(c.devnull);
+	report(&c, srcs, n, dir);
 }

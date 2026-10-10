@@ -74,10 +74,10 @@ static int same_fd_dir(int fd, const char *path)
 
 void write_atomic(const char *path, const void *buf, size_t len, mode_t mode, int held)
 {
-	char tmp[8224], old[4104], parent[4104], *slash;
+	char tmp[8224], keep[8232], old[4104], parent[4104], *slash;
 	const char *dir, *base;
 	const char *p = buf;
-	size_t left = len;
+	size_t left = len, tl;
 	mode_t um;
 	int fd, dfd, owned = 0;
 
@@ -135,10 +135,19 @@ void write_atomic(const char *path, const void *buf, size_t len, mode_t mode, in
 	}
 	close(fd);
 
-	unlink(old);
-	if (link(path, old) < 0 && errno != ENOENT) {
+	// .old is the boot fallback, so it is replaced in one rename and never removed first
+	tl = strlen(tmp);
+	memcpy(keep, tmp, tl);
+	memcpy(keep + tl, ".old", sizeof(".old"));
+	if (link(path, keep) == 0) {
+		if (rename(keep, old) < 0) {
+			unlink(keep);
+			unlink(tmp);
+			die("rename %s -> %s: %s", keep, old, strerror(errno));
+		}
+	} else if (errno != ENOENT) {
 		unlink(tmp);
-		die("link %s -> %s: %s", path, old, strerror(errno));
+		die("link %s -> %s: %s", path, keep, strerror(errno));
 	}
 
 	if (rename(tmp, path) < 0) {

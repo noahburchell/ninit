@@ -109,7 +109,7 @@ applies at boot
 .IP 8. 4
 write it to a temporary file and
 .BR fsync (2)
-it, link the existing graph to
+it, link the existing graph to a second temporary name and rename that to
 .IB file .old\c
 , rename the temporary file to
 .IR file ,
