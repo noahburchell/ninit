@@ -32,6 +32,7 @@ static struct {
 	unsigned slept, sleep_calls, sleep_short;
 	uid_t euid;
 	time_t now;
+	const char *can;
 } sh;
 
 static jmp_buf exit_jb;
@@ -173,6 +174,16 @@ static unsigned shim_sleep(unsigned s)
 	return left;
 }
 
+// the pipe holds what dbus-send would print for a Can method
+static int shim_pipe2(int fd[2], int flags)
+{
+	if (pipe2(fd, flags) < 0)
+		return -1;
+	if (sh.can)
+		(void)!write(fd[1], sh.can, strlen(sh.can));
+	return 0;
+}
+
 static uid_t shim_geteuid(void)
 {
 	return sh.euid;
@@ -200,6 +211,7 @@ static time_t shim_time(time_t *t)
 #define sleep shim_sleep
 #define geteuid shim_geteuid
 #define time shim_time
+#define pipe2 shim_pipe2
 int shutdown_main(int argc, char **argv);
 #include "../../tools/shutdown.c"
 #undef main
@@ -217,6 +229,7 @@ int shutdown_main(int argc, char **argv);
 #undef sleep
 #undef geteuid
 #undef time
+#undef pipe2
 
 static char out[8192], err[8192], con[1024];
 
@@ -580,6 +593,7 @@ static void test_user(void)
 		{ "reboot", "org.freedesktop.login1.Manager.Reboot" },
 		{ "halt", "org.freedesktop.login1.Manager.Halt" },
 	};
+	static const char *const refused[] = { "   no", "   na", "", "   yesno" };
 	int rc;
 
 	for (size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
@@ -623,6 +637,47 @@ static void test_user(void)
 	sh.fork_ret = -1;
 	rc = run("reboot", NULL);
 	is_int(rc, 1, "a fork failure falls back to permission denied");
+
+	reset();
+	sh.euid = 1000;
+	sh.fork_ret = 0;
+	rc = run("shutdown", "+5", NULL);
+	ok(rc == 2127 && sh.lp_argc == 7 && !strcmp(sh.lp_args[3], "--print-reply=literal") &&
+	   !strcmp(sh.lp_args[6], "org.freedesktop.login1.Manager.CanPowerOff"),
+	   "shutdown +5 as a user asks logind CanPowerOff");
+	ok(!sh.slept && !*con, "before it waits or broadcasts");
+
+	for (size_t k = 0; k < sizeof(refused) / sizeof(*refused); k++) {
+		reset();
+		sh.euid = 1000;
+		sh.can = refused[k];
+		rc = run("shutdown", "+5", NULL);
+		ok(rc == 1 && !sh.slept && !*con && sh.forks == 1, "the answer '%s' refuses at once", refused[k] + strspn(refused[k], " "));
+	}
+	has_str(err, "shutdown: permission denied, must be run as root\n", "as permission denied");
+
+	reset();
+	sh.euid = 1000;
+	sh.can = "   yes";
+	sh.wait_status = 1 << 8;
+	rc = run("shutdown", "+5", NULL);
+	ok(rc == 1 && !sh.slept && sh.forks == 1, "a failed question refuses at once");
+
+	reset();
+	sh.euid = 1000;
+	sh.can = "   yes";
+	rc = run("shutdown", "-r", "+5", NULL);
+	ok(rc == 0 && sh.slept == 300 && sh.forks == 2, "yes waits 300 s, then makes the request");
+	reset();
+	sh.euid = 1000;
+	sh.can = "   challenge";
+	rc = run("shutdown", "+1", NULL);
+	ok(rc == 0 && sh.slept == 60 && sh.forks == 2, "so does challenge, polkit decides when the request is made");
+
+	reset();
+	sh.euid = 1000;
+	run("reboot", NULL);
+	is_int(sh.forks, 1, "without TIME nothing is asked first");
 
 	reset();
 	sh.kill_errno = EPERM;

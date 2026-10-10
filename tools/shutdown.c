@@ -198,6 +198,56 @@ static int try_logind(enum act a)
 	return WIFEXITED(st) && WEXITSTATUS(st) == 0 ? 0 : -1;
 }
 
+// a user waits for TIME only after logind says the request can be made
+static int logind_can(enum act a)
+{
+	static const char *const method[] = {
+		[ACT_REBOOT] = "org.freedesktop.login1.Manager.CanReboot",
+		[ACT_POWEROFF] = "org.freedesktop.login1.Manager.CanPowerOff",
+		[ACT_HALT] = "org.freedesktop.login1.Manager.CanHalt",
+	};
+	char buf[32], *w;
+	size_t len = 0;
+	ssize_t n;
+	pid_t pid, got;
+	int p[2], st = -1;
+
+	if (pipe2(p, O_CLOEXEC) < 0)
+		return 0;
+	pid = fork();
+	if (pid < 0) {
+		close(p[0]);
+		close(p[1]);
+		return 0;
+	}
+	if (pid == 0) {
+		dup2(p[1], 1);
+		execlp("dbus-send", "dbus-send", "--system", "--print-reply=literal",
+		       "--dest=org.freedesktop.login1", "/org/freedesktop/login1",
+		       method[a], (char *)NULL);
+		_exit(127);
+	}
+	close(p[1]);
+	while (len < sizeof(buf) - 1) {
+		n = read(p[0], buf + len, sizeof(buf) - 1 - len);
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n <= 0)
+			break;
+		len += (size_t)n;
+	}
+	close(p[0]);
+	buf[len] = '\0';
+	while ((got = waitpid(pid, &st, 0)) < 0 && errno == EINTR)
+		;
+	if (got != pid || !WIFEXITED(st) || WEXITSTATUS(st))
+		return 0;
+	w = buf + strspn(buf, " \t\n");
+	w[strcspn(w, " \t\n")] = '\0';
+	// challenge leaves the decision to polkit when the request is made
+	return !strcmp(w, "yes") || !strcmp(w, "challenge");
+}
+
 static void warn_console(enum act a, long secs)
 {
 	char msg[160];
@@ -307,6 +357,11 @@ int main(int argc, char **argv)
 		sync();
 		reboot(act_rb(act));
 		fprintf(stderr, "%s: reboot: %s\n", me, strerror(errno));
+		return 1;
+	}
+
+	if (when > 0 && geteuid() != 0 && !logind_can(act)) {
+		fprintf(stderr, "%s: permission denied, must be run as root\n", me);
 		return 1;
 	}
 

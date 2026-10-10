@@ -51,6 +51,22 @@ call
 and
 .BR reboot (2)
 .IP 3. 4
+if the effective user is not root and
+.I time
+is in the future, call the
+.BR CanReboot ,
+.B CanHalt
+or
+.B CanPowerOff
+method of
+.B org.freedesktop.login1.Manager
+through
+.BR dbus\-send (1),
+and exit with status 1 unless it answers
+.B yes
+or
+.B challenge
+.IP 4. 4
 if
 .I time
 is in the future, write a notice to
@@ -58,7 +74,7 @@ is in the future, write a notice to
 and wait in the foreground.
 .B SIGINT
 cancels
-.IP 4. 4
+.IP 5. 4
 if the effective user is root, send
 .B SIGTERM
 (reboot),
@@ -66,7 +82,7 @@ if the effective user is root, send
 (halt) or
 .B SIGUSR2
 (power off) to process 1
-.IP 5. 4
+.IP 6. 4
 otherwise, call the
 .BR Reboot ,
 .B Halt
