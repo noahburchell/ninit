@@ -189,6 +189,23 @@ else
 	t_skip "and passes there without CAP_SYS_CHROOT, needs a static busybox and unshare -r"
 fi
 
+# an interpreter on a filesystem of its own, a tmpfs mounted in a private namespace
+r=$T/fsroot
+mkdir -p "$r/etc/ninit.d" "$r/usr"
+printf '#!/usr/bin/python3\nprint(1)\n' >"$r/etc/ninit.d/a"
+printf '#!/usr/bin/python3\n#%%depon: a\nprint(2)\n' >"$r/etc/ninit.d/b"
+if unshare -rm true 2>/dev/null; then
+	run unshare -rm sh -c 'mount -t tmpfs none "$1/usr" && mkdir "$1/usr/bin" &&
+		printf "#!/bin/sh\n" >"$1/usr/bin/python3" && chmod 755 "$1/usr/bin/python3" &&
+		exec "$2" init --root "$1" --no-check -n' sh "$r" "$NINITCTL"
+	t_has "$err" "warning: $r/etc/ninit.d/a: $r/usr/bin/python3 is on another filesystem than $r/, and the service has no prerequisite" \
+		"an interpreter on another filesystem than / is warned about"
+	t_unlike "$err" "ninit.d/b: .*another filesystem" "unless the service has a prerequisite"
+else
+	t_skip "an interpreter on another filesystem than / is warned about, needs unshare -rm"
+	t_skip "unless the service has a prerequisite, needs unshare -rm"
+fi
+
 d=$T/mixed
 mkdir -p "$d"
 if py=$(interp python3); then

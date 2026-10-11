@@ -21,6 +21,19 @@ run "$NINITCTL" init -d "$d" -n
 t_is "$rc" 0 "the set with the unused examples builds" || t_diag "$err"
 "$NINITCTL" del -d "$d" avahi dhcpcd udev-settle >/dev/null
 
+# the python, lua and perl examples, each where its interpreter is installed
+for pair in random-seed:python3 cpufreq:lua issue:perl; do
+	s=${pair%%:*} p=${pair#*:}
+	if ! command -v "$p" >/dev/null 2>&1; then
+		t_skip "unused/$s builds with the syntax check, $p is not installed"
+		continue
+	fi
+	"$NINITCTL" add -d "$d" "$s" >/dev/null
+	run "$NINITCTL" init -d "$d" -n
+	t_is "$rc" 0 "unused/$s builds with the syntax check" || t_diag "$err"
+	"$NINITCTL" del -d "$d" "$s" >/dev/null
+done
+
 # README 3.11 copies the set and runs these commands
 run "$NINITCTL" del -d "$d" bluetooth cupsd sddm
 t_is "$rc" 0 "del bluetooth cupsd sddm from README 3.11 works"

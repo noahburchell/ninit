@@ -1,0 +1,84 @@
+# the #! arguments README 3.12 accepts let the script run under the installed interpreter, and those
+# it refuses keep the script from running, so a release that changes what an option takes fails here
+
+. "$top_srcdir/tests/lib.sh"
+
+mkdir -p "$T/run"
+
+# where ninitctl init finds PROG through env, the PATH services run with and the directory canonical
+interp() {
+	local d
+	for d in /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin; do
+		if [ -f "$d/$1" ] && [ -x "$d/$1" ]; then
+			echo "$(cd "$d" && pwd -P)/$1"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# SCRIPT under the interpreter with ARGS before it, as ninit runs a service named a
+run_as() {
+	local lang=$1 path=$2 args=$3 script=$4 a
+	read -ra a <<<"$args"
+	case $lang in
+	python) set -- "$path" -I -B -u "${a[@]}" -c "$script" a ;;
+	lua | luajit) set -- "$path" "${a[@]}" -e 'io.stdout:setvbuf("line") arg = { [0] = "a" }' -e "$script" ;;
+	perl) set -- "$path" "${a[@]}" -e '$| = 1; $0 = '\''a'\'';' -e '#line 1' -e "$script" ;;
+	esac
+	(cd "$T/run" && env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/ timeout 10 "$@" </dev/null 2>&1)
+}
+
+# the lists after the script are accepted until the word refused, then refused, the script builds
+# its mark so that a message quoting the script does not hold it
+lists() {
+	local lang=$1 prog=$2 script=$3 path d args refused=
+	shift 3
+	if ! path=$(interp "$prog"); then
+		t_skip "$lang: $prog is not installed"
+		return
+	fi
+	d=$T/$lang
+	mkdir -p "$d"
+	for args; do
+		if [ "$args" = refused ]; then
+			refused=1
+			continue
+		fi
+		printf '#!%s %s\n%s\n' "$path" "$args" "$script" >"$d/a"
+		run "$NINITCTL" init -d "$d" -o "$d/g" --no-check -n
+		out=$(run_as "$lang" "$path" "$args" "$script")
+		if [ -z "$refused" ]; then
+			t_is "$rc" 0 "$lang: '$args' is accepted" || t_diag "$err"
+			t_has "$out" "NINIT-MARK" "$lang: and the script runs with '$args'"
+		else
+			t_is "$rc" 1 "$lang: '$args' is refused"
+			t_unlike "$out" "NINIT-MARK" "$lang: '$args' would keep the script from running"
+		fi
+	done
+}
+
+lists python python3 'print("NINIT" + "-MARK")' \
+	'-X dev' '-Xutf8' '-W error' '-Werror' '-W ignore -X dev' '-O' '-OO' '-b' '-d' '-E' '-s' '-S' \
+	'-q' '-R' '-P' '-i' '-v' '--check-hash-based-pycs never' \
+	refused \
+	'foo.py' '-c pass' '-Bc pass' '-' '-u --' '-X dev -W' '--check-hash-based-pycs' '-V' '-h' \
+	'--help-env' '--version'
+
+lists lua lua 'print("NINIT" .. "-MARK")' \
+	'-E' '-W' '-l string' '-lstring' '-E -W' \
+	refused \
+	'foo.lua' '-' '-E --' '-l'
+
+lists luajit luajit 'print("NINIT" .. "-MARK")' \
+	'-O3' '-j off' '-joff' '-l string' \
+	refused \
+	'foo.lua' '-j'
+
+lists perl perl 'print "NINIT" . "-MARK\n";' \
+	'-w' '-W' '-X' '-T' '-t' '-l' '-l012' '-0' '-0777' '-0xFF' '-CSDA' '-Mstrict' '-mstrict' \
+	'-I/tmp' '-I /tmp' '-wT' '-i.bak' '-U' \
+	refused \
+	'foo.pl' '-c' '-n' '-p' '-h' '-v' '-I'
+
+t_done
