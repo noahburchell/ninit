@@ -427,13 +427,16 @@ sddm                          display manager
 
 fs and mounts fail, and start the emergency shell, when fsck reports errors it could not correct. for ``/`` a correction that requires a reboot counts as a failure
 
-unused/ holds three disabled services:
+unused/ holds six disabled services:
 
 ===========  ========================================
 service      function
 ===========  ========================================
 dhcpcd       dhcp client, an alternative to NetworkManager
 avahi        mdns and dns-sd
+random-seed  python. mixes the seed saved at the last boot into the kernel pool and saves a new one in /var/lib/misc/random-seed
+cpufreq      lua. sets the cpufreq governor of every cpu to schedutil
+issue        perl. writes /run/issue, which agetty shows at its next prompt, from PRETTY_NAME in /etc/os-release and the kernel release
 udev-settle  waits until udev has processed every queued event. needed when /etc/fstab names devices that udev rules create, such as lvm or raid volumes. it places itself before mounts with depof, so enabling it requires no change to mounts
 ===========  ========================================
 
@@ -497,6 +500,8 @@ perl      ``INTERP ARGS -e '$| = 1; $0 = '\''NAME'\'';' -e '#line 1' -e SCRIPT``
 ``-I`` keeps ``/``, the working directory, off sys.path and ignores the ``PYTHON*`` variables. ``-B`` keeps python from writing ``__pycache__`` directories as root. ``-u``, the lua line buffering and perl's ``$|`` hand output to ninit as it is written, so the log keeps pace with the service and a killed service leaves its last lines in the output tail. perl's ``#line 1`` restores the line numbers the first ``-e`` shifted. stdin is /dev/null and @ARGV is empty, so perl's ``<>`` reads nothing
 
 everything else in `3.8`_ applies: the environment, the descriptors, the notify fd and the cgroup. a daemon without notify is ready once its interpreter has been executed
+
+ninitctl init warns when the interpreter of a service without prerequisites is on another filesystem than /, such as a separate /usr. such a service starts before anything has mounted it, and its exec fails
 
 the syntax check of `4.1`_ compiles python through compile() and lua through load(), neither runs the script. python also looks up the module of each import at the top of the script, after the docstring and before any other statement, through importlib.util.find_spec() and only by its first name, which runs nothing. a missing one fails the build as ``no module named 'NAME'``. an import after another statement, inside ``try`` or ``if``, or after ``sys.path.insert()``, is not looked up. perl has no check that runs nothing, ``perl -c`` runs BEGIN blocks and ``use`` statements as it compiles. one that blocks is killed after 30 s and fails the build. ``--no-check`` skips every check
 
@@ -616,7 +621,7 @@ rst         yes for restart: always
 depends on  direct prerequisites
 ==========  ========================================
 
-the last line is one of the longest chains. ``-v`` adds under each service its effective start-timeout, stop-timeout, start-tries, start-delay and deps, marked ``(set)`` if any policy directive was given and ``(default)`` if not, followed by its script as stored, without comments
+the last line is one of the longest chains. ``-v`` adds under each service its effective start-timeout, stop-timeout, start-tries, start-delay and deps, marked ``(set)`` if any policy directive was given and ``(default)`` if not, for a python, lua or perl service the command ninit runs with SCRIPT standing for the script, see `3.12`_, and then its script as stored, without comments
 
 .. _4.3:
 

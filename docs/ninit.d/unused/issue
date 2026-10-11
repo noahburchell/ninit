@@ -1,0 +1,17 @@
+#!/usr/bin/perl
+#%onfail: warn
+use strict;
+use warnings;
+use POSIX qw(uname);
+
+my $name = 'linux';
+if (open(my $f, '<', '/etc/os-release')) {
+	while (<$f>) {
+		$name = $1 if /^PRETTY_NAME="?([^"\n]*)/;
+	}
+}
+my $release = (uname())[2];
+open(my $out, '>', '/run/issue.tmp') or die "issue: /run/issue.tmp: $!\n";
+print $out "$name, linux $release, \\n on \\l\n\n";
+close($out) or die "issue: /run/issue.tmp: $!\n";
+rename('/run/issue.tmp', '/run/issue') or die "issue: /run/issue: $!\n";

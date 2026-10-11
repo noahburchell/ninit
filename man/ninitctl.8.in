@@ -131,7 +131,9 @@ about a missing or empty
 .IR /etc/locale.conf ,
 about a
 .B #!\&
-line naming another interpreter, and about directives after the header
+line naming another interpreter, about an interpreter on another filesystem than
+.I /
+for a service without prerequisites, and about directives after the header
 .TP
 .B show
 verify a graph and print it as a table, followed by one of its longest dependency chains
@@ -277,7 +279,11 @@ mode, marked
 .B (set)
 if the file sets any of them and
 .B (default)
-otherwise, followed by its script as stored, without comments
+otherwise, for a python, lua or perl service the command
+.B ninit
+runs with
+.B SCRIPT
+standing for the script, and then its script as stored, without comments
 .TP
 .BR \-e ", " \-\-error
 with

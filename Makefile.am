@@ -148,7 +148,10 @@ dist_example_DATA = \
 exampleunuseddir = $(docdir)/ninit.d/unused
 dist_exampleunused_DATA = \
 	docs/ninit.d/unused/avahi \
+	docs/ninit.d/unused/cpufreq \
 	docs/ninit.d/unused/dhcpcd \
+	docs/ninit.d/unused/issue \
+	docs/ninit.d/unused/random-seed \
 	docs/ninit.d/unused/udev-settle
 
 EXTRA_DIST = \
@@ -179,6 +182,7 @@ ctl_tests = \
 	tests/ctl/graph.test \
 	tests/ctl/files.test \
 	tests/ctl/interp.test \
+	tests/ctl/interpargs.test \
 	tests/ctl/show.test \
 	tests/ctl/adddel.test \
 	tests/ctl/usage.test \
