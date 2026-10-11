@@ -1066,6 +1066,11 @@ contact
 
 ninit@nburch.org
 
+credit
+======
+
+co-authored by sovereign point crisp dry white
+
 license
 =======
 
