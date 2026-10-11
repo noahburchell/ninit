@@ -474,7 +474,15 @@ lua       ``-e``, luajit ``-b``, and ``-l`` or luajit ``-j`` without their argum
 perl      ``-e``, ``-E``, ``-x``, ``-c``, ``-h``, ``-u``, ``-v``, ``-V``, ``-d`` without a module, ``-n``, ``-p``, ``-a``, ``-F``, and ``-I`` without its argument
 ========  ========================================
 
-the header, #! line and directives included, is stored as empty lines and the rest of the file as written. nothing is stripped and a #% line after the header draws no warning. line numbers in interpreter messages match the file. in lua a ``#`` line is valid only in the header. crlf line ends are stored as written, and the three interpreters read them as lf, in strings and here-documents too
+the header, #! line and directives included, is stored as empty lines. the rest is stripped as `3.2`_ strips a shell script: comments, trailing blanks and the indentation the language does not read are removed, runs of blanks become one space, and every line stays, so line numbers in interpreter messages match the file. strings are stored as written, and so is the rest of the file after a construct the stripper cannot follow exactly. a #% line after the header draws the warning of `3.2`_ in python and perl. crlf line ends become lf outside strings and here-documents. per language:
+
+========  ========================================
+language  stripped
+========  ========================================
+python    the indentation of a line that begins a statement stays. f-strings are stored whole, their replacement fields included. a lone carriage return, which ends a line for python, stores the rest as written
+lua       long comments go with the lines they span. long strings and strings with ``\z`` are stored as written. a ``#`` line is valid only in the header, and a lone carriage return stores the rest as written
+perl      pod goes with the lines it spans, ``#line`` directives stay. quote-like operators, regular expressions, here-documents and the text after ``__END__`` or ``__DATA__`` are stored as written. a ``/``, ``<<`` or pod line after a bareword or a ``}``, which only perl can tell apart, stores the rest as written
+========  ========================================
 
 each start runs:
 
@@ -490,7 +498,7 @@ perl      ``INTERP ARGS -e '$| = 1; $0 = '\''NAME'\'';' -e '#line 1' -e SCRIPT``
 
 everything else in `3.8`_ applies: the environment, the descriptors, the notify fd and the cgroup. a daemon without notify is ready once its interpreter has been executed
 
-the syntax check of `4.1`_ compiles python through compile() and lua through load(), neither runs the script. perl has no check that runs nothing, ``perl -c`` runs BEGIN blocks and ``use`` statements as it compiles. one that blocks is killed after 30 s and fails the build. ``--no-check`` skips every check
+the syntax check of `4.1`_ compiles python through compile() and lua through load(), neither runs the script. python also looks up the module of each import at the top of the script, after the docstring and before any other statement, through importlib.util.find_spec() and only by its first name, which runs nothing. a missing one fails the build as ``no module named 'NAME'``. an import after another statement, inside ``try`` or ``if``, or after ``sys.path.insert()``, is not looked up. perl has no check that runs nothing, ``perl -c`` runs BEGIN blocks and ``use`` statements as it compiles. one that blocks is killed after 30 s and fails the build. ``--no-check`` skips every check
 
 the interpreter must exist at its path when the service starts. with /usr on its own filesystem, a service whose interpreter is under /usr needs to depend on the service that mounts it. when the exec fails the service prints ``ninit: exec PATH: errno N`` and fails
 

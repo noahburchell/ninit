@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+# nested quotes of the same kind need python 3.12
+d = {"k": "v#"}
+x = 2
+print(f"{d["k"]}")
+print(f"{f"{x}" * 2}")
+print(f"{x # a comment inside a field
+}")
+print(f"""{
+    x   # comment
+    + 1
+}""")
+print(f"{'\n'.join(['a', 'b'])}")

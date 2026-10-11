@@ -686,13 +686,14 @@ static void test_languages(void)
 	if (!ok(!rc && a.s.lang == &lang_python && !strncmp(a.s.interp, dir, strlen(dir)),
 		"a #! line naming python selects python"))
 		tap_diag("%s", errtext);
-	is_str(a.s.script, "\n\n\nprint(1)\n", "its header is blanked, its body stored as written");
+	is_str(a.s.script, "\n\n\nprint(1)\n", "its header is blanked");
 	ok(a.s.exec_pre.n == 7 && a.s.exec_suf.n == 1, "the #! arguments reach its argv");
-	ok(!a.s.stripped, "its script is not stripped");
+	ok(a.s.stripped, "its script is stripped");
 
 	snprintf(text, sizeof(text), "#!%s/lua5.4\nprint(1) -- c\n", dir);
 	rc = capture(call_parse, &a);
 	ok(!rc && a.s.lang == &lang_lua, "a #! line naming lua5.4 selects lua");
+	is_str(a.s.script, "\nprint(1)\n", "and its comment is removed");
 	snprintf(text, sizeof(text), "#!%s/perl -w\nprint 1;\n", dir);
 	rc = capture(call_parse, &a);
 	ok(!rc && a.s.lang == &lang_perl && a.s.iargs.n == 1, "a #! line naming perl selects perl");

@@ -17,6 +17,7 @@
 /tests/unit/t-boot
 /tests/unit/t-ctlfs
 /tests/unit/t-cgroup
+/tests/unit/t-strip
 /tests/helpers/czdump
 /tests/helpers/nctl-raw
 /tests/helpers/fakectl

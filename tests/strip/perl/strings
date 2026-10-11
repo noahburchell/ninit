@@ -1,0 +1,20 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+my $a = 'single # not a comment';
+my $b = "double # not a comment";
+my @w = qw(a #b c);
+my $q = q{braces {nested} # kept};
+my $qq = qq[brackets # $a];
+my $x = "text # with hash";
+(my $y = $x) =~ s/#.*//;
+(my $z = $x) =~ s{ \# .* }{}x;
+(my $t = $x) =~ tr/a-z/A-Z/;
+(my $u = $x) =~ y{a-z}{n-za-m};
+my $m = $x =~ m#hash# ? "match" : "no";
+my $r = qr/ (\w+) \s+ \# /x;
+my @parts = split /,/, "a,b,#c";
+local $" = "-";
+print "$a|$b|@w|$q|$qq|$y|$z|$t|$u|$m|@parts\n";
+print "escaped \" quote # kept", 'escaped \' quote # kept', "\n";
+print length($r) > 0 ? "re\n" : "none\n";

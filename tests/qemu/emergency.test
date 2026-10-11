@@ -29,6 +29,25 @@ q_stop() {
 	q_finish
 }
 
+# the emergency shell options of this build
+Q_SULOGIN=
+grep -q '^#define NINIT_SULOGIN' "$top_builddir/config.h" && Q_SULOGIN=1
+Q_BBSHELL=$(sed -n 's/^#define NINIT_BUSYBOX "\(.*\)"$/\1/p' "$top_builddir/config.h")
+
+# a guest without a graph, where the emergency shell is all that runs
+q_shell_only() {
+	q_new "$1"
+	Q_PIPE=1
+	Q_NOGRAPH=1
+	Q_ARGS="ninit_graph=/nonexistent"
+}
+
+# replaces PATH in the guest with a link to nothing
+q_unlink() {
+	mkdir -p "$Q/root${1%/*}"
+	ln -sfn /nonexistent "$Q/root$1"
+}
+
 q_new missing-graph
 Q_PIPE=1
 Q_NOGRAPH=1
@@ -151,5 +170,85 @@ q_stop
 t_is "$(grep -c 'shell: exited (exit 0)' "$Q/console.log")" 1 "fast-exits: the first exit is logged"
 t_is "$(grep -c 'WARN > last message repeated 3 times' "$Q/console.log")" 1 \
 	"fast-exits: the next three restart the shell and are counted"
+
+# neither the busybox shell nor /bin/sh can be executed
+q_shell_only no-shell
+q_unlink /bin/sh
+[ -n "$Q_BBSHELL" ] && q_unlink "$Q_BBSHELL"
+q_start
+q_see "FAIL > shell: exec /bin/sh: No such file or directory" "a shell that cannot be executed is reported"
+q_see "FAIL > shell: giving up, no shell can be started" "and given up on after the second attempt"
+q_stop
+t_is "$(grep -c 'shell: exec /bin/sh' "$Q/console.log")" 2 "no-shell: the shell was tried twice"
+if [ -n "$Q_BBSHELL" ]; then
+	q_has "WARN > shell: exec $Q_BBSHELL: No such file or directory" "the busybox shell was tried first"
+else
+	t_skip "no-shell: the busybox shell was tried first, built without --with-busybox"
+fi
+
+# the busybox shell runs where /bin/sh does not
+if [ -n "$Q_BBSHELL" ]; then
+	q_shell_only busybox-shell
+	q_unlink /bin/sh
+	[ "$Q_BBSHELL" = /bin/busybox ] || q_copy_elf "$Q/root" "$Q_BUSYBOX" "$Q_BBSHELL"
+	q_start
+	q_see "$PROMPT" "the busybox shell starts without /bin/sh"
+	q_cmd 'echo "ARG0=$0"' "ARG0=-sh" "as a login shell"
+	q_send 'poweroff\n'
+	q_finish
+	q_poweroff_ok
+else
+	t_skip "busybox-shell: built without --with-busybox"
+fi
+
+# sulogin before the shell
+q_shadow() {
+	q_file /etc/shadow 600 <<<'root:$6$salt$hash:19000:0:99999:7:::'
+}
+if [ -n "$Q_SULOGIN" ]; then
+	q_shell_only sulogin-no-hash
+	q_start
+	q_see "WARN > shell: root has no usable password, no authentication" "without a root hash sulogin is skipped"
+	q_see "$PROMPT" "and the shell starts"
+	q_send 'poweroff\n'
+	q_finish
+	q_poweroff_ok
+
+	q_shell_only sulogin-missing
+	q_shadow
+	q_start
+	q_see "WARN > shell: the root password is required" "a root hash requires the password"
+	q_see "$PROMPT" "without sulogin the shell starts anyway, as documented"
+	q_send 'poweroff\n'
+	q_finish
+	q_poweroff_ok
+
+	q_shell_only sulogin-runs
+	q_shadow
+	q_file /sbin/sulogin 755 <<EOF
+#!$NINIT_SHELL
+echo "SULOGIN TTY=\$(tty)"
+exec /bin/sh
+EOF
+	q_start
+	q_see "SULOGIN TTY=/dev/console" "sulogin runs first, on the console"
+	q_see "$PROMPT" "and starts the shell once it has authenticated"
+	q_send 'poweroff\n'
+	q_finish
+	q_poweroff_ok
+
+	q_shell_only sulogin-fails
+	q_shadow
+	q_file /sbin/sulogin 755 <<EOF
+#!$NINIT_SHELL
+exit 1
+EOF
+	q_start
+	q_see "FAIL > shell: exited immediately 5 times (exit 1), not restarting" "a failing sulogin is not run for ever"
+	q_stop
+	q_lacks "$PROMPT" "no shell starts past a failing sulogin"
+else
+	t_skip "sulogin: built without --with-sulogin"
+fi
 
 t_done

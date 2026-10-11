@@ -1,0 +1,25 @@
+#!/usr/bin/perl
+# a header comment
+#%type: oneshot
+
+use strict;   # trailing comment
+use warnings;
+
+# a full line comment
+sub greet {
+	my ($name, $greeting) = @_;   
+	$greeting //= "hello";    # defined-or, not a regex
+	return "$greeting, $name";
+}
+
+my %count = (apple => 3, pear => 5);   
+for my $k (sort keys %count) {
+    # indented comment
+    printf "%-6s %d\n", $k, $count{$k} / 1;
+}
+print greet("world"), "\n";
+my @list = (1 .. 5);
+print scalar(@list), " ", $#list, " ", $list[-1] / 2, "\n";
+if (grep { /3/ } @list) {
+	print "has three\n";   # comment
+}

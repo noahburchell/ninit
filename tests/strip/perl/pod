@@ -1,0 +1,25 @@
+#!/usr/bin/perl
+=head1 NAME
+
+pod at the start, its lines stay empty
+
+=cut
+
+use strict;
+use warnings;
+
+sub f { return 42 }
+
+=pod
+
+more pod with code-like text: print "no";
+
+=cut
+
+print f(), "\n";
+my $y
+=lc "X";
+print "$y\n" if defined $y;
+__END__
+data after __END__ # stays
+=head1 also stays

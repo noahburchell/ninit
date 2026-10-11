@@ -23,8 +23,9 @@ q_require() {
 	Q_BUSYBOX=${NINIT_TEST_BUSYBOX:-$(command -v busybox)}
 	[ -x "$Q_BUSYBOX" ] || t_skip_all "busybox is not installed"
 	[ -x "$NINIT_SHELL" ] || t_skip_all "$NINIT_SHELL is not executable"
-	# the asan runtime reads /proc before pid 1 can mount it, and gcc links it as a shared library
-	grep -qa __asan_init "$NINIT" && t_skip_all "ninit is built with a sanitizer, it cannot run as pid 1"
+	# the asan runtime reads /proc before main, q_base puts a wrapper in front of ninit that mounts it
+	Q_ASAN=
+	grep -qa __asan_init "$NINIT" && Q_ASAN=1
 
 	Q_ACCEL=${NINIT_TEST_ACCEL:-}
 	if [ -z "$Q_ACCEL" ]; then
@@ -106,6 +107,14 @@ q_copy_elf() {
 		[ -e "$root$lib" ] && continue
 		mkdir -p "$root${lib%/*}"
 		cp -L "$lib" "$root$lib" || return 1
+		# the guest has no ld.so.cache, which finds gcc's libasan on the host
+		case ${lib%/*} in
+		/lib | /lib64 | /usr/lib | /usr/lib64 | /usr/lib/../lib64) ;;
+		*)
+			mkdir -p "$root/lib64"
+			ln -sfn "$lib" "$root/lib64/${lib##*/}"
+			;;
+		esac
 	done
 }
 
@@ -135,7 +144,16 @@ q_base() {
 			[ -e "$r/bin/$app" ] || ln -s busybox "$r/bin/$app"
 		done
 		q_copy_elf "$r" "$NINIT_SHELL" || exit 1
-		q_copy_elf "$r" "$NINIT" /sbin/ninit || exit 1
+		if [ -n "$Q_ASAN" ]; then
+			# named ninit for /proc/1/comm and ninit-shutdown, with a busybox of its own a scenario cannot take away
+			q_copy_elf "$r" "$NINIT" /t/asan/ninit || exit 1
+			cp "$r/bin/busybox" "$r/t/asan/busybox" || exit 1
+			printf '#!/t/asan/busybox sh\n/t/asan/busybox mount -t proc -o nosuid,nodev,noexec proc /proc\nexec /t/asan/ninit "$@"\n' \
+				>"$r/sbin/ninit"
+			chmod 755 "$r/sbin/ninit"
+		else
+			q_copy_elf "$r" "$NINIT" /sbin/ninit || exit 1
+		fi
 		q_copy_elf "$r" "$NINITCTL" /sbin/ninitctl || exit 1
 		q_copy_elf "$r" "$NINIT_SHUTDOWN" /sbin/ninit-shutdown || exit 1
 		for app in shutdown poweroff reboot halt telinit; do

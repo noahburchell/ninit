@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+x = 3
+name = "hash#"
+w = 6
+print(f"{x}")
+print(f"{{literal}} {x} {{}}")
+print(f'{x!r:>{w}} {name!s:^10}|')
+print(f"{x = }")
+print(f"{x:#x} {x:#o}")   # the # in the spec is not a comment
+print(F"{name}" + Rf"\{x}" + fR'{x}\n' + rF"#{x}")
+print(f"{'#'.join(['a', 'b'])}")
+print(f"""multi
+{x
+ + 1} # still the string
+line""")
+print(f"{(lambda y: y * 2)(x)}")
+print(f"{x:{'>' if x else '<'}{w}}")
+d = {"k": "#v"}
+print(f"{d['k']}")

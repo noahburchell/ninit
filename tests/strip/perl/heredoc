@@ -1,0 +1,20 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+my $name = "x";
+print <<"EOF";   # a comment after the tag
+interpolated $name # not a comment
+  indented line kept
+EOF
+print <<'RAW', <<~INDENT;
+raw $name # kept
+RAW
+    indented heredoc # kept
+    second line
+    INDENT
+my $v = 2 << 3;
+print "shift $v\n";
+open(my $out, '>&', \*STDOUT) or die;
+print $out <<"FH";
+to a filehandle # kept
+FH

@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+a = 'single # not a comment'
+b = "double # not a comment"
+c = '''triple # not a comment
+   with indentation   
+# and a line that looks like a comment
+'''
+d = """triple " and "" inside """
+e = r"raw \" quote # kept"
+f = rb'raw bytes \' # kept'
+g = Rb"x#y" + bR'z#w' + Br"#" + BR'#'
+h = u"unicode # kept"
+i = b"bytes # kept"
+j = ("implicit "   # comment between parts
+     "concatenation"  # another
+     ' # across lines')
+k = 'escaped \' quote # kept'
+l = "escaped \" quote # kept"
+m = 'line \
+continued # kept'
+n = ''
+o = ""
+p = '''''' + """"""
+q = """ends with quote\""""
+print(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, sep="|")

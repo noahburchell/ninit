@@ -98,6 +98,44 @@ else
 	t_skip "shutdown: independent branches stop in parallel, not on a quiet console"
 fi
 
+# the ordered stop ends 30 s after it began, whatever stop-timeout says
+q_new shutdown-deadline
+Q_TIMEOUT=90
+q_svc base <<'EOF'
+#%type: daemon
+trap 'echo "STOP base"; exit 0' TERM
+while :; do sleep 0.05; done
+EOF
+q_svc hold <<'EOF'
+#%type: daemon
+#%depon: base
+#%stop-timeout: 60s
+trap '' TERM
+while :; do sleep 0.05; done
+EOF
+q_check <<'EOF'
+st_is base up
+st_is hold up
+EOF
+q_boot
+q_import
+q_poweroff_ok
+q_has "WARN > shutdown: 2 services did not stop in order" "the ordered stop gives up on a service within its stop-timeout"
+q_lacks "hold: still running" "before the stop-timeout of 60 s runs out"
+q_order "did not stop in order" "poweroff: sending SIGTERM to all processes" "then every process gets SIGTERM"
+q_order "poweroff: sending SIGTERM to all processes" "STOP base" \
+	"which reaches the prerequisite the ordered stop never signalled"
+q_has "poweroff: sending SIGKILL to all processes" "and SIGKILL follows for what ignores it"
+if [ -z "$Q_QUIET" ]; then
+	at() {
+		q_log | grep -F -m1 -- "$1" | sed -E 's/^\[ *([0-9]+\.[0-9]+)\].*/\1/'
+	}
+	gap=$(awk -v a="$(at 'shutdown: stopping')" -v b="$(at 'did not stop in order')" 'BEGIN { printf "%d", (b - a) * 1000 }')
+	t_ok $((gap < 30000 || gap > 30000 + 2000 * Q_SCALE)) "shutdown-deadline: the ordered stop ends after 30 s ($gap ms)"
+else
+	t_skip "shutdown-deadline: the ordered stop ends after 30 s, not on a quiet console"
+fi
+
 q_new shutdown-hwclock
 q_file /sbin/hwclock 755 <<'EOF'
 #!/bin/bash

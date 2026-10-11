@@ -145,14 +145,16 @@ static int build_prereqs(uint32_t **poff, uint32_t **pidx)
 
 static void stop_ordered(void)
 {
-	const uint32_t *roff = ng_rdep_off(map);
+	const uint32_t *roff;
 	uint32_t *off = NULL, *idx = NULL, *waitc = NULL;
 	long long *stop_at = NULL, deadline;
 	uint8_t *st = NULL;
 	uint32_t i, k, left = 0, live_svc = 0;
 
+	// without a graph map is NULL
 	if (!n_svc)
 		goto out;
+	roff = ng_rdep_off(map);
 	if (build_prereqs(&off, &idx) < 0) {
 		log_warn("shutdown: out of memory, stopping every service at once instead");
 		goto out;

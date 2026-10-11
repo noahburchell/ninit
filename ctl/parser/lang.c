@@ -263,6 +263,15 @@ size_t blank_header(struct src *s, char *body, size_t len, size_t code_off)
 	return len - code_off + j;
 }
 
+// a #% line after the header is a comment, the stripper of each language reports it
+void late_directive(const char *fname, const char *p, size_t len)
+{
+	while (len && (p[len - 1] == ' ' || p[len - 1] == '\t' || p[len - 1] == '\r'))
+		len--;
+	fprintf(stderr, "ninitctl: warning: %s/%s: '%.*s' follows a command, treating it as a comment\n",
+		g_dir, fname, (int)len, p);
+}
+
 // NAME followed by nothing but a version, such as python3.14 or lua5.4
 int claims_versioned(const char *base, size_t len, const char *name)
 {

@@ -169,10 +169,12 @@ unit_tests = \
 	tests/unit/t-shutdown \
 	tests/unit/t-boot \
 	tests/unit/t-ctlfs \
-	tests/unit/t-cgroup
+	tests/unit/t-cgroup \
+	tests/unit/t-strip
 
 ctl_tests = \
 	tests/ctl/compact.test \
+	tests/ctl/strip.test \
 	tests/ctl/directives.test \
 	tests/ctl/graph.test \
 	tests/ctl/files.test \
@@ -225,6 +227,7 @@ tests_unit_t_shutdown_SOURCES = tests/unit/t-shutdown.c src/logging.c $(unit_hea
 tests_unit_t_boot_SOURCES = tests/unit/t-boot.c src/logging.c src/ngraph.c $(unit_headers)
 tests_unit_t_ctlfs_SOURCES = tests/unit/t-ctlfs.c src/ngraph.c $(unit_headers)
 tests_unit_t_cgroup_SOURCES = tests/unit/t-cgroup.c src/logging.c src/ngraph.c $(unit_headers)
+tests_unit_t_strip_SOURCES = tests/unit/t-strip.c $(ninitctl_parser) src/ngraph.c $(unit_headers)
 tests_helpers_czdump_SOURCES = tests/helpers/czdump.c $(ninitctl_parser) src/ngraph.c
 tests_helpers_nctl_raw_SOURCES = tests/helpers/nctl-raw.c
 tests_helpers_fakectl_SOURCES = tests/helpers/fakectl.c
@@ -239,7 +242,8 @@ EXTRA_DIST += \
 	tests/lib.sh \
 	tests/qemu/lib.sh \
 	tests/qemu/guest.sh \
-	tests/compact
+	tests/compact \
+	tests/strip
 
 TEST_EXTENSIONS = .test
 LOG_DRIVER = env AM_TAP_AWK='$(AWK)' $(SHELL) $(top_srcdir)/build-aux/tap-driver.sh

@@ -1,0 +1,29 @@
+#!/usr/bin/env lua
+# a header comment
+#%type: oneshot
+
+-- a comment line
+local function greet(name, greeting)   -- trailing comment
+	greeting = greeting or "hello"   
+	return greeting .. ", " .. name   
+end
+
+local Box = {}
+Box.__index = Box
+function Box.new(v)
+    -- indented comment
+    return setmetatable({ v = v }, Box)
+end
+function Box:show()
+    return "Box(" .. tostring(self.v) .. ")"
+end
+
+print(greet("world"))
+print(Box.new(3):show())
+for i = 1, 3 do
+	if i % 2 == 1 then   -- odd
+		print("odd", i)
+	else
+		print("even", i)
+	end
+end

@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+# crlf comment
+x = 1   # c
+if x:
+    print("crlf # kept")
+y = """a
+b"""
+print(len(y))

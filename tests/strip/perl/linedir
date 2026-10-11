@@ -1,0 +1,8 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+print __LINE__, "\n";
+# line 100
+print __LINE__, "\n";
+    # line 5 is only a comment when indented
+print __LINE__, "\n";

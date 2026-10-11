@@ -2,6 +2,8 @@
 # results go to the second serial port as tap, T_END selects how the guest stops afterwards
 
 PATH=/t/bin:$PATH
+# a sanitized ninitctl frees nothing before it exits, as the host tests know
+export ASAN_OPTIONS=detect_leaks=0
 t_tty=
 if [ -c /dev/ttyS1 ]; then
 	stty -F /dev/ttyS1 raw -echo 2>/dev/null
