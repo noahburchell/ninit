@@ -1,0 +1,165 @@
+# the python, lua and perl scripts ninitctl init stores behave exactly like the files they came from
+
+. "$top_srcdir/tests/lib.sh"
+
+mkdir -p "$T/run"
+
+lines() {
+	local n=0 l
+	while IFS= read -r l || [ -n "$l" ]; do
+		n=$((n + 1))
+	done <<<"$1"
+	echo "$n"
+}
+
+# the interpreter a corpus runs under, run as ninit runs it, with nothing inherited
+interp_run() {
+	(cd "$T/run" && env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/ LC_ALL=C.UTF-8 "$@" </dev/null 2>&1)
+}
+
+py_run() {
+	interp_run "$interp" -I -B -u -c "$1" "$2"
+}
+
+lu_run() {
+	interp_run "$interp" -e "arg = { [0] = '$2' }" -e "$1"
+}
+
+pe_run() {
+	interp_run "$interp" -e '$| = 1;' -e '#line 1' -e "$1"
+}
+
+# FILE with its header lines empty, as every language stores it before stripping
+blanked() {
+	awk 'h && !/^[ \t]*(#.*)?[ \t\r]*$/ { h = 0 } h { print ""; next } { print }' h=1 "$1"
+}
+
+# the tokens of FILE with their lines, without comments and blank lines, or its syntax error
+py_canon() {
+	"$interp" -I - "$1" <<'EOF'
+import io, sys, tokenize
+src = open(sys.argv[1], 'rb').read()
+try:
+    compile(src, 'f', 'exec')
+except SyntaxError as e:
+    print('error', e.lineno, e.msg)
+    sys.exit()
+skip = {tokenize.COMMENT, tokenize.NL, tokenize.ENCODING}
+for t in tokenize.tokenize(io.BytesIO(src).readline):
+    if t.type not in skip:
+        print(t.start[0], tokenize.tok_name[t.type], repr('' if t.type == tokenize.NEWLINE else t.string))
+EOF
+}
+
+# the bytecode listing of FILE, with the addresses that change from run to run masked
+lu_canon() {
+	[ -n "$luac" ] || return 0
+	# luac skips a first line beginning with # in a file, lua -e does not
+	{ echo; cat "$1"; } >"$1.lua"
+	"$luac" -p -l -l "$1.lua" 2>&1 | sed -E 's/0x[0-9a-f]+/ADDR/g'
+}
+
+# the op tree of FILE with the line of each statement, perl compiles it and runs no more than BEGIN
+pe_canon() {
+	PERL_HASH_SEED=0 PERL_PERTURB_KEYS=0 "$interp" -MO=Concise,-exec,-stash=main "$1" 2>&1 | sed -E 's/0x[0-9a-f]+/ADDR/g'
+}
+
+# FILE stored, then the stored text with the #! line of FILE back in front stored again
+strip_twice() {
+	run "$HELPERS/czdump" "$1" "$2"
+	t_is "$rc" 0 "$lang/$2: is accepted" || { t_diag "$err"; return 1; }
+	stripped=$out
+	{
+		head -n1 "$1"
+		tail -n +2 <<<"$stripped"
+	} >"$T/again"
+	again=$("$HELPERS/czdump" "$T/again" "$2" 2>/dev/null)
+	t_is "$again" "$stripped" "$lang/$2: stripping twice changes nothing"
+}
+
+for lang in python lua perl; do
+	case $lang in
+	python) interp=$(command -v python3) ;;
+	lua)
+		interp=$(command -v lua)
+		luac=$(command -v luac)
+		;;
+	perl) interp=$(command -v perl) ;;
+	esac
+	if [ -z "$interp" ]; then
+		t_skip "$lang: no interpreter for the corpus"
+		continue
+	fi
+	for f in "$top_srcdir/tests/strip/$lang"/*; do
+		n=${f##*/}
+		case $n in
+		*.want) continue ;;
+		# kept with lf line ends, so no tool on the way takes the carriage returns away
+		crlf)
+			sed 's/$/\r/' "$f" >"$T/crlf"
+			f=$T/crlf
+			;;
+		esac
+		strip_twice "$f" "$n" || continue
+		orig=$(blanked "$f")
+
+		a=$(${lang:0:2}_run "$orig" "$n")
+		ra=$?
+		b=$(${lang:0:2}_run "$stripped" "$n")
+		rb=$?
+		t_is "$rb" "$ra" "$lang/$n: stripped script exits like the original"
+		if [ "$a" = "$b" ]; then
+			t_ok 0 "$lang/$n: stripped script prints exactly what the original prints"
+		else
+			t_ok 1 "$lang/$n: stripped script prints exactly what the original prints"
+			t_diag "$(diff <(echo "$a") <(echo "$b"))"
+		fi
+		# one path for both, interpreters print it in listings and messages
+		printf '%s\n' "$orig" >"$T/canon"
+		ca=$(${lang:0:2}_canon "$T/canon")
+		printf '%s\n' "$stripped" >"$T/canon"
+		cb=$(${lang:0:2}_canon "$T/canon")
+		if [ "$ca" = "$cb" ]; then
+			t_ok 0 "$lang/$n: the interpreter reads the same code on the same lines"
+		else
+			t_ok 1 "$lang/$n: the interpreter reads the same code on the same lines"
+			t_diag "$(diff <(echo "$ca") <(echo "$cb") | head -n 20)"
+		fi
+		t_ok $((${#stripped} > ${#orig})) "$lang/$n: stripping does not grow the script (${#orig} to ${#stripped} bytes)"
+		lo=$(lines "$orig")
+		ls=$(lines "$stripped")
+		t_is "$ls" "$lo" "$lang/$n: stripping keeps every line"
+		if [ -f "$f.want" ]; then
+			want=$(<"$f.want")
+			if [ "$stripped" = "$want" ]; then
+				t_ok 0 "$lang/$n: stored text is as specified"
+			else
+				t_ok 1 "$lang/$n: stored text is as specified"
+				t_diag "$(diff <(echo "$want") <(echo "$stripped"))"
+			fi
+		fi
+	done
+done
+
+# a #% line after the header is a comment and warned about, but not inside a string
+if command -v python3 >/dev/null; then
+	run "$HELPERS/czdump" "$top_srcdir/tests/strip/python/misc" misc
+	t_has "$err" "warning: ./misc: '#%depon: late' follows a command, treating it as a comment" \
+		"python: a #% line after the header is warned about"
+	t_unlike "$err" "type: daemon" "python: a #% line inside a string is not"
+else
+	t_skip "python: a #% line after the header is warned about, python3 is not installed"
+	t_skip "python: a #% line inside a string is not, python3 is not installed"
+fi
+if command -v perl >/dev/null; then
+	printf '#!/usr/bin/perl\nprint "#%%in a string\\n";\n#%%depon: late\nprint <<EOF;\n#%%in a heredoc\nEOF\n' >"$T/late"
+	run "$HELPERS/czdump" "$T/late" late
+	t_has "$err" "warning: ./late: '#%depon: late' follows a command, treating it as a comment" \
+		"perl: a #% line after the header is warned about"
+	t_unlike "$err" "in a" "perl: a #% line inside a string or heredoc is not"
+else
+	t_skip "perl: a #% line after the header is warned about, perl is not installed"
+	t_skip "perl: a #% line inside a string or heredoc is not, perl is not installed"
+fi
+
+t_done

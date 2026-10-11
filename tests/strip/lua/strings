@@ -1,0 +1,19 @@
+#!/usr/bin/env lua
+local a = 'single -- not a comment'
+local b = "double -- not a comment"
+local c = [[long -- not a comment
+   with indentation   
+-- and a line that looks like a comment
+]]
+local d = [==[level two ]] ]=] -- kept
+]==]
+local e = "escaped \" quote -- kept"
+local f = 'escaped \' quote -- kept'
+local g = "line \
+continued -- kept"
+local h = "skip \z
+           whitespace -- kept"
+local i = "\65\066\x43\u{44} -- kept"
+local j = ''
+local k = [[]]
+print(a, b, c, d, e, f, g, h, i, j, k)

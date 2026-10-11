@@ -114,4 +114,27 @@ q_order "poweroff: saving the clock" "poweroff: syncing and remounting read-only
 q_order "poweroff: syncing and remounting read-only" "poweroff: now" "then powers off"
 q_lacks " FAIL > " "a clean boot and poweroff log no FAIL line"
 q_lacks " WARN > " "a clean boot and poweroff log no WARN line"
+
+# a hard descriptor limit above fs.nr_open is refused even to root
+q_new boot-nofile
+q_svc nofile <<'EOF'
+#%type: daemon
+exec sleep 100000
+EOF
+q_check <<'EOF'
+st_is nofile up
+ninitctl stop nofile >/dev/null
+read -r nr_open </proc/sys/fs/nr_open
+echo 65536 >/proc/sys/fs/nr_open
+out=$(ninitctl start nofile)
+rc=$?
+echo "$nr_open" >/proc/sys/fs/nr_open
+is "$rc:$out" "0:nofile up" "a service whose descriptor limit is refused still starts"
+log_has "nofile: ninit: could not set its descriptor limit: errno 1, it runs with pid 1's" "and says so on its output"
+is "$(awk '/^Max open files/ { print $4 }' /proc/$(pid_of nofile)/limits)" \
+	"$(awk '/^Max open files/ { print $4 }' /proc/1/limits)" "with the limit of pid 1"
+EOF
+q_boot
+q_import
+q_poweroff_ok
 t_done

@@ -27,12 +27,12 @@ svc_lines() {
 }
 
 lang() {
-	local name=$1 prog=$2 want_runs=$3 good=$4 bad=$5 bad_line=$6 tail=$7 d path
+	local name=$1 prog=$2 want_runs=$3 good=$4 bad=$5 bad_line=$6 tail=$7 warns=$8 d path
 	path=$(interp "$prog") || {
 		t_skip "$name: $prog is not installed"
 		t_skip "$name: show -v names the interpreter"
-		t_skip "$name: the header is blanked, the body stored as written"
-		t_skip "$name: a comment after the code is kept and not warned about"
+		t_skip "$name: the header is blanked and the comments removed"
+		t_skip "$name: a #% line after the code is warned about where it is a comment"
 		t_skip "$name: a syntax error fails the build"
 		t_skip "$name: with the line of the file"
 		return
@@ -43,8 +43,12 @@ lang() {
 	build "$d"
 	t_is "$init_rc" 0 "$name: a #! line through env selects it and the script checks" || t_diag "$init_err"
 	t_is "$(svc_lines svc | sed -n 2p)" "runs $path ${want_runs/@@/svc}" "$name: show -v names the interpreter"
-	t_is "$(svc_lines svc | sed -n '3,$p')" "$good"$'\n'"$tail" "$name: the header is blanked, the body stored as written"
-	t_unlike "$init_err" "follows a command" "$name: a comment after the code is kept and not warned about"
+	t_is "$(svc_lines svc | sed -n '3,$p')" "$good" "$name: the header is blanked and the comments removed"
+	if [ -n "$warns" ]; then
+		t_has "$init_err" "'$tail' follows a command" "$name: a #% line after the code is warned about where it is a comment"
+	else
+		t_unlike "$init_err" "follows a command" "$name: a #% line after the code is warned about where it is a comment"
+	fi
 	printf '#!%s\n# head\n\n%s\n' "$path" "$bad" >"$d/svc"
 	build "$d"
 	t_is "$init_rc" 1 "$name: a syntax error fails the build"
@@ -53,11 +57,28 @@ lang() {
 
 lang python python3 "-I -B -u -c SCRIPT @@" 'import sys
 print(sys.argv)' 'if True
-    pass' 4 '#%start-tries: 9 is a comment here'
+    pass' 4 '#%start-tries: 9 is a comment here' 1
 lang lua lua "-e 'io.stdout:setvbuf(\"line\") arg = { [0] = \"@@\" }' -e SCRIPT" 'print(arg[0])' 'local x = = 1' 4 \
-	'-- # is no comment in lua, only the header is blanked'
+	'-- # is no comment in lua, only the header is blanked' ''
 lang perl perl "-e '\$| = 1; \$0 = '\\''@@'\\'';' -e '#line 1' -e SCRIPT" 'use strict;
-print "$0\n";' 'my $x = ;' 4 '#%start-tries: 9 is a comment here'
+print "$0\n";' 'my $x = ;' 4 '#%start-tries: 9 is a comment here' 1
+
+# python finds the modules the imports at the top of a script name, without running anything
+d=$T/imports
+mkdir -p "$d"
+if py=$(interp python3); then
+	printf '#!%s\n"""doc"""\nimport os, sys\nfrom collections import abc\nimport ninit_none_c.sub\n' "$py" >"$d/a"
+	build "$d"
+	t_is "$init_rc" 1 "python: an import of a missing module fails the build"
+	t_has "$init_err" "ninitctl: $d/a: python: line 5: no module named 'ninit_none_c'" "python: and names it and its line"
+	printf '#!%s\nimport os, sys\nsys.path.insert(0, "/opt")\nimport ninit_none_a\ntry:\n    import ninit_none_b\nexcept ImportError:\n    pass\n' "$py" >"$d/a"
+	build "$d"
+	t_is "$init_rc" 0 "python: an import after another statement or guarded is not looked up" || t_diag "$init_err"
+else
+	t_skip "python: an import of a missing module fails the build, python3 is not installed"
+	t_skip "python: and names it and its line, python3 is not installed"
+	t_skip "python: an import after another statement or guarded is not looked up, python3 is not installed"
+fi
 
 d=$T/args
 mkdir -p "$d"

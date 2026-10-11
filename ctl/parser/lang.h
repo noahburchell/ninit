@@ -32,5 +32,6 @@ extern int g_sh_lexed;
 const struct lang *lang_select(struct src *s, const char *fname, const char *body);
 int sh_lexed(const char *argv0);
 size_t blank_header(struct src *s, char *body, size_t len, size_t code_off);
+void late_directive(const char *fname, const char *p, size_t len);
 int claims_versioned(const char *base, size_t len, const char *name);
 void check_exec_args(const struct src *s, const char *fname);

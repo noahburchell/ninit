@@ -442,8 +442,21 @@ perl|\-e, \-E, \-x, \-c, \-h, \-u, \-v, \-V, \-d without a module,
 .PP
 the header, the
 .B #!\&
-line and directives included, is stored as empty lines and the rest of the file as written.
-nothing is stripped and line numbers in interpreter messages match the file.
+line and directives included, is stored as empty lines.
+the rest is stripped as a shell script is: comments, trailing blanks and the indentation
+the language does not read are removed, runs of blanks become one space, and every line stays,
+so line numbers in interpreter messages match the file.
+strings are stored as written, and so is the rest of the file after a construct the stripper cannot follow exactly.
+a
+.B #%
+line after the header draws a warning in python and perl.
+python keeps the indentation of a line that begins a statement and stores f-strings whole.
+lua removes long comments and stores long strings as written.
+perl removes pod, keeps
+.B #line
+directives, and stores quote-like operators, regular expressions, here-documents and the text after
+.B __END__
+as written.
 in lua a
 .B #
 line is valid only in the header.
@@ -494,6 +507,8 @@ compiles python with
 and lua with
 .BR load() ,
 neither runs the script.
+python also looks up the module of each import at the top of the script,
+before any other statement, by its first name, and a missing one fails the build.
 .B perl \-c
 runs
 .B BEGIN

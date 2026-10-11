@@ -1,0 +1,18 @@
+#!/usr/bin/env lua
+local a, b = 7, 2
+print(a - -b, a // b, a % b, a ^ b, a / b)
+print(a & b, a | b, a ~ b, ~a, a << 1, a >> 1)
+print(a == b, a ~= b, a <= b, not (a > b))
+print(1e3, 0x1F, 3.5, .5, 1 .. 2)
+local s = ("x"):rep(3)
+print(s, #s)
+for k = 3, 1, -1 do
+    if k == 2 then goto continue end
+    print("k", k)
+    ::continue::
+end
+local t = setmetatable({}, { __index = function(_, key) return key .. "!" end })
+print(t.hello, t["--"])
+local f = function(...) return select("#", ...) end
+print(f(1, nil, 3))
+print(string.format("%5.1f|%-3s|", 3.14159, "ab"))

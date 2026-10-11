@@ -1,0 +1,15 @@
+#!/usr/bin/env lua
+--[[ a long comment
+over several lines ]]
+local x = 1 --[[ inline ]] + 2
+local y = 3--[==[ level two
+]] still the comment
+]==]+4
+--[=[ ]] ]=] print("comment") --]=]
+local z = x--[[ separates ]]+y
+print(x, y, z)   --[[ trailing
+long comment ]]
+-- [[ not a long comment, the space breaks it
+print("--[[ not a comment ]]")
+local t = { 1, 2, 3 } -- table
+print(#t, #"abc")

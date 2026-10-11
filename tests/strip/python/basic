@@ -1,0 +1,33 @@
+#!/usr/bin/env python3
+# a header comment
+#%type: oneshot
+
+import sys   # trailing comment
+  
+# a full line comment
+def greet(name,  greeting = "hello"):   
+	"""a docstring # that keeps its hash
+	and its trailing blanks   
+	"""
+	return "%s, %s" % (greeting,    name)    # comment
+
+
+class Box:
+    # comment inside a class
+    def __init__(self, v):
+        self.v = v      # stored
+
+    def __repr__(self):
+        return f"Box({self.v!r})"
+
+if __name__ == "__main__":
+    print(greet("world"))   
+    print(Box(3))
+    print(greet.__doc__)
+    for i in range(3):
+        # loop comment
+        if i % 2:
+            print("odd", i)
+        else:
+            print("even", i)   # trailing
+    sys.exit(0)

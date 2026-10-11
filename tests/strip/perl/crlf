@@ -1,0 +1,10 @@
+#!/usr/bin/perl
+# crlf comment
+my $x = 1;   # c
+if ($x) {
+    print "crlf # kept\n";
+}
+print <<EOF;   
+heredoc # kept
+EOF
+print "after\n";

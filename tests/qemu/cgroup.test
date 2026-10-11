@@ -125,4 +125,40 @@ EOF
 q_boot
 q_import
 q_poweroff_ok
+
+# a cgroup with a domain controller enabled for its children cannot hold processes itself
+q_new cgroup-join
+q_svc joinless <<'EOF'
+#%type: daemon
+exec sleep 1000
+EOF
+q_check <<'EOF'
+st_is joinless up
+i=$(idx_of joinless)
+cg=$(cg_of "$i")
+ctl=$(grep -o -w -m1 -E 'memory|io' /sys/fs/cgroup/cgroup.controllers | head -n1)
+ninitctl stop joinless >/dev/null
+wait_for 2000 test ! -d "$cg"
+if [ -n "$ctl" ] && echo "+$ctl" >/sys/fs/cgroup/cgroup.subtree_control &&
+	echo "+$ctl" >/sys/fs/cgroup/ninit.services/cgroup.subtree_control &&
+	mkdir "$cg" && echo "+$ctl" >"$cg/cgroup.subtree_control"; then
+	out=$(ninitctl start joinless)
+	is "$?:$out" "0:joinless up" "a service that cannot join its cgroup still starts"
+	log_has "joinless: ninit: could not join its cgroup: errno 16, it is only contained by its process group" \
+		"and says so on its output"
+	is "$(cat "$cg/cgroup.procs")" "" "the cgroup holds none of its processes"
+	out=$(ninitctl stop joinless)
+	is "$?:$out" "0:joinless stopped" "its process group still stops it"
+	echo "-$ctl" >"$cg/cgroup.subtree_control"
+	rmdir "$cg"
+else
+	skip "a service that cannot join its cgroup still starts, no domain controller can be enabled"
+	skip "and says so on its output, no domain controller can be enabled"
+	skip "the cgroup holds none of its processes, no domain controller can be enabled"
+	skip "its process group still stops it, no domain controller can be enabled"
+fi
+EOF
+q_boot
+q_import
+q_poweroff_ok
 t_done
