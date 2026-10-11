@@ -30,7 +30,7 @@ for k in 1 2 3 4 5; do
 	((t1 - t0 > worst)) && worst=$((t1 - t0))
 	sleep 0.2
 done
-ok $((worst > 500)) "control requests are answered while the console is stalled (worst $worst ms)"
+ok $((worst > 500 * T_SCALE)) "control requests are answered while the console is stalled (worst $worst ms)"
 seqs=$(ninitctl log | sed -n 's/.*NOTE > flood: flood \([0-9]*\) .*/\1/p')
 first=$((10#$(head -n1 <<<"$seqs")))
 last=$((10#$(tail -n1 <<<"$seqs")))

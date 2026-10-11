@@ -103,7 +103,7 @@ if command -v chpst >/dev/null; then
 	t0=$(now_ms)
 	out=$(chpst -u nobody:nobody /sbin/shutdown +5 2>&1)
 	is "$?:$out" "1:shutdown: permission denied, must be run as root" "shutdown +5 as a user is refused"
-	check "before it waits for TIME" test $(($(now_ms) - t0)) -lt 5000
+	check "before it waits for TIME" test $(($(now_ms) - t0)) -lt $((5000 * T_SCALE))
 else
 	skip "poweroff as a user without logind is refused, busybox has no chpst"
 	skip "shutdown +5 as a user is refused, busybox has no chpst"

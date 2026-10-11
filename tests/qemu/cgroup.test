@@ -33,6 +33,15 @@ for k in 1 2 3 4 5; do
 	( sleep 0.3 & )
 done
 EOF
+q_svc escaper <<'EOF'
+echo $$ >/run/escaper.pid
+( exec setsid sleep 1000 ) &
+echo $! >/run/escaper.child
+EOF
+q_svc dep <<'EOF'
+#%depon: escaper
+:
+EOF
 q_check <<'EOF'
 st_is daemon up
 st_is lefty up
@@ -53,6 +62,45 @@ out=$(ninitctl stop lefty)
 is "$?:$out" "0:lefty stopped" "stop signals what the oneshot left behind"
 check "the leftover process is gone" wait_for 2000 test ! -e /proc/$child
 check "an empty cgroup is removed" wait_for 2000 test ! -d "$lcg"
+is "$(st lefty)" down "the stopped oneshot is down"
+
+# the process group of a oneshot that has exited is empty once its leftover calls setsid
+st_is escaper up
+st_is dep up
+old=$(cat /run/escaper.pid)
+esc=$(cat /run/escaper.child)
+pgrp_is() {
+	[ "$(cut -d' ' -f5 /proc/$1/stat 2>/dev/null)" = "$2" ]
+}
+check "the leftover of escaper leads a process group of its own" wait_for 2000 pgrp_is "$esc" "$esc"
+victim=
+if [ -w /proc/sys/kernel/ns_last_pid ]; then
+	for try in 1 2 3 4 5 6 7 8; do
+		echo $((old - 1)) >/proc/sys/kernel/ns_last_pid
+		setsid sleep 1000 &
+		[ "$!" = "$old" ] && { victim=$!; break; }
+		kill $!
+	done
+fi
+if [ -n "$victim" ]; then
+	check "another process leads a process group with the old number" wait_for 2000 pgrp_is "$victim" "$old"
+	out=$(ninitctl stop escaper)
+	is "$?:$out" "0:escaper stopped" "stop of a oneshot whose process group is gone succeeds"
+	check "and leaves the process now holding that number alone" test -e /proc/$victim
+	kill $victim
+else
+	skip "another process leads a process group with the old number, ns_last_pid cannot be set"
+	out=$(ninitctl stop escaper)
+	is "$?:$out" "0:escaper stopped" "stop of a oneshot whose process group is gone succeeds"
+	skip "and leaves the process now holding that number alone, ns_last_pid cannot be set"
+fi
+check "the leftover that left the process group is gone" wait_for 2000 test ! -e /proc/$esc
+is "$(st escaper)" down "the stopped oneshot is down"
+out=$(ninitctl start dep 2>&1)
+is "$?:$out" "1:ninitctl: dep waiting on a prerequisite" "and its dependents see it go down"
+out=$(ninitctl start escaper)
+is "$?:$out" "0:escaper up" "a start brings it back"
+st_is dep up 5000 "and its dependent follows"
 
 hchild=$(cat /run/hard.child)
 out=$(ninitctl stop hard)

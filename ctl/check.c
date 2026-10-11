@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -57,9 +58,17 @@ struct checks {
 	char **failed;
 	uint8_t *late;
 	uint32_t nslot, live, bad, unchecked;
-	int devnull, giveup;
+	int devnull, giveup, userns;
 	sigset_t chld, old_mask;
 };
+
+// a new user namespace grants CAP_SYS_CHROOT within it, chroot must come before any exec drops it
+static int enter_root(int userns)
+{
+	if (userns && unshare(CLONE_NEWUSER) < 0)
+		return -1;
+	return chroot(g_root) < 0 || chdir("/") < 0 ? -1 : 0;
+}
 
 // waits for a check to end, killing each one still running at its deadline, due -1 marks it
 static pid_t reap_check(struct checks *c, int *st)
@@ -181,7 +190,7 @@ static void start_one(struct checks *c, struct src *s, uint32_t i, const char *d
 		die("fork: %s", strerror(errno));
 	if (pid == 0) {
 		sigprocmask(SIG_SETMASK, &c->old_mask, NULL);
-		if (g_root && (chroot(g_root) < 0 || chdir("/") < 0))
+		if (g_root && enter_root(c->userns) < 0)
 			_exit(127);
 		dup2(sfd, 0);
 		if (c->devnull >= 0)
@@ -221,20 +230,31 @@ static void report(struct checks *c, struct src *srcs, uint32_t n, const char *d
 		    c->unchecked == 1 ? "" : "s");
 }
 
-// a check for another root runs inside it, which needs CAP_SYS_CHROOT
-static int chroot_errno(void)
+// a check for another root runs inside it, through a user namespace when chroot alone is refused
+static int root_errno(int *userns)
 {
-	pid_t pid = fork();
-	int st;
+	int e = 0;
 
-	if (pid < 0)
-		return errno;
-	if (pid == 0)
-		_exit(chroot(g_root) < 0 ? errno : 0);
-	while (waitpid(pid, &st, 0) < 0)
-		if (errno != EINTR)
+	for (int u = 0; u < 2; u++) {
+		pid_t pid = fork();
+		int st, r;
+
+		if (pid < 0)
 			return errno;
-	return WIFEXITED(st) ? WEXITSTATUS(st) : EPERM;
+		if (pid == 0)
+			_exit(enter_root(u) < 0 ? errno : 0);
+		while (waitpid(pid, &st, 0) < 0)
+			if (errno != EINTR)
+				return errno;
+		r = WIFEXITED(st) ? WEXITSTATUS(st) : EPERM;
+		if (!r) {
+			*userns = u;
+			return 0;
+		}
+		if (!u)
+			e = r;
+	}
+	return e;
 }
 
 void check_syntax(struct src *srcs, uint32_t n, const char *dir)
@@ -263,7 +283,7 @@ void check_syntax(struct src *srcs, uint32_t n, const char *dir)
 	sigaddset(&c.chld, SIGCHLD);
 	sigaction(SIGCHLD, &dfl, &old_chld);
 	sigprocmask(SIG_BLOCK, &c.chld, &c.old_mask);
-	if (g_root && (e = chroot_errno())) {
+	if (g_root && (e = root_errno(&c.userns))) {
 		fprintf(stderr, "ninitctl: warning: chroot %s: %s, skipping the syntax check\n",
 			g_root, strerror(e));
 		c.giveup = 1;

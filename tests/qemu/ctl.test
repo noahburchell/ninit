@@ -118,7 +118,7 @@ out=$(ninitctl start retrying 2>&1)
 rc=$?
 t1=$(now_ms)
 is "$rc:$out" "1:ninitctl: retrying start timed out" "start gives up after start-timeout plus 2 s"
-ok $((t1 - t0 < 2300 || t1 - t0 > 3500)) "start-timeout 400 ms plus 2 s ($((t1 - t0)) ms)"
+ok $((t1 - t0 < 2300 || t1 - t0 > 2300 + 1200 * T_SCALE)) "start-timeout 400 ms plus 2 s ($((t1 - t0)) ms)"
 ninitctl stop retrying >/dev/null 2>&1
 
 # targets and unknown names

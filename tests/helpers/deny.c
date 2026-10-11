@@ -31,13 +31,14 @@ static const struct {
 #endif
 	{ "signalfd4", SYS_signalfd4 },
 	{ "openat2", SYS_openat2 },
+	{ "unshare", SYS_unshare },
 };
 
 static void usage(void)
 {
 	fputs("usage: deny CALL... -- PROG [ARG]...\n"
 	      "\n"
-	      "CALL is clone3, signalfd, signalfd4 or openat2\n",
+	      "CALL is clone3, signalfd, signalfd4, openat2 or unshare\n",
 	      stderr);
 	_exit(2);
 }

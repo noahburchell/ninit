@@ -86,7 +86,8 @@ static void give_up(uint32_t i, int status)
 	poison(i);
 }
 
-static void restart_schedule(uint32_t i, int status)
+// an instance that never became ready was not up, so it neither resets the delay nor counts as up
+static void restart_schedule(uint32_t i, int status, int was_up)
 {
 	struct run *r = &runs[i];
 	unsigned last = sizeof(restart_delay_ms) / sizeof(*restart_delay_ms) - 1;
@@ -95,7 +96,7 @@ static void restart_schedule(uint32_t i, int status)
 	int first;
 	char how[64];
 
-	if (alive >= RESTART_SETTLED_MS)
+	if (was_up && alive >= RESTART_SETTLED_MS)
 		r->burst = 0;
 	first = r->burst == 0;
 	d = restart_delay_ms[r->burst < last ? r->burst : last];
@@ -110,8 +111,12 @@ static void restart_schedule(uint32_t i, int status)
 	r->stale_hold = 0;
 
 	fail_describe(status, how, sizeof(how));
-	log_warn("%s: exited (%s) after %lld ms up, restarting in %u ms",
-		 ng_name(map, i), how, alive, d);
+	if (was_up)
+		log_warn("%s: exited (%s) after %lld ms up, restarting in %u ms",
+			 ng_name(map, i), how, alive, d);
+	else
+		log_warn("%s: exited (%s) after %lld ms, before it became ready, restarting in %u ms",
+			 ng_name(map, i), how, alive, d);
 
 	if (first && r->tail_len)
 		log_raw(LOG_WARN, r->tail, r->tail_len);
@@ -127,7 +132,7 @@ void start_failed(uint32_t i, int status)
 	if (!shutting_down)
 		go_down(i);
 	if (!shutting_down && ng_restart(map, i)) {
-		restart_schedule(i, status);
+		restart_schedule(i, status, 0);
 		return;
 	}
 	close_fds(i);
@@ -167,7 +172,7 @@ static void fire_restart(uint32_t i, long long now)
 		if (state[i] == NG_ST_RUNNING)
 			service_failed(i, EXIT_NOEXEC);
 		else
-			restart_schedule(i, EXIT_NOEXEC);
+			restart_schedule(i, EXIT_NOEXEC, 0);
 	}
 }
 
@@ -268,6 +273,8 @@ static void child_exited(uint32_t i, int status)
 		return;
 	}
 	if (state[i] != NG_ST_RUNNING) {
+		int was_up = !r->starting;
+
 		r->starting = 0;
 		if (state[i] == NG_ST_DONE && !shutting_down) {
 			if (r->timedout)
@@ -276,7 +283,7 @@ static void child_exited(uint32_t i, int status)
 				status = hup_status(status);
 			go_down(i);
 			if (ng_restart(map, i)) {
-				restart_schedule(i, status);
+				restart_schedule(i, status, was_up);
 				return;
 			}
 			fail_describe(status, how, sizeof(how));
@@ -358,9 +365,13 @@ void reap(void)
 		i = find_pid(pid, &stale);
 		if (i == UINT32_MAX)
 			continue;
-		if (stale)
+		if (stale) {
 			stale_reaped(i, pid);
-		else
-			child_exited(i, status);
+			continue;
+		}
+		child_exited(i, status);
+		// the cgroup reaches what the leader left, its process group can empty and its number be reused
+		if (cg_ok && !runs[i].pid)
+			runs[i].pgid = 0;
 	}
 }

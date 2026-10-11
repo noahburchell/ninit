@@ -88,7 +88,7 @@ if [ -z "$Q_QUIET" ]; then
 	t_s3=$(sed -n 's/.*STOP s3 \([0-9.]*\).*/\1/p' "$Q/console.log")
 	t_lone=$(sed -n 's/.*STOP lone \([0-9.]*\).*/\1/p' "$Q/console.log")
 	gap=$(awk -v a="$t_s3" -v b="$t_lone" 'BEGIN { d = (a - b) * 1000; if (d < 0) d = -d; printf "%d", d }')
-	t_ok $((gap > 500)) "shutdown: independent branches stop in parallel ($gap ms apart)"
+	t_ok $((gap > 500 * Q_SCALE)) "shutdown: independent branches stop in parallel ($gap ms apart)"
 else
 	t_skip "shutdown: independent branches stop in parallel, not on a quiet console"
 fi

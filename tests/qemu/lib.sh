@@ -217,6 +217,7 @@ q_boot() {
 q_start() {
 	local args
 	[ -e "$Q/root/etc/ninit.d/depgraph" ] || [ -n "$Q_NOGRAPH" ] || q_graph || return 1
+	printf '%s\n' "$Q_SCALE" >"$Q/root/t/scale"
 	(cd "$Q/root" && find . -mindepth 1 | LC_ALL=C sort |
 		"$Q_BUSYBOX" cpio -o -H newc -R 0:0 >"$Q/scen.cpio" 2>/dev/null)
 	cat "$Q_DIR/base.cpio" "$Q/scen.cpio" >"$Q/initrd"

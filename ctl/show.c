@@ -63,9 +63,13 @@ int cmd_show(int argc, char **argv)
 	int fd, k, verbose = 0, rc = 1;
 
 	for (k = 0; k < argc; k++) {
-		if ((!strcmp(argv[k], "-f") || !strcmp(argv[k], "--file")) && k + 1 < argc)
-			path = argv[++k];
-		else if (!strcmp(argv[k], "-v") || !strcmp(argv[k], "--verbose"))
+		if (!strcmp(argv[k], "-f") || !strcmp(argv[k], "--file")) {
+			if (++k == argc) {
+				fprintf(stderr, "ninitctl: show: %s needs a file\n", argv[k - 1]);
+				return 2;
+			}
+			path = argv[k];
+		} else if (!strcmp(argv[k], "-v") || !strcmp(argv[k], "--verbose"))
 			verbose = 1;
 		else if (argv[k][0] != '-')
 			path = argv[k];
@@ -75,12 +79,13 @@ int cmd_show(int argc, char **argv)
 		}
 	}
 
-	fd = open(path, O_RDONLY | O_CLOEXEC);
+	// a fifo would block the open until a writer came
+	fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
 	if (fd < 0) {
 		fprintf(stderr, "ninitctl: open %s: %s\n", path, strerror(errno));
 		return 1;
 	}
-	if (fstat(fd, &sb) < 0 || sb.st_size <= 0) {
+	if (fstat(fd, &sb) < 0 || !S_ISREG(sb.st_mode) || sb.st_size <= 0) {
 		fprintf(stderr, "ninitctl: %s: not a regular file\n", path);
 		close(fd);
 		return 1;
