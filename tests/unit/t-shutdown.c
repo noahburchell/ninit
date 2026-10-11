@@ -203,6 +203,12 @@ void ninit_cloexec_except(int keep)
 	(void)keep;
 }
 
+void ninit_oom_score_adj(const char *v, size_t len)
+{
+	(void)v;
+	(void)len;
+}
+
 static void put_file(const char *path, const char *text)
 {
 	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);

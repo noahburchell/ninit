@@ -4,5 +4,5 @@
 #%notify: 3
 #%restart: always
 #%start-timeout: 10s
-{ gdbus wait --system org.freedesktop.NetworkManager && echo >&3; } &
+( { gdbus wait --system org.freedesktop.NetworkManager && echo >&3; } & )
 exec 3>&- NetworkManager --no-daemon

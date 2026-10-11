@@ -211,7 +211,7 @@ a #% line after the header is not a directive. ninitctl init warns about it and 
 
 a file containing a NUL byte is rejected
 
-a daemon with a readiness probe:
+a daemon with a readiness probe. the probe writes the newline to descriptor 3, and the main shell closes its copy before it executes the daemon. the probe is started in the background of a subshell that exits at once, so it passes to pid 1, which reaps it. started with a plain ``&`` it would be a child of the daemon, which never reaps it, and stay a zombie:
 
 .. code:: sh
 
@@ -221,7 +221,7 @@ a daemon with a readiness probe:
    #%notify: 3
    #%restart: always
    #%start-timeout: 10s
-   { gdbus wait --system org.freedesktop.login1 && echo >&3; } &
+   ( { gdbus wait --system org.freedesktop.login1 && echo >&3; } & )
    exec 3>&- /lib/elogind/elogind
 
 3.3 directives
@@ -555,7 +555,7 @@ the running ninit does not read the new graph. it takes effect at the next boot
 
    $ ninitctl show
    depgraph  /etc/ninit.d/depgraph
-   31 services, 33 edges, 8 roots, 5 levels, 4651 bytes, crc ea286463
+   31 services, 33 edges, 8 roots, 5 levels, 4663 bytes, crc 937574ad
 
      #  service         type     lvl  kills  onfail  rdy  rst  depends on
      ─────────────────────────────────────────────────────────────────────────
@@ -826,7 +826,7 @@ SIGUSR2          power off
 1. stop the services in reverse dependency order across the whole graph. a service is sent SIGTERM once every service that depends on it has stopped, and SIGKILL after its stop-timeout. independent branches stop in parallel. this step ends after 30 s regardless
 2. send SIGTERM to every process and wait up to 5 s for all of them to exit
 3. send SIGKILL to what remains and wait up to 2 s
-4. run ``hwclock --systohc --utc``, or ``hwclock --systohc --localtime`` if the third line of /etc/adjtime is LOCAL, killing it after 5 s
+4. run ``hwclock --systohc --utc``, or ``hwclock --systohc --localtime`` if the third line of /etc/adjtime is LOCAL, killing it after 5 s. it runs with no signal blocked, default signal dispositions, oom_score_adj 0 and umask 022
 5. swapoff every active swap area
 6. remove the control socket
 7. sync, then remount every filesystem read-only, most recently mounted first, in up to 3 passes. a filesystem that stays writable is unmounted. if that fails, it is synced and remounted or unmounted once more, and otherwise detached. ``/`` is remounted read-only last

@@ -47,7 +47,11 @@ exec sleep 1000
 EOF
 q_file /sbin/hwclock 755 <<'EOF'
 #!/bin/bash
-echo "HWCLOCK $*" >/dev/console
+while read -r k v; do
+	[ "$k" = SigBlk: ] && blk=$v
+done </proc/$$/status
+read -r oom </proc/$$/oom_score_adj
+echo "HWCLOCK $* blocked $blk oom $oom umask $(umask)" >/dev/console
 EOF
 q_file /etc/adjtime <<'EOF'
 0.0 0 0.0
@@ -80,6 +84,7 @@ q_has "poweroff: sending SIGKILL to all processes" "a process outside every serv
 q_order "poweroff: sending SIGTERM to all processes" "poweroff: sending SIGKILL to all processes" \
 	"SIGKILL follows SIGTERM to all processes"
 q_has "HWCLOCK --systohc --localtime" "hwclock keeps local time when /etc/adjtime says LOCAL"
+q_has "blocked 0000000000000000 oom 0 umask 0022" "hwclock runs with no signal blocked, oom_score_adj 0 and umask 022"
 q_order "HWCLOCK" "poweroff: syncing and remounting read-only" "the clock is saved before the remount"
 q_lacks "halt: now" "a halt signal during the shutdown is ignored"
 q_lacks "reboot: now" "a reboot signal during the shutdown is ignored"
