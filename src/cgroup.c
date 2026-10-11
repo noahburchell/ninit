@@ -43,7 +43,8 @@ void cgroup_init(void)
 
 int cg_path(uint32_t i, const char *leaf, char *buf, size_t cap)
 {
-	//FUCKING UDEV BULLSHIT
+	// named by index, systemd-udevd takes a cgroup ending in /udev as delegated to it
+	// and kills every other process in it when idle
 	int n = snprintf(buf, cap, CG_DIR "/svc-%u%s%s", i, *leaf ? "/" : "", leaf);
 	return n > 0 && (size_t)n < cap;
 }
@@ -106,28 +107,35 @@ int cgroup_drop(uint32_t i)
 	return 0;
 }
 
+static int cg_kill(uint32_t i)
+{
+	char path[CG_PATH_MAX];
+	int fd, ok;
+
+	if (!cg_path(i, "cgroup.kill", path, sizeof(path)))
+		return 0;
+	fd = open(path, O_WRONLY | O_CLOEXEC);
+	if (fd < 0)
+		return 0;
+	ok = write(fd, "1", 1) == 1;
+	close(fd);
+	if (ok)
+		runs[i].cg_killed = 1;
+	return ok;
+}
+
 int cgroup_signal(uint32_t i, int sig)
 {
 	char path[CG_PATH_MAX], buf[4096];
 	size_t held = 0;
 	ssize_t k;
-	int fd, ok;
+	int fd;
 
 	if (!cg_ok)
 		return -1;
-
-	if (sig == SIGKILL) {
-		if (!cg_path(i, "cgroup.kill", path, sizeof(path)))
-			return -1;
-		fd = open(path, O_WRONLY | O_CLOEXEC);
-		if (fd < 0)
-			return -1;
-		ok = write(fd, "1", 1) == 1;
-		close(fd);
-		if (ok)
-			runs[i].cg_killed = 1;
-		return ok ? 0 : -1;
-	}
+	// before linux 5.14 SIGKILL goes to each process as any other signal does
+	if (sig == SIGKILL && cg_kill(i))
+		return 0;
 
 	if (!cg_path(i, "cgroup.procs", path, sizeof(path)))
 		return -1;

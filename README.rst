@@ -333,7 +333,7 @@ ninitctl resume returns every failed and skipped service to pending and starts t
 
 restart: always supervises a daemon after it has been ready once. before that only start-tries applies, and a daemon that never becomes ready fails like any other service
 
-when a daemon with restart: always exits, it goes down, its cgroup and process group are killed, and it is started again after a delay of 100, 250, 500, 1000 and 2000 ms, then 5000 ms for every further exit. the delay returns to 100 ms once the daemon has stayed up for 10 s. the console shows ``NAME: exited (REASON) after N ms up, restarting in D ms``, followed by the output tail on the first exit of a sequence
+when a daemon with restart: always exits, it goes down, its cgroup and process group are killed, and it is started again after a delay of 100, 250, 500, 1000 and 2000 ms, then 5000 ms for every further exit. the delay returns to 100 ms once the daemon has stayed up for 10 s. the console shows ``NAME: exited (REASON) after N ms up, restarting in D ms``, followed by the output tail on the first exit of a sequence. an instance that was never ready shows ``NAME: exited (REASON) after N ms, before it became ready, restarting in D ms`` and does not return the delay to 100 ms
 
 a respawned daemon that fails to become ready is killed and started again on the same schedule, without limit. a restart is postponed while a prerequisite with deps: uptime is down, and made when that prerequisite is up again. a held service is not restarted
 
@@ -361,7 +361,7 @@ each start runs ``/bin/bash -c SCRIPT NAME``, where SCRIPT is the file as stored
 
 on linux 5.7 and later the process is created inside its cgroup by clone3() with CLONE_INTO_CGROUP. on older kernels it is forked and joins the cgroup before exec. if it cannot join, it prints ``ninit: could not join its cgroup`` on its own output and is contained by its process group only. if /sys/fs/cgroup is not cgroup2, or ninit.services cannot be created in it, every service is contained by process group only and ninit logs this at boot
 
-a signal sent to a service reaches every process in its cgroup and its process group. SIGKILL is delivered through cgroup.kill. on kernels without cgroup.kill, before 5.14, SIGKILL reaches the process group only
+a signal sent to a service reaches every process in its cgroup and its process group. once the main process is reaped, a service in a cgroup is signalled through the cgroup alone, since its process group can be empty by then and its number given to another process. SIGKILL is delivered through cgroup.kill. on kernels without cgroup.kill, before 5.14, SIGKILL is sent to each process in cgroup.procs as other signals are
 
 a service is stopped when its main process has been reaped and its cgroup is empty. without cgroups it is stopped when its main process has been reaped
 
@@ -529,7 +529,7 @@ option                  effect
 7. build the image and verify it with the checks ninit applies at boot
 8. write it to a temporary file in the output directory and fsync it, hard link the current graph to a second temporary name and rename that over FILE.old, rename the new file over FILE, fsync the directory
 
-with ``--root``, the interpreters of `3.12`_ and /etc/locale.conf are looked up below ROOT as the system booted from it sees them, absolute links and ``..`` included, and every syntax check runs chrooted into ROOT. the chroot requires CAP_SYS_CHROOT, without it no script can be checked and the build requires ``--no-check``. DIR and FILE are paths on the running system. the lookup uses openat2, linux 5.6 or newer
+with ``--root``, the interpreters of `3.12`_ and /etc/locale.conf are looked up below ROOT as the system booted from it sees them, absolute links and ``..`` included, and every syntax check runs chrooted into ROOT. without CAP_SYS_CHROOT each check first enters a user namespace of its own, which grants it there, where the kernel allows unprivileged user namespaces. failing both, no script can be checked and the build requires ``--no-check``. DIR and FILE are paths on the running system. the lookup uses openat2, linux 5.6 or newer
 
 a failed build writes nothing and leaves the existing graph and FILE.old in place. if FILE or FILE.old exists and is not a graph, the build fails instead of replacing it. the output mode is 0644 less the umask, and less group or other read permission if any service file lacks it
 
@@ -777,6 +777,7 @@ skipped   will not start because a prerequisite failed or went down
 - ``start`` is refused if the service is running or its previous instance has not exited
 - ``start`` is refused with ``waiting on a prerequisite`` if a prerequisite is not up. the service is left pending and starts when its prerequisites are up. a service that was up goes down
 - ``start`` on a oneshot that has completed runs it again
+- ``stop`` on a oneshot that has completed signals the processes it left in its cgroup, and the oneshot goes down once the cgroup is empty. with none left it is ``already stopped`` and goes down at once
 - ``start`` reports failure if the service is neither ready nor failed within start-timeout plus 2 s
 - ``stop`` reports failure if the service has not stopped 2 s after SIGKILL
 - ``stop`` does not stop dependents. what they may do while the service is down is set by its deps, see `3.5`_

@@ -6,7 +6,7 @@
 
 | suite | path | requires | covers |
 |---|---|---|---|
-| unit | `tests/unit/t-*.c` | nothing | graph verifier, crc32c, names, `/etc/locale.conf`, log ring and console, failure reporting, emergency shell state machine, `ninit-shutdown` argument handling, comment stripper, pid table, scheduler simulation, the swap, clock and remount steps of shutdown, graph loading and the descriptor limit of pid 1, the graph writes and link moves of `ninitctl` |
+| unit | `tests/unit/t-*.c` | nothing | graph verifier, crc32c, names, `/etc/locale.conf`, log ring and console, failure reporting, emergency shell state machine, `ninit-shutdown` argument handling, comment stripper, pid table, scheduler simulation, the swap, clock and remount steps of shutdown, graph loading and the descriptor limit of pid 1, the graph writes and link moves of `ninitctl`, signals and cleanup through the cgroup files |
 | ninitctl | `tests/ctl/*.test` | bash, coreutils | `init`, `show`, `add`, `del`, directives, ordering, limits, locking, `make tools-install`, the examples in `docs/ninit.d` against README 4.2 |
 | interpreters | `tests/ctl/interp.test`, `tests/qemu/interp.test` | python3, lua and perl, each part skips without its interpreter | `#!` selection, build time resolution, argv, syntax checks, and python, lua and perl services run by ninit |
 | client | `tests/ctl/client.test` | `unshare(1)`, unprivileged user namespaces | the `ninitctl` client against a fake control socket in a private mount namespace |
@@ -45,7 +45,7 @@ linux before 7.3 kills a process created with `CLONE_INTO_CGROUP` in a cgroup th
 | `NINIT_TEST_QEMU` | `qemu-system-x86_64` | qemu binary |
 | `NINIT_TEST_BUSYBOX` | `busybox` in `PATH` | busybox for the guest userland and the initramfs |
 | `NINIT_TEST_ACCEL` | `kvm` if `/dev/kvm` is usable, else `tcg` | qemu accelerator |
-| `NINIT_TEST_SCALE` | 1 with kvm, 6 with tcg | multiplier for every timeout |
+| `NINIT_TEST_SCALE` | 1 with kvm, 6 with tcg | multiplier for every timeout. the guest reads it from `/t/scale` as `T_SCALE`, the deadlines of its wait functions and its upper bounds on elapsed time grow with it. lower bounds, which measure the timers of ninit, stay as written |
 | `T_KEEP` | unset | keep the scratch directory of each test and print its path |
 
 one test:

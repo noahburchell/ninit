@@ -705,6 +705,10 @@ static void test_sim_restart_backoff(void)
 		{ .name = "r", .type = NG_TYPE_DAEMON, .onfail = GB_DEFAULT, .restart = 1, .notify = 3,
 		  .script = "x", .pol = { .start_ms = 300 } },
 	};
+	static const struct gb_svc slow[] = {
+		{ .name = "slow", .type = NG_TYPE_DAEMON, .onfail = GB_DEFAULT, .restart = 1, .notify = 3,
+		  .script = "x", .pol = { .start_ms = 12000 } },
+	};
 	long long expect[] = { 100, 250, 500, 1000, 2000, 5000, 5000 };
 	uint32_t i;
 	int bad = 0;
@@ -748,6 +752,20 @@ static void test_sim_restart_backoff(void)
 		   t_spawn - t_kill);
 	}
 	ok(inv_ok("timeout respawn"), "the counters agree after timed out respawns");
+
+	// a respawn that is never ready was never up, 12 s of starting does not reset the delay
+	sim_load(slow, 1, NULL, 0);
+	i = svc_by("slow");
+	sim_ready(i);
+	sim_exit_svc(i, 1 << 8);
+	sim_advance(150);
+	logcap_begin();
+	for (int k = 0; k < 400 && !runs[i].restart_at; k++)
+		sim_advance(50);
+	is_int(runs[i].restart_at - fake_ms, 250, "a respawn killed at its start-timeout of 12 s keeps its delay");
+	ok(logcap_count("slow: exited (timed out and was killed) after ") == 1 &&
+	   logcap_count("ms, before it became ready, restarting in 250 ms") == 1 && !logcap_count("ms up"),
+	   "and is not reported as up");
 }
 
 static void test_sim_ctl(void)

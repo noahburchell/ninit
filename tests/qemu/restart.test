@@ -124,6 +124,8 @@ check "a respawn that never becomes ready is retried" wait_for 10000 three
 log_has "unready: start timed out after 300 ms" "the respawn times out"
 log_has "unready: exited (timed out and was killed) after" "and is killed and scheduled again"
 r=$(ring)
+like "$(grep -m1 'unready: exited (timed out' <<<"$r")" 'after [0-9]+ ms, before it became ready, restarting in [0-9]+ ms$' \
+	"a respawn that never became ready is not reported as up"
 t1=$(awk '/unready: exited .*restarting in 1000 ms/ { gsub(/[][]/, "", $1); print $1; exit }' <<<"$r")
 t2=$(awk -v t="$t1" '/unready: start timed out/ { gsub(/[][]/, "", $1); if ($1 + 0 > t + 0) { print $1; exit } }' <<<"$r")
 gap=$(awk -v a="$t1" -v b="$t2" 'BEGIN { printf "%d", (b - a) * 1000 }')

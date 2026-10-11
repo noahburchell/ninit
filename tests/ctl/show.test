@@ -140,7 +140,13 @@ run "$NINITCTL" show -x "$g"
 t_is "$rc" 2 "an unknown option is a usage error"
 t_is "$err" "ninitctl: show: unexpected argument '-x'" "and is named"
 run "$NINITCTL" show -f
-t_is "$rc" 2 "-f without a file is a usage error"
+t_is "$rc:$err" "2:ninitctl: show: -f needs a file" "-f without a file is a usage error"
+
+run "$NINITCTL" show "$T"
+t_is "$rc:$err" "1:ninitctl: $T: not a regular file" "a directory is refused"
+mkfifo "$T/fifo"
+run timeout 10 "$NINITCTL" show "$T/fifo"
+t_is "$rc:$err" "1:ninitctl: $T/fifo: not a regular file" "a fifo is refused without waiting for a writer"
 
 # colour only on a terminal
 if command -v script >/dev/null 2>&1; then

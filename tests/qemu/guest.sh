@@ -13,6 +13,10 @@ fi
 
 t_n=0
 t_bytes=0
+# the multiplier of NINIT_TEST_SCALE, deadlines and upper bounds on time grow with it
+T_SCALE=
+{ read -r T_SCALE </t/scale; } 2>/dev/null
+T_SCALE=${T_SCALE:-1}
 
 t_emit() {
 	local LC_ALL=C line="$*"
@@ -129,7 +133,7 @@ pid_of() {
 
 # waits up to MS for NAME to reach STATE
 wait_st() {
-	local end=$(($(now_ms) + ${3:-10000}))
+	local end=$(($(now_ms) + ${3:-10000} * T_SCALE))
 	while [ "$(st "$1")" != "$2" ]; do
 		(($(now_ms) > end)) && return 1
 		sleep 0.02
@@ -153,7 +157,7 @@ st_is() {
 wait_for() {
 	local ms=$1 end
 	shift
-	end=$(($(now_ms) + ms))
+	end=$(($(now_ms) + ms * T_SCALE))
 	until "$@"; do
 		(($(now_ms) > end)) && return 1
 		sleep 0.02

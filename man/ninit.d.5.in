@@ -357,10 +357,14 @@ whichever is lower
 user and group 0 and every capability
 .PP
 a signal sent to a service reaches every process in its cgroup and its process group.
+once the main process is reaped, a service in a cgroup is signalled through the cgroup alone,
+since its process group can be empty by then and its number given to another process.
 .B SIGKILL
 is delivered through
 .IR cgroup.kill ,
-and to the process group only on kernels before 5.14.
+and to each process in
+.I cgroup.procs
+on kernels before 5.14.
 a service is stopped when its main process has been reaped and its cgroup is empty
 .PP
 .I /etc/locale.conf

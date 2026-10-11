@@ -115,6 +115,9 @@ void ctl_tick(void)
 		struct run *r = &runs[i];
 		int gone = svc_gone(i);
 
+		// a oneshot that left processes behind has no main process whose exit takes it down
+		if (gone && (r->op == SVC_OP_TERM || r->op == SVC_OP_KILL))
+			go_down(i);
 		switch (r->op) {
 		case SVC_OP_TERM:
 			if (gone) {

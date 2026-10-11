@@ -257,9 +257,10 @@ below
 as that system sees them, absolute links and
 .B ..\&
 included, and runs every syntax check chrooted into
-.IR root ,
-which requires
-.BR CAP_SYS_CHROOT .
+.IR root .
+without
+.B CAP_SYS_CHROOT
+each check first enters a user namespace of its own, where the kernel allows it.
 .I dir
 defaults to
 .IR root @ninit_svcdir@ .
