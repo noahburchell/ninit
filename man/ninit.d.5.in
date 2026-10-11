@@ -642,8 +642,13 @@ exec mount \-a \-t nonfs,nfs4,cifs,smb3 \-O no_netdev
 .EE
 .PP
 a daemon with a readiness probe.
-the probe runs in a background subshell and writes the newline to descriptor 3.
-the main shell closes its copy of descriptor 3 before it executes the daemon:
+the probe writes the newline to descriptor 3,
+and the main shell closes its copy of descriptor 3 before it executes the daemon.
+the probe is started in the background of a subshell that exits at once,
+so it passes to pid 1, which reaps it.
+started with a plain
+.B &
+it would be a child of the daemon, which never reaps it, and stay a zombie:
 .PP
 .EX
 #!/bin/bash
@@ -652,7 +657,7 @@ the main shell closes its copy of descriptor 3 before it executes the daemon:
 #%notify: 3
 #%restart: always
 #%start\-timeout: 10s
-{ gdbus wait \-\-system org.freedesktop.login1 && echo >&3; } &
+( { gdbus wait \-\-system org.freedesktop.login1 && echo >&3; } & )
 exec 3>&\- /lib/elogind/elogind
 .EE
 .PP

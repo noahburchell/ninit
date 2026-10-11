@@ -33,6 +33,12 @@ for k in 1 2 3 4 5; do
 	( sleep 0.3 & )
 done
 EOF
+q_svc probed <<'EOF'
+#%type: daemon
+#%notify: 3
+( { sleep 0.2; echo >&3; } & )
+exec sleep 1000
+EOF
 q_svc escaper <<'EOF'
 echo $$ >/run/escaper.pid
 ( exec setsid sleep 1000 ) &
@@ -48,6 +54,7 @@ st_is lefty up
 st_is hard up
 st_is failing failed
 st_is orphans up
+st_is probed up
 
 cg=$(cg_of "$(idx_of daemon)")
 procs=$(cat $cg/cgroup.procs)
@@ -112,6 +119,8 @@ check "a failed start kills what the attempt left behind" wait_for 2000 test ! -
 sleep 0.6
 zombies=$(grep -l '^State:.*Z' /proc/[0-9]*/status 2>/dev/null | wc -l)
 is "$zombies" 0 "orphans reparented to pid 1 are reaped"
+is "$(grep -l "^PPid:[[:space:]]*$(pid_of probed)\$" /proc/[0-9]*/status 2>/dev/null | wc -l)" 0 \
+	"a readiness probe started as the examples start it is no child of its daemon"
 EOF
 q_boot
 q_import

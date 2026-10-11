@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
+#include <sys/stat.h>
 #include <sys/signalfd.h>
 #include <sys/swap.h>
 #include <sys/types.h>
@@ -244,6 +245,16 @@ void save_hwclock(void)
 	if (pid < 0)
 		return;
 	if (pid == 0) {
+		struct sigaction dfl = { .sa_handler = SIG_DFL };
+		sigset_t none;
+
+		// hwclock runs as a service would, without the signal mask and oom exemption of pid 1
+		sigemptyset(&none);
+		sigprocmask(SIG_SETMASK, &none, NULL);
+		for (int sig = 1; sig < NSIG; sig++)
+			sigaction(sig, &dfl, NULL);
+		ninit_oom_score_adj("0\n", 2);
+		umask(022);
 		ninit_cloexec_except(-1);
 		execve("/sbin/hwclock", argv, envp);
 		execve("/usr/sbin/hwclock", argv, envp);
