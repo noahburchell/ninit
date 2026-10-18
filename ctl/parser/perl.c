@@ -415,7 +415,7 @@ static size_t pl_strip(char *s, size_t n, size_t code, const char *fname)
 				else if (pl_is(w, l, "m\0qr\0"))
 					parts = mods = 1;
 				else if (pl_is(w, l, "s\0tr\0y\0"))
-					parts = 2, mods = 1;
+					parts = 2; mods = 1;
 				if (parts) {
 					// after blanks # starts a comment, and a word is no delimiter
 					if ((k > e && !strchr("{([</|!\"'", s[k])) || !s[k] ||
