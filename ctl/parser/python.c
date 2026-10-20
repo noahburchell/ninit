@@ -5,9 +5,9 @@
 #include <stdint.h>
 #include <string.h>
 
-static int python_claims(const char *base, size_t len)
+static int python_claims(str base)
 {
-	return claims_versioned(base, len, "python");
+	return claims_versioned(base, STR("python"));
 }
 
 #define PY_DEPTH	32
@@ -25,15 +25,15 @@ static int py_ident(unsigned char c)
 }
 
 // r, u, b, f and t alone, or r with b, f or t in either order, in any case
-static int py_prefix(const char *w, size_t l, int *fmt)
+static int py_prefix(str w, int *fmt)
 {
-	char a = (char)(w[0] | 0x20), b = l == 2 ? (char)(w[1] | 0x20) : 0;
+	char a = (char)(w.p[0] | 0x20), b = w.n == 2 ? (char)(w.p[1] | 0x20) : 0;
 
-	if (l == 1 && strchr("rubft", a)) {
+	if (w.n == 1 && strchr("rubft", a)) {
 		*fmt = a == 'f' || a == 't';
 		return 1;
 	}
-	if (l != 2 || (a != 'r' && b != 'r'))
+	if (w.n != 2 || (a != 'r' && b != 'r'))
 		return 0;
 	if (a == 'r')
 		a = b;
@@ -62,7 +62,7 @@ static size_t py_field(const struct py *p, size_t i, char q, int triple, unsigne
 
 			while (e < p->n && py_ident((unsigned char)s[e]))
 				e++;
-			i = (s[e] == '\'' || s[e] == '"') && py_prefix(s + i, e - i, &f) ? py_str(p, e, f, d + 1) : e;
+			i = (s[e] == '\'' || s[e] == '"') && py_prefix((str){ s + i, e - i }, &f) ? py_str(p, e, f, d + 1) : e;
 		} else if (c == '#') {
 			while (i < p->n && s[i] != '\n')
 				i++;
@@ -177,7 +177,7 @@ static size_t py_strip(char *s, size_t n, size_t code, const char *fname)
 					if (s[e] == '\r' && s[e + 1] != '\n')
 						goto bail;
 				if (bol && s[i + 1] == '%')
-					late_directive(fname, s + i, e - i);
+					late_directive(fname, (str){ s + i, e - i });
 				pend = 0;
 				i = e;
 				continue;
@@ -206,7 +206,7 @@ static size_t py_strip(char *s, size_t n, size_t code, const char *fname)
 				for (e = i; e < n && py_ident((unsigned char)s[e]); e++)
 					;
 				if ((s[e] == '\'' || s[e] == '"') && !(c >= '0' && c <= '9') &&
-				    py_prefix(s + i, e - i, &fmt))
+				    py_prefix((str){ s + i, e - i }, &fmt))
 					e = py_str(&p, e, fmt, 0);
 			} else if (c == '(' || c == '[' || c == '{') {
 				p.depth++;

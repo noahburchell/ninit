@@ -16,6 +16,11 @@ LINK = $(CCLD) $(AM_CFLAGS) $(CFLAGS) $(NINIT_CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) $
 
 sbin_PROGRAMS = ninit ninitctl ninit-shutdown
 
+help_headers = \
+	help/io.h \
+	help/str.h \
+	help/time.h
+
 ninit_core = \
 	src/boot.c \
 	src/cgroup.c \
@@ -55,7 +60,8 @@ ninit_SOURCES = \
 	src/logging.c \
 	src/ngraph.c \
 	src/fail.c \
-	$(ninit_headers)
+	$(ninit_headers) \
+	$(help_headers)
 
 ninitctl_parser = \
 	ctl/util.c \
@@ -89,9 +95,10 @@ ninitctl_SOURCES = \
 	ctl/ctl.h \
 	ctl/del.h \
 	ctl/init.h \
-	ctl/show.h
+	ctl/show.h \
+	$(help_headers)
 
-ninit_shutdown_SOURCES = tools/shutdown.c
+ninit_shutdown_SOURCES = tools/shutdown.c help/str.h
 
 NINIT_MANS = man/ninit.8 man/ninitctl.8 man/ninit-shutdown.8 man/ninit.d.5
 

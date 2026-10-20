@@ -217,11 +217,11 @@ static void test_helpers(void)
 	is_int(cz_lead("for x", CZ_KW), CZ_NAME, "for is followed by a name");
 	is_int(cz_lead("fi;", CZ_KW), CZ_KW, "a reserved word may end at a metacharacter");
 	is_int(cz_lead("fix", CZ_KW), 0, "a reserved word must end at a delimiter");
-	ok(is_artifact("depgraph", "depgraph", 8), "the output itself is an artifact");
-	ok(is_artifact("depgraph.old", "depgraph", 8), "its .old is an artifact");
-	ok(is_artifact("depgraph.tmp", "depgraph", 8), "its .tmp is an artifact");
-	ok(!is_artifact("depgraph.bak", "depgraph", 8), "other suffixes are not artifacts");
-	ok(!is_artifact("x", NULL, 0), "without an output in the directory nothing is an artifact");
+	ok(is_artifact("depgraph", STR("depgraph")), "the output itself is an artifact");
+	ok(is_artifact("depgraph.old", STR("depgraph")), "its .old is an artifact");
+	ok(is_artifact("depgraph.tmp", STR("depgraph")), "its .tmp is an artifact");
+	ok(!is_artifact("depgraph.bak", STR("depgraph")), "other suffixes are not artifacts");
+	ok(!is_artifact("x", (str){ 0 }), "without an output in the directory nothing is an artifact");
 }
 
 static char *dup_n(const char *s, size_t n)
@@ -525,14 +525,12 @@ static void test_shebang(void)
 	int rc;
 
 	for (size_t k = 0; k < sizeof(cases) / sizeof(*cases); k++) {
-		size_t len;
-		const char *w = shebang_interp(cases[k].line, strlen(cases[k].line), &len);
+		str w = shebang_interp(str_c(cases[k].line));
 
 		if (!cases[k].want)
-			ok(!w, "'%s' names no interpreter", shown(cases[k].line));
+			ok(!w.n, "'%s' names no interpreter", shown(cases[k].line));
 		else
-			ok(w && len == strlen(cases[k].want) && !memcmp(w, cases[k].want, len),
-			   "'%s' names %s", shown(cases[k].line), cases[k].want);
+			ok(str_eq(w, str_c(cases[k].want)), "'%s' names %s", shown(cases[k].line), cases[k].want);
 	}
 
 	ok(sh_lexed("sh") && sh_lexed("bash") && sh_lexed("/bin/dash") && sh_lexed("ash") &&
@@ -569,7 +567,7 @@ static void test_shebang(void)
 	ok(!rc && !*errtext, "a #! line after the first line is an ordinary comment");
 
 	a.text = "#!/bin/sh\n:\n";
-	if (is_name("sh", 2, NG_SHELL) || is_name("sh", 2, NG_SHELL_ARGV0)) {
+	if (is_name(STR("sh"), NG_SHELL) || is_name(STR("sh"), NG_SHELL_ARGV0)) {
 		ok(1, "# SKIP the configured shell is sh");
 		ok(1, "# SKIP the configured shell is sh");
 	} else {
@@ -604,15 +602,15 @@ static void test_languages(void)
 	const char *line;
 	int rc;
 
-	ok(lang_python.claims("python", 6) && lang_python.claims("python3", 7) &&
-	   lang_python.claims("python3.14", 10), "python, python3 and python3.14 are python");
-	ok(!lang_python.claims("python3-config", 14) && !lang_python.claims("pythonw", 7) &&
-	   !lang_python.claims("pyth", 4), "python3-config, pythonw and pyth are not");
-	ok(lang_lua.claims("lua", 3) && lang_lua.claims("lua5.4", 6) && lang_lua.claims("luajit", 6) &&
-	   lang_lua.claims("luajit-2.1", 10), "lua, lua5.4, luajit and luajit-2.1 are lua");
-	ok(!lang_lua.claims("luac", 4) && !lang_lua.claims("luarocks", 8), "luac and luarocks are not");
-	ok(lang_perl.claims("perl", 4) && lang_perl.claims("perl5.40.0", 10), "perl and perl5.40.0 are perl");
-	ok(!lang_perl.claims("perldoc", 7) && !lang_perl.claims("perl-x", 6), "perldoc and perl-x are not");
+	ok(lang_python.claims(STR("python")) && lang_python.claims(STR("python3")) &&
+	   lang_python.claims(STR("python3.14")), "python, python3 and python3.14 are python");
+	ok(!lang_python.claims(STR("python3-config")) && !lang_python.claims(STR("pythonw")) &&
+	   !lang_python.claims(STR("pyth")), "python3-config, pythonw and pyth are not");
+	ok(lang_lua.claims(STR("lua")) && lang_lua.claims(STR("lua5.4")) && lang_lua.claims(STR("luajit")) &&
+	   lang_lua.claims(STR("luajit-2.1")), "lua, lua5.4, luajit and luajit-2.1 are lua");
+	ok(!lang_lua.claims(STR("luac")) && !lang_lua.claims(STR("luarocks")), "luac and luarocks are not");
+	ok(lang_perl.claims(STR("perl")) && lang_perl.claims(STR("perl5.40.0")), "perl and perl5.40.0 are perl");
+	ok(!lang_perl.claims(STR("perldoc")) && !lang_perl.claims(STR("perl-x")), "perldoc and perl-x are not");
 
 	{
 		char b[] = "#!/usr/bin/python3\n#%type: oneshot\n# c\nprint(1)  # t\n\n";
@@ -659,10 +657,10 @@ static void test_languages(void)
 
 	g_dir = "/d";
 	line = "#!/usr/bin/env -S true -x  y";
-	ok(parse_shebang(line, strlen(line), &sb) && sb.len == 4 && !memcmp(sb.prog, "true", 4),
+	ok(parse_shebang(str_c(line), &sb) && str_eq(sb.prog, STR("true")),
 	   "env -S names the program after its options");
 	{
-		char *p = resolve("svc", &sb), *slash = strrchr(p, '/'), *real;
+		char *p = resolve("svc", sb.prog), *slash = strrchr(p, '/'), *real;
 
 		ok(p[0] == '/' && !strcmp(slash, "/true") && runnable(p), "env finds true in PATH");
 		*slash = '\0';

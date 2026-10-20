@@ -3,6 +3,7 @@
 #include "logging.h"
 #include "ngraph.h"
 #include "ninit.h"
+#include "../help/io.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -144,6 +145,7 @@ void raise_nofile(void)
 const void *load_graph(const char *path, const char **why)
 {
 	struct stat st;
+	ssize_t got;
 	void *m;
 	int fd;
 
@@ -171,18 +173,12 @@ const void *load_graph(const char *path, const char **why)
 		return NULL;
 	}
 
-	for (off_t got = 0; got < st.st_size; ) {
-		ssize_t k = read(fd, (char *)m + got, (size_t)(st.st_size - got));
-
-		if (k < 0 && errno == EINTR)
-			continue;
-		if (k <= 0) {
-			close(fd);
-			munmap(m, (size_t)st.st_size);
-			*why = k < 0 ? strerror(errno) : "unexpected end of file";
-			return NULL;
-		}
-		got += k;
+	got = read_full(fd, m, (size_t)st.st_size);
+	if (got != st.st_size) {
+		close(fd);
+		munmap(m, (size_t)st.st_size);
+		*why = got < 0 ? strerror(errno) : "unexpected end of file";
+		return NULL;
 	}
 	close(fd);
 	if (mprotect(m, (size_t)st.st_size, PROT_READ) < 0) {

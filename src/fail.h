@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../help/str.h"
+
 #include <stdint.h>
 #include <stddef.h>
 #include <sys/types.h>
@@ -24,7 +26,7 @@ enum fail_act {
 void fail_describe(int status, char *buf, size_t cap);
 
 enum fail_act fail_service(const void *map, uint32_t i, int status, unsigned attempt,
-			   unsigned tries, const char *tail, size_t tail_len);
+			   unsigned tries, str tail);
 
 uint32_t fail_poison(const void *map, uint32_t i, uint8_t *state, const uint8_t *up,
 		     uint32_t *undone);
@@ -34,7 +36,7 @@ uint32_t fail_poison_deps(const void *map, uint32_t i, uint8_t *state, const uin
 
 void ninit_cloexec_except(int keep);
 
-void ninit_oom_score_adj(const char *v, size_t len);
+void ninit_oom_score_adj(str v);
 
 void fail_emergency_shell(const char *why);
 

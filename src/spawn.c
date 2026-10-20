@@ -119,7 +119,7 @@ static void child_exec(uint32_t i, int out_w, int ntf_w, const char *cg)
 	}
 
 	// oom_score_adj is inherited, and only pid 1 may be exempt
-	ninit_oom_score_adj("0\n", 2);
+	ninit_oom_score_adj(STR("0\n"));
 
 	(void)!chdir("/");
 	umask(022);

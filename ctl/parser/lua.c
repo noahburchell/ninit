@@ -5,9 +5,9 @@
 #include <stdint.h>
 #include <string.h>
 
-static int lua_claims(const char *base, size_t len)
+static int lua_claims(str base)
 {
-	return claims_versioned(base, len, "lua") || (len >= 6 && !memcmp(base, "luajit", 6));
+	return claims_versioned(base, STR("lua")) || str_prefix(base, STR("luajit"));
 }
 
 static int lua_blank(char c)
@@ -186,17 +186,7 @@ static const char *lua_check_argv(const struct src *s, char **argv, size_t cap)
 // exec_suf stays empty since lua would run a word after the last chunk as a script file
 static void lua_exec_args(struct src *s)
 {
-	static const char head[] = "io.stdout:setvbuf(\"line\") arg = { [0] = \"";
-	char *pre = xmalloc(sizeof(head) + 2 * strlen(s->name) + 4), *p = pre;
-
-	memcpy(p, head, sizeof(head) - 1);
-	p += sizeof(head) - 1;
-	for (const char *c = s->name; *c; c++) {
-		if (*c == '"' || *c == '\\')
-			*p++ = '\\';
-		*p++ = *c;
-	}
-	memcpy(p, "\" }", 4);
+	char *pre = escape_name(STR("io.stdout:setvbuf(\"line\") arg = { [0] = \""), s->name, '"', STR("\" }"));
 
 	strv_push(&s->exec_pre, s->interp);
 	for (uint32_t k = 0; k < s->iargs.n; k++)

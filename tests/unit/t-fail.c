@@ -322,12 +322,12 @@ static void test_fail_service(void)
 	is_str(ng_verify(g.map, g.len), NULL, "fail graph verifies");
 
 	logcap_begin();
-	a = fail_service(g.map, 0, 1 << 8, 1, 3, "", 0);
+	a = fail_service(g.map, 0, 1 << 8, 1, 3, STR(""));
 	is_int(a, FAIL_RETRY, "attempts left means retry");
 	has_str(logcap_text(), "WARN > root: failed (exit 1), retrying (1 of 3)\n", "retry is reported");
 
 	logcap_begin();
-	a = fail_service(g.map, 0, 1 << 8, 3, 3, "out one\nout two\n", 16);
+	a = fail_service(g.map, 0, 1 << 8, 3, 3, STR("out one\nout two\n"));
 	t = logcap_text();
 	is_int(a, FAIL_STOP, "a service with dependents stops them by default");
 	has_str(t, "FAIL > root: failed 3 times (exit 1)\n", "the final failure is reported");
@@ -338,13 +338,13 @@ static void test_fail_service(void)
 	   strstr(t, "out two") < strstr(t, "stopping"), "the tail sits between the two");
 
 	logcap_begin();
-	fail_service(g.map, 4, SIGKILL, 1, 1, NULL, 0);
+	fail_service(g.map, 4, SIGKILL, 1, 1, (str){ 0 });
 	t = logcap_text();
 	has_str(t, "FAIL > one: failed 1 time (killed by SIGKILL)\n", "one attempt is singular");
 	has_str(t, "FAIL > one: 1 service depends on it, stopping\n", "one dependent is singular");
 
 	logcap_begin();
-	a = fail_service(g.map, 1, FAIL_ST_TIMEOUT, 1, 1, NULL, 0);
+	a = fail_service(g.map, 1, FAIL_ST_TIMEOUT, 1, 1, (str){ 0 });
 	t = logcap_text();
 	is_int(a, FAIL_SHELL, "onfail shell asks for the shell");
 	has_str(t, "FAIL > sh: failed 1 time (timed out and was killed)\n", "the timeout is reported");
@@ -352,13 +352,13 @@ static void test_fail_service(void)
 		"the shell is announced with the share of the graph");
 
 	logcap_begin();
-	a = fail_service(g.map, 2, 2 << 8, 1, 1, NULL, 0);
+	a = fail_service(g.map, 2, 2 << 8, 1, 1, (str){ 0 });
 	t = logcap_text();
 	is_int(a, FAIL_WARN, "a service without dependents only warns");
 	has_str(t, "WARN > leaf: no dependent services, continuing\n", "the warning is reported");
 
 	logcap_begin();
-	fail_service(g.map, 3, FAIL_ST_NOTIFY_HUP, 2, 2, NULL, 0);
+	fail_service(g.map, 3, FAIL_ST_NOTIFY_HUP, 2, 2, (str){ 0 });
 	t = logcap_text();
 	has_str(t, "FAIL > d: failed 2 times (closed its notify fd before reporting ready)\n",
 		"a notify hangup is reported");
@@ -447,14 +447,14 @@ static void test_oom(void)
 
 	close(fd);
 	oom_path = path;
-	ninit_oom_score_adj("-1000\n", 6);
+	ninit_oom_score_adj(STR("-1000\n"));
 	fd = open(path, O_RDONLY);
 	n = read(fd, buf, sizeof(buf) - 1);
 	close(fd);
 	buf[n > 0 ? n : 0] = '\0';
 	is_str(buf, "-1000\n", "oom_score_adj is written");
 	oom_path = NULL;
-	ninit_oom_score_adj("0\n", 2);
+	ninit_oom_score_adj(STR("0\n"));
 	ok(1, "a missing oom_score_adj is ignored");
 	unlink(path);
 }

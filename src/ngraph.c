@@ -1,6 +1,7 @@
 #include "ngraph.h"
+#include "../help/io.h"
+#include "../help/str.h"
 
-#include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
@@ -155,10 +156,12 @@ int ng_reserved_name(const char *name)
 	return !name[8] || !strcmp(name + 8, ".old") || !strcmp(name + 8, ".tmp");
 }
 
-static const char *const locale_vars[NG_LOCALE_MAX] = {
-	"LANG", "LC_ALL", "LC_CTYPE", "LC_NUMERIC", "LC_TIME", "LC_COLLATE",
-	"LC_MONETARY", "LC_MESSAGES", "LC_PAPER", "LC_NAME", "LC_ADDRESS",
-	"LC_TELEPHONE", "LC_MEASUREMENT", "LC_IDENTIFICATION",
+static const str locale_vars[NG_LOCALE_MAX] = {
+	STR_INIT("LANG"), STR_INIT("LC_ALL"), STR_INIT("LC_CTYPE"), STR_INIT("LC_NUMERIC"),
+	STR_INIT("LC_TIME"), STR_INIT("LC_COLLATE"), STR_INIT("LC_MONETARY"),
+	STR_INIT("LC_MESSAGES"), STR_INIT("LC_PAPER"), STR_INIT("LC_NAME"),
+	STR_INIT("LC_ADDRESS"), STR_INIT("LC_TELEPHONE"), STR_INIT("LC_MEASUREMENT"),
+	STR_INIT("LC_IDENTIFICATION"),
 };
 
 static int locale_value_ok(const char *v)
@@ -190,10 +193,10 @@ int ng_locale_env(char (*out)[NG_LOCALE_LEN], int max, const char **why)
 
 int ng_locale_fd(int fd, char (*out)[NG_LOCALE_LEN], int max, const char **why)
 {
-	char raw[NG_LOCALE_FILE];
-	size_t len = 0;
+	char raw[NG_LOCALE_FILE], extra;
 	int seen[NG_LOCALE_MAX] = { 0 };
 	int n = 0;
+	ssize_t len;
 	char *p;
 
 	*why = NULL;
@@ -203,34 +206,16 @@ int ng_locale_fd(int fd, char (*out)[NG_LOCALE_LEN], int max, const char **why)
 		close(fd);
 		return 0;
 	}
-	for (;;) {
-		ssize_t k = read(fd, raw + len, sizeof(raw) - 1 - len);
-
-		if (k < 0 && errno == EINTR)
-			continue;
-		if (k < 0) {
-			close(fd);
-			*why = "could not be read";
-			return 0;
-		}
-		if (!k)
-			break;
-		len += (size_t)k;
-		// the buffer is full
-		if (len == sizeof(raw) - 1) {
-			char extra;
-			ssize_t e;
-
-			do
-				e = read(fd, &extra, 1);
-			while (e < 0 && errno == EINTR);
-			if (e > 0) {
-				close(fd);
-				*why = "is larger than 8 KiB";
-				return 0;
-			}
-			break;
-		}
+	len = read_full(fd, raw, sizeof(raw) - 1);
+	if (len < 0) {
+		close(fd);
+		*why = "could not be read";
+		return 0;
+	}
+	if ((size_t)len == sizeof(raw) - 1 && read_full(fd, &extra, 1) > 0) {
+		close(fd);
+		*why = "is larger than 8 KiB";
+		return 0;
 	}
 	close(fd);
 	raw[len] = '\0';
@@ -264,8 +249,7 @@ int ng_locale_fd(int fd, char (*out)[NG_LOCALE_LEN], int max, const char **why)
 			v++;
 
 		for (k = 0; k < NG_LOCALE_MAX; k++)
-			if (!strncmp(name, locale_vars[k], nlen) &&
-			    locale_vars[k][nlen] == '\0')
+			if (str_eq((str){ name, nlen }, locale_vars[k]))
 				break;
 		if (k == NG_LOCALE_MAX)
 			continue;
@@ -296,7 +280,7 @@ int ng_locale_fd(int fd, char (*out)[NG_LOCALE_LEN], int max, const char **why)
 		}
 
 		{
-			size_t kn = strlen(locale_vars[k]), vn = strlen(v);
+			size_t kn = locale_vars[k].n, vn = strlen(v);
 			char *dst;
 
 			if (kn + 1 + vn >= NG_LOCALE_LEN) {
@@ -313,7 +297,7 @@ int ng_locale_fd(int fd, char (*out)[NG_LOCALE_LEN], int max, const char **why)
 				dst = out[n];
 				seen[k] = ++n;
 			}
-			memcpy(dst, locale_vars[k], kn);
+			memcpy(dst, locale_vars[k].p, kn);
 			dst[kn] = '=';
 			memcpy(dst + kn + 1, v, vn + 1);
 		}

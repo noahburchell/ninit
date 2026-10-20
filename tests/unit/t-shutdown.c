@@ -203,10 +203,9 @@ void ninit_cloexec_except(int keep)
 	(void)keep;
 }
 
-void ninit_oom_score_adj(const char *v, size_t len)
+void ninit_oom_score_adj(str v)
 {
 	(void)v;
-	(void)len;
 }
 
 static void put_file(const char *path, const char *text)

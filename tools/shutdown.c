@@ -1,3 +1,5 @@
+#include "../help/str.h"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -51,13 +53,6 @@ static int act_rb(enum act a)
 	}
 }
 
-static const char *base(const char *p)
-{
-	const char *s = strrchr(p, '/');
-
-	return s ? s + 1 : p;
-}
-
 static void usage(const char *me, FILE *f)
 {
 	fprintf(f,
@@ -72,7 +67,7 @@ static void usage(const char *me, FILE *f)
 		"\n"
 		"TIME is now, +MINUTES or HH:MM\n"
 		"reboot, poweroff and halt accept the same options\n",
-		me, strcmp(base(me), "shutdown") && strcmp(base(me), "ninit-shutdown") ? "" : " TIME");
+		me, strcmp(path_base(me), "shutdown") && strcmp(path_base(me), "ninit-shutdown") ? "" : " TIME");
 }
 
 static int pid1_is_ninit(void)
@@ -269,7 +264,7 @@ static void warn_console(const char *me, enum act a, long secs)
 
 int main(int argc, char **argv)
 {
-	const char *me = argc > 0 && argv[0] ? base(argv[0]) : "ninit-shutdown";
+	const char *me = argc > 0 && argv[0] ? path_base(argv[0]) : "ninit-shutdown";
 	enum act act;
 	long when = 0;
 	int is_shutdown, is_telinit, force = 0, have_when = 0, k;

@@ -1,5 +1,6 @@
 #include "init.h"
 #include "util.h"
+#include "../help/io.h"
 #include "../src/ngraph.h"
 
 #include <errno.h>
@@ -76,8 +77,7 @@ void write_atomic(const char *path, const void *buf, size_t len, mode_t mode, in
 {
 	char tmp[8224], keep[8232], old[4104], parent[4104], *slash;
 	const char *dir, *base;
-	const char *p = buf;
-	size_t left = len, tl;
+	size_t tl;
 	mode_t um;
 	int fd, dfd, owned = 0;
 
@@ -117,17 +117,9 @@ void write_atomic(const char *path, const void *buf, size_t len, mode_t mode, in
 		die("fchmod %s: %s", tmp, strerror(errno));
 	}
 
-	while (left) {
-		ssize_t n = write(fd, p, left);
-
-		if (n < 0) {
-			if (errno == EINTR)
-				continue;
-			unlink(tmp);
-			die("write %s: %s", tmp, strerror(errno));
-		}
-		p += n;
-		left -= (size_t)n;
+	if (write_all(fd, buf, len) < 0) {
+		unlink(tmp);
+		die("write %s: %s", tmp, strerror(errno));
 	}
 	if (fsync(fd) < 0) {
 		unlink(tmp);
@@ -162,7 +154,7 @@ void write_atomic(const char *path, const void *buf, size_t len, mode_t mode, in
 }
 
 // the basename of OUT when OUT is in DIR, the scan then knows the output and its .old by name
-const char *output_base(const char *dir, const char *out, size_t *out_base_len)
+str output_base(const char *dir, const char *out)
 {
 	char outdir[4096];
 	char *slash;
@@ -183,7 +175,6 @@ const char *output_base(const char *dir, const char *out, size_t *out_base_len)
 		outdir[1] = '\0';
 	}
 	if (!*out_base || !same_dir(dir, outdir))
-		out_base = NULL;
-	*out_base_len = out_base ? strlen(out_base) : 0;
-	return out_base;
+		return (str){ 0 };
+	return str_c(out_base);
 }

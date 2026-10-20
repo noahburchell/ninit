@@ -1,4 +1,5 @@
 #include "logging.h"
+#include "../help/time.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -120,13 +121,13 @@ static void ring_get(uint64_t at, char *dst, size_t n)
 	memcpy(dst + k, log_ring, n - k);
 }
 
-static int ring_eq(uint64_t at, const char *s, size_t n)
+static int ring_eq(uint64_t at, str s)
 {
 	size_t off = (size_t)(at & (LOG_RING - 1)), k = LOG_RING - off;
 
-	if (k > n)
-		k = n;
-	return !memcmp(log_ring + off, s, k) && !memcmp(log_ring, s + k, n - k);
+	if (k > s.n)
+		k = s.n;
+	return !memcmp(log_ring + off, s.p, k) && !memcmp(log_ring, s.p + k, s.n - k);
 }
 
 // fn runs after every append, to serve readers the ring would otherwise overtake
@@ -145,14 +146,6 @@ uint64_t log_end(void)
 	return ring_head;
 }
 
-static long long log_now_ms(void)
-{
-	struct timespec ts;
-
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
-}
-
 static void log_set_nonblock(void)
 {
 	int fl = fcntl(log_fd, F_GETFL);
@@ -163,7 +156,7 @@ static void log_set_nonblock(void)
 
 void log_batch_begin(void)
 {
-	log_wait_until = log_now_ms() + LOG_BATCH_MS;
+	log_wait_until = mono_ms() + LOG_BATCH_MS;
 	log_stalled = 0;
 }
 
@@ -218,7 +211,7 @@ static ssize_t log_push(const char *buf, size_t len, int wait)
 			return -1;
 		if (!wait)
 			break;
-		now = log_now_ms();
+		now = mono_ms();
 		if (log_stalled || now >= log_wait_until)
 			break;
 		if (!deadline) {
@@ -292,12 +285,8 @@ static int fitted(int ret, int at, size_t cap)
 
 static long long log_elapsed_ms(void)
 {
-	struct timespec now;
-	long long ms;
+	long long ms = mono_ms_since(&log_start);
 
-	clock_gettime(CLOCK_MONOTONIC, &now);
-	ms = (long long)(now.tv_sec - log_start.tv_sec) * 1000 +
-	     (now.tv_nsec - log_start.tv_nsec) / 1000000;
 	return ms < 0 ? 0 : ms;
 }
 
@@ -378,12 +367,12 @@ static void log_out(int key, long long ms, const char *buf, int p, int n)
 		log_dropped++;
 }
 
-static uint32_t body_hash(int key, const char *s, size_t n)
+static uint32_t body_hash(int key, str s)
 {
 	uint32_t h = 2166136261u ^ (uint32_t)key;
 
-	while (n--)
-		h = (h ^ (uint8_t)*s++) * 16777619u;
+	while (s.n--)
+		h = (h ^ (uint8_t)*s.p++) * 16777619u;
 	return h;
 }
 
@@ -392,10 +381,10 @@ static struct seen *seen_back(uint32_t back)
 	return &seen[(seen_n - back) & (LOG_SEEN - 1)];
 }
 
-static int seen_is(const struct seen *e, int key, uint32_t h, const char *s, size_t n)
+static int seen_is(const struct seen *e, int key, uint32_t h, str s)
 {
-	return e->key == key && e->hash == h && e->len == n && e->at >= ring_tail &&
-	       ring_eq(e->at, s, n);
+	return e->key == key && e->hash == h && e->len == s.n && e->at >= ring_tail &&
+	       ring_eq(e->at, s);
 }
 
 static void log_emit(int key, long long ms, const char *buf, int p, int n, uint32_t h)
@@ -427,7 +416,7 @@ static void log_again(const struct seen *s, long long ms)
 	ring_get(e.at, buf + p, n);
 	buf[p + n - 1] = '\n';
 	if (n != e.len)
-		e.hash = body_hash(e.key, buf + p, n);
+		e.hash = body_hash(e.key, (str){ buf + p, n });
 	log_emit(e.key, ms, buf, p, p + (int)n, e.hash);
 }
 
@@ -498,27 +487,26 @@ static int seen_twice(uint32_t len)
 
 // a line repeats once logged again. a longer block repeats once logged twice in a row,
 // so a line that only recurs is never held back
-static uint32_t rep_find(int key, uint32_t h, const char *s, size_t n)
+static uint32_t rep_find(int key, uint32_t h, str s)
 {
-	if (seen_n && seen_is(seen_back(1), key, h, s, n))
+	if (seen_n && seen_is(seen_back(1), key, h, s))
 		return 1;
 	for (uint32_t len = 2; len <= LOG_REPEAT && 2 * len <= seen_n; len++)
-		if (seen_is(seen_back(len), key, h, s, n) && seen_twice(len))
+		if (seen_is(seen_back(len), key, h, s) && seen_twice(len))
 			return len;
 	return 0;
 }
 
 long long log_due(void)
 {
-	long long due, now;
+	long long due;
 
 	if (!rep_pos && !rep_count)
 		return -1;
 	due = rep_pos ? hold_due : rep_due;
 	if (rep_pos && rep_count && rep_due < due)
 		due = rep_due;
-	now = log_now_ms();
-	return due > now ? due - now : 0;
+	return ms_until(due, mono_ms());
 }
 
 void log_tick(void)
@@ -527,7 +515,7 @@ void log_tick(void)
 
 	if (!rep_pos && !rep_count)
 		return;
-	now = log_now_ms();
+	now = mono_ms();
 	if (rep_pos && now >= hold_due) {
 		rep_break();
 		return;
@@ -544,9 +532,9 @@ void ninit_log(int level, const char *fmt, ...)
 	char buf[LOG_LINE];
 	int nocon = level & LOG_NOCON, n, p, ret, key;
 	long long ms = log_elapsed_ms();
-	size_t len;
 	uint32_t h;
 	va_list ap;
+	str body;
 
 	level &= ~LOG_NOCON;
 	if ((unsigned)level >= LOG_N)
@@ -563,12 +551,12 @@ void ninit_log(int level, const char *fmt, ...)
 	buf[n++] = '\n';
 
 	key = level | nocon;
-	len = (size_t)(n - p);
-	h = body_hash(key, buf + p, len);
-	if (rep_len && !seen_is(seen_back(rep_len - rep_pos), key, h, buf + p, len))
+	body = (str){ buf + p, (size_t)(n - p) };
+	h = body_hash(key, body);
+	if (rep_len && !seen_is(seen_back(rep_len - rep_pos), key, h, body))
 		rep_break();
 	if (!rep_len)
-		rep_len = rep_find(key, h, buf + p, len);
+		rep_len = rep_find(key, h, body);
 	if (!rep_len) {
 		log_emit(key, ms, buf, p, n, h);
 		return;
@@ -576,7 +564,7 @@ void ninit_log(int level, const char *fmt, ...)
 
 	// held until the repetition completes, logged after all if it does not
 	if (!rep_pos && rep_len > 1)
-		hold_due = log_now_ms() + LOG_HOLD_MS;
+		hold_due = mono_ms() + LOG_HOLD_MS;
 	hold_ms[rep_pos++] = ms;
 	if (rep_pos < rep_len)
 		return;
@@ -584,23 +572,17 @@ void ninit_log(int level, const char *fmt, ...)
 	rep_ms = ms;
 	if (!rep_count++) {
 		memcpy(first_ms, hold_ms, rep_len * sizeof(*hold_ms));
-		rep_due = log_now_ms() + repeat_ms[rep_backoff];
+		rep_due = mono_ms() + repeat_ms[rep_backoff];
 	}
 }
 
-void log_raw(int level, const char *buf, size_t len)
+void log_raw(int level, str text)
 {
-	const char *p = buf, *end = buf + len;
+	while (text.n) {
+		str line = str_cut(&text, '\n');
 
-	while (p < end) {
-		const char *nl = memchr(p, '\n', (size_t)(end - p));
-		size_t n = nl ? (size_t)(nl - p) : (size_t)(end - p);
-
-		if (n)
-			ninit_log(level, "%.*s", (int)n, p);
-		if (!nl)
-			break;
-		p = nl + 1;
+		if (line.n)
+			ninit_log(level, "%.*s", (int)line.n, line.p);
 	}
 }
 

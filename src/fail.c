@@ -1,6 +1,7 @@
 #include "fail.h"
 #include "logging.h"
 #include "ngraph.h"
+#include "../help/time.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -79,7 +80,7 @@ void fail_describe(int status, char *buf, size_t cap)
 }
 
 enum fail_act fail_service(const void *map, uint32_t i, int status, unsigned attempt,
-			   unsigned tries, const char *tail, size_t tail_len)
+			   unsigned tries, str tail)
 {
 	const struct ng_svc *s = &ng_svcs(map)[i];
 	const char *name = ng_name(map, i);
@@ -93,8 +94,8 @@ enum fail_act fail_service(const void *map, uint32_t i, int status, unsigned att
 	}
 
 	log_err("%s: failed %u time%s (%s)", name, attempt, plural_s(attempt), how);
-	if (tail_len)
-		log_raw(LOG_FAIL, tail, tail_len);
+	if (tail.n)
+		log_raw(LOG_FAIL, tail);
 
 	// restart covers supervision after readiness
 	if (ng_restart(map, i))
@@ -210,13 +211,13 @@ static void cloexec_range(unsigned lo, unsigned hi)
 		fcntl((int)fd, F_SETFD, FD_CLOEXEC);
 }
 
-void ninit_oom_score_adj(const char *v, size_t len)
+void ninit_oom_score_adj(str v)
 {
 	int fd = open("/proc/self/oom_score_adj", O_WRONLY | O_CLOEXEC);
 
 	if (fd < 0)
 		return;
-	(void)!write(fd, v, len);
+	(void)!write(fd, v.p, v.n);
 	close(fd);
 }
 
@@ -248,14 +249,6 @@ static enum emerg_state emerg_conf;
 static int emerg_greeted;
 static unsigned emerg_noexec;
 static long long emerg_retry_at;
-
-static long long emerg_now_ms(void)
-{
-	struct timespec ts;
-
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
-}
 
 static int emerg_console(void)
 {
@@ -389,7 +382,7 @@ static pid_t emerg_spawn(int con, int vt, int barrier, int auth)
 	ninit_cloexec_except(-1);
 
 	// oom exemption must not reach whatever is run from this shell
-	ninit_oom_score_adj("0\n", 2);
+	ninit_oom_score_adj(STR("0\n"));
 
 	// pid 1 may have dropped umask to 0
 	(void)!chdir("/");
@@ -528,18 +521,9 @@ static int emerg_start(void)
 	emerg_conf = EMERG_EXEC_UNKNOWN;
 	fcntl(bar[0], F_SETFL, O_NONBLOCK);
 	emerg_bar = bar[0];
-	emerg_conf_at = emerg_now_ms() + EMERG_EXEC_MS;
+	emerg_conf_at = mono_ms() + EMERG_EXEC_MS;
 
 	return 0;
-}
-
-static long long emerg_uptime_ms(void)
-{
-	struct timespec now;
-
-	clock_gettime(CLOCK_MONOTONIC, &now);
-	return (long long)(now.tv_sec - emerg_at.tv_sec) * 1000 +
-	       (now.tv_nsec - emerg_at.tv_nsec) / 1000000;
 }
 
 static void emerg_restart(void)
@@ -551,32 +535,24 @@ static void emerg_restart(void)
 		log_err("shell: giving up after %u attempts", emerg_fail);
 		return;
 	}
-	emerg_retry_at = emerg_now_ms() + EMERG_RETRY_MS;
+	emerg_retry_at = mono_ms() + EMERG_RETRY_MS;
 	log_err("shell: not running, retrying in %d ms", EMERG_RETRY_MS);
 }
 
 long long fail_emergency_due(void)
 {
-	long long now = emerg_now_ms(), best = -1, d;
+	long long now = mono_ms(), best = -1;
 
-	if (emerg_conf_at) {
-		best = emerg_conf_at - now;
-		if (best < 0)
-			best = 0;
-	}
-	if (emerg_retry_at && !emerg_gone) {
-		d = emerg_retry_at - now;
-		if (d < 0)
-			d = 0;
-		if (best < 0 || d < best)
-			best = d;
-	}
+	if (emerg_conf_at)
+		best = ms_until(emerg_conf_at, now);
+	if (emerg_retry_at && !emerg_gone)
+		best = ms_sooner(best, ms_until(emerg_retry_at, now));
 	return best;
 }
 
 void fail_emergency_tick(void)
 {
-	if (emerg_conf_at && emerg_now_ms() >= emerg_conf_at) {
+	if (emerg_conf_at && mono_ms() >= emerg_conf_at) {
 		emerg_conf_at = 0;
 		log_warn("shell: no exec status after %d s, state unknown",
 			 EMERG_EXEC_MS / 1000);
@@ -585,7 +561,7 @@ void fail_emergency_tick(void)
 
 	if (!emerg_retry_at || emerg_gone)
 		return;
-	if (emerg_now_ms() < emerg_retry_at)
+	if (mono_ms() < emerg_retry_at)
 		return;
 	emerg_retry_at = 0;
 	if (emerg_pid > 0)
@@ -619,7 +595,7 @@ int fail_emergency_reaped(pid_t pid, int status)
 
 	fail_emergency_report();
 	emerg_bar_close();
-	ms = emerg_uptime_ms();
+	ms = mono_ms_since(&emerg_at);
 	describe(status, how, sizeof(how));
 
 	if (ms >= EMERG_FAST_MS) {

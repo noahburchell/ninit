@@ -8,6 +8,7 @@
 #include "pidmap.h"
 #include "spawn.h"
 #include "state.h"
+#include "../help/time.h"
 
 #include <errno.h>
 #include <signal.h>
@@ -26,6 +27,11 @@ static unsigned retry_delay_ms(uint32_t i)
 	unsigned d = ng_pol(map, i)->retry_ms;
 
 	return d < RETRY_MIN_MS ? RETRY_MIN_MS : d;
+}
+
+static str tail_of(const struct run *r)
+{
+	return (str){ r->tail, r->tail_len };
 }
 
 void service_failed(uint32_t i, int status)
@@ -48,8 +54,7 @@ void service_failed(uint32_t i, int status)
 
 	if (r->attempt < UINT8_MAX)
 		r->attempt++;
-	act = fail_service(map, i, status, r->attempt, ng_start_tries(map, i),
-			   r->tail, r->tail_len);
+	act = fail_service(map, i, status, r->attempt, ng_start_tries(map, i), tail_of(r));
 
 	switch (act) {
 	case FAIL_RETRY:
@@ -77,7 +82,7 @@ static void give_up(uint32_t i, int status)
 	unsigned tries = ng_start_tries(map, i);
 	char why[160];
 
-	if (fail_service(map, i, status, tries, tries, r->tail, r->tail_len) == FAIL_SHELL) {
+	if (fail_service(map, i, status, tries, tries, tail_of(r)) == FAIL_SHELL) {
 		poison(i);
 		snprintf(why, sizeof(why), "boot: cannot continue without %s", ng_name(map, i));
 		fail_emergency_shell(why);
@@ -119,7 +124,7 @@ static void restart_schedule(uint32_t i, int status, int was_up)
 			 ng_name(map, i), how, alive, d);
 
 	if (first && r->tail_len)
-		log_raw(LOG_WARN, r->tail, r->tail_len);
+		log_raw(LOG_WARN, tail_of(r));
 }
 
 void start_failed(uint32_t i, int status)
@@ -201,15 +206,9 @@ long long restarts_due(void)
 
 	for (k = 0; k < n_live; k++) {
 		struct run *r = &runs[live[k]];
-		long long d;
 
-		if (!r->restart_at)
-			continue;
-		d = r->restart_at - now;
-		if (d < 0)
-			d = 0;
-		if (best < 0 || d < best)
-			best = d;
+		if (r->restart_at)
+			best = ms_sooner(best, ms_until(r->restart_at, now));
 	}
 
 	return best;
@@ -222,15 +221,9 @@ long long starts_due(void)
 
 	for (k = 0; k < n_live; k++) {
 		struct run *r = &runs[live[k]];
-		long long d;
 
-		if (!r->starting || r->timedout)
-			continue;
-		d = r->started + ng_start_ms(map, live[k]) - now;
-		if (d < 0)
-			d = 0;
-		if (best < 0 || d < best)
-			best = d;
+		if (r->starting && !r->timedout)
+			best = ms_sooner(best, ms_until(r->started + ng_start_ms(map, live[k]), now));
 	}
 
 	return best;
@@ -292,7 +285,7 @@ static void child_exited(uint32_t i, int status)
 			kill_group(i);
 			drain_out(i, DRAIN_FINAL_CHUNKS, 0);
 			if (r->tail_len)
-				log_raw(LOG_WARN, r->tail, r->tail_len);
+				log_raw(LOG_WARN, tail_of(r));
 			close_fds(i);
 			poison_deps(i);
 		}

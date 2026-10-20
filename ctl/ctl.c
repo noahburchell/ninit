@@ -1,4 +1,5 @@
 #include "ctl.h"
+#include "../help/io.h"
 #include "../src/nctl.h"
 #include "../src/ngraph.h"
 
@@ -241,23 +242,6 @@ static int ctl_connect(void)
 		return -1;
 	}
 	return fd;
-}
-
-static int write_all(int fd, const char *p, size_t n)
-{
-	while (n) {
-		ssize_t k = write(fd, p, n);
-
-		if (k > 0) {
-			p += k;
-			n -= (size_t)k;
-			continue;
-		}
-		if (k < 0 && errno == EINTR)
-			continue;
-		return -1;
-	}
-	return 0;
 }
 
 int cmd_ctl(const char *verb, int argc, char **argv)

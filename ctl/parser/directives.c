@@ -237,7 +237,7 @@ void parse_src(struct src *s, const char *fname, char *body, size_t len)
 			die("%s/%s: type:%s has no commands to run",
 			    g_dir, fname, ng_typename(s->type));
 		// only a file with commands runs its #! interpreter, so only then must it exist
-		s->lang = lang_select(s, fname, body);
+		s->lang = lang_select(s, fname, (str){ body, len });
 		len = s->lang->store(s, body, len, line ? (size_t)(line - scratch) : len);
 		if (len > NG_MAX_SCRIPT)
 			die("%s/%s: script is %zu bytes%s, the maximum is %u", g_dir, fname, len,

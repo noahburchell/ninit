@@ -1,8 +1,6 @@
 #include "parser.h"
-#include "../util.h"
 
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
 
 #define CZ_DEPTH	32
@@ -311,14 +309,8 @@ static size_t sk_cmd(const char *s, size_t i, size_t n, int d, struct cz_out *e,
 			const char *nl = memchr(s + i, '\n', n - i);
 			size_t end = nl ? (size_t)(nl - s) : n;
 
-			if (e && bol && s[i + 1] == '%' && i >= e->code_off) {
-				size_t w = end;
-
-				while (w > i && (s[w - 1] == ' ' || s[w - 1] == '\t' || s[w - 1] == '\r'))
-					w--;
-				fprintf(stderr, "ninitctl: warning: %s/%s: '%.*s' follows a command, "
-					"treating it as a comment\n", g_dir, e->fname, (int)(w - i), s + i);
-			}
+			if (e && bol && s[i + 1] == '%' && i >= e->code_off)
+				late_directive(e->fname, (str){ s + i, end - i });
 			pend = tight = 0;
 			i = end;
 			continue;

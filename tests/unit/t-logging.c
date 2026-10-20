@@ -253,7 +253,7 @@ static void test_format(void)
 		char b[LOG_LINE + 1];
 		size_t n;
 
-		log_raw(LOG_FAIL, "x\n\ny\n", 5);
+		log_raw(LOG_FAIL, STR("x\n\ny\n"));
 		n = log_line(&at, b);
 		b[n] = '\0';
 		is_str(b, "[000.000] FAIL > x\n", "log_raw splits on newlines");
@@ -263,9 +263,9 @@ static void test_format(void)
 		is_int(log_line(&at, b), 0, "and nothing follows");
 	}
 	console_read(con, sizeof(con));
-	log_raw(LOG_NOTE, "tail", 4);
+	log_raw(LOG_NOTE, STR("tail"));
 	is_str(ring_last(), "[000.000] NOTE > tail\n", "log_raw takes text without a final newline");
-	log_raw(LOG_NOTE, "", 0);
+	log_raw(LOG_NOTE, STR(""));
 	is_str(ring_last(), "[000.000] NOTE > tail\n", "log_raw of nothing logs nothing");
 	fake_clock = 0;
 	console_read(con, sizeof(con));
@@ -568,17 +568,17 @@ static void test_console_stall(void)
 	log_batch_begin();
 	console_fill(0);
 
-	t0 = log_now_ms();
+	t0 = mono_ms();
 	ninit_log(LOG_NOTE, "stalled one");
-	t1 = log_now_ms();
+	t1 = mono_ms();
 	ok(t1 - t0 >= LOG_WRITE_MS - 5 && t1 - t0 < LOG_WRITE_MS + 200,
 	   "a full console is waited on for about %d ms (%lld)", LOG_WRITE_MS, t1 - t0);
 	is_int(log_dropped, 1, "the line it did not take is dropped and counted");
 
-	t0 = log_now_ms();
+	t0 = mono_ms();
 	for (int k = 0; k < 5; k++)
 		ninit_log(LOG_NOTE, "stalled more %d", k);
-	t1 = log_now_ms();
+	t1 = mono_ms();
 	ok(t1 - t0 < 50, "once stalled no further line waits (%lld ms)", t1 - t0);
 	is_int(log_dropped, 6, "each dropped line is counted");
 	has_str(ring_last(), "stalled more 4", "the ring kept the dropped lines");
@@ -607,10 +607,10 @@ static void test_console_stall(void)
 	// the batch budget caps the total wait across several lines
 	console_fill(0);
 	log_batch_begin();
-	log_wait_until = log_now_ms() + 30;
-	t0 = log_now_ms();
+	log_wait_until = mono_ms() + 30;
+	t0 = mono_ms();
 	ninit_log(LOG_NOTE, "short budget");
-	t1 = log_now_ms();
+	t1 = mono_ms();
 	ok(t1 - t0 < LOG_WRITE_MS, "a nearly spent batch waits less than %d ms (%lld)",
 	   LOG_WRITE_MS, t1 - t0);
 	console_drain();
@@ -674,7 +674,7 @@ static void test_console_partial(void)
 	// no wait left in the batch, the remainder is written before any later line
 	con_budget = 5;
 	log_batch_begin();
-	log_wait_until = log_now_ms();
+	log_wait_until = mono_ms();
 	ninit_log(LOG_NOTE, "%s", line);
 	ok(log_pending_fd() == con_w, "a line accepted in part with no wait left is pending");
 	con_budget = -1;
@@ -689,7 +689,7 @@ static void test_console_partial(void)
 	// a writable wakeup that writes nothing abandons the rest of the line
 	con_budget = 3;
 	log_batch_begin();
-	log_wait_until = log_now_ms();
+	log_wait_until = mono_ms();
 	ninit_log(LOG_NOTE, "%s", line);
 	con_budget = 0;
 	log_flush();
@@ -707,7 +707,7 @@ static void test_console_partial(void)
 		big[sizeof(big) - 1] = '\0';
 		con_budget = 0;
 		log_batch_begin();
-		log_wait_until = log_now_ms();
+		log_wait_until = mono_ms();
 		ninit_log(LOG_NOTE, "%s", big);
 		ok(log_pending_fd() < 0, "a line the console took nothing of is not pending");
 		is_int(log_dropped, 1, "and is dropped");

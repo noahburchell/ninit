@@ -1,4 +1,5 @@
 #include "util.h"
+#include "../help/io.h"
 #include "../src/ngraph.h"
 
 #include <errno.h>
@@ -163,7 +164,7 @@ char *slurp(const char *path, size_t *len)
 	struct stat st;
 	char *buf;
 	int fd;
-	ssize_t got, pos = 0;
+	ssize_t got;
 
 	fd = open(path, O_RDONLY | O_CLOEXEC);
 	if (fd < 0)
@@ -175,18 +176,13 @@ char *slurp(const char *path, size_t *len)
 		    (unsigned long long)st.st_size, NG_MAX_SRC);
 
 	buf = xmalloc((size_t)st.st_size + 1);
-	while (pos < st.st_size) {
-		got = read(fd, buf + pos, (size_t)st.st_size - pos);
-		if (got < 0)
-			die("read %s: %s", path, strerror(errno));
-		if (!got)
-			break;
-		pos += got;
-	}
+	got = read_full(fd, buf, (size_t)st.st_size);
+	if (got < 0)
+		die("read %s: %s", path, strerror(errno));
 	close(fd);
 
-	buf[pos] = '\0';
-	*len = (size_t)pos;
+	buf[got] = '\0';
+	*len = (size_t)got;
 	return buf;
 }
 

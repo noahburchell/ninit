@@ -12,9 +12,8 @@ int sh_lexed(const char *argv0)
 	static const char *const names[] = {
 		"sh", "bash", "dash", "ash", "ksh", "mksh", "oksh", "loksh", "yash", "posh",
 	};
-	const char *base = strrchr(argv0, '/');
+	const char *base = path_base(argv0);
 
-	base = base ? base + 1 : argv0;
 	for (size_t k = 0; k < sizeof(names) / sizeof(*names); k++)
 		if (!strcmp(base, names[k]))
 			return 1;
@@ -36,7 +35,7 @@ static const char *shell_check_argv(const struct src *s, char **argv, size_t cap
 
 	argv[k++] = argv0;
 	// -n never runs the shopt that turns extglob on, so bash would refuse its patterns
-	if (!strcmp(strrchr(NG_SHELL, '/') + 1, "bash")) {
+	if (!strcmp(path_base(NG_SHELL), "bash")) {
 		argv[k++] = dasho;
 		argv[k++] = extglob;
 	}

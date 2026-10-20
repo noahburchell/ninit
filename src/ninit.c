@@ -11,6 +11,7 @@
 #include "reap.h"
 #include "signals.h"
 #include "state.h"
+#include "../help/time.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -20,7 +21,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <time.h>
 #include <unistd.h>
 
 #define STALL_MS	10000
@@ -48,10 +48,7 @@ static long long boot_t0;
 
 long long now_ms(void)
 {
-	struct timespec ts;
-
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+	return mono_ms();
 }
 
 static void check_boot_done(void)
@@ -177,7 +174,7 @@ int main(int argc, char **argv)
 	cgroup_init();
 
 	// keep it off the oom victim list
-	ninit_oom_score_adj("-1000\n", 6);
+	ninit_oom_score_adj(STR("-1000\n"));
 
 	null_fd = open("/dev/null", O_RDWR | O_CLOEXEC | O_NOCTTY);
 	if (null_fd >= 0 && placeholder) {
@@ -221,7 +218,7 @@ int main(int argc, char **argv)
 
 	quiet_since = now_ms();
 	for (;;) {
-		long long wait, due;
+		long long wait;
 		nfds_t nfds = 1, k;
 		uint32_t start;
 		int rc;
@@ -305,25 +302,15 @@ int main(int argc, char **argv)
 		}
 
 		wait = n_active && !shutting_down ? STALL_MS : -1;
-		due = restarts_due();
-		if (due >= 0 && (wait < 0 || due < wait))
-			wait = due;
-		due = starts_due();
-		if (due >= 0 && (wait < 0 || due < wait))
-			wait = due;
-		due = fail_emergency_due();
-		if (due >= 0 && (wait < 0 || due < wait))
-			wait = due;
-		due = ctl_due();
-		if (due >= 0 && (wait < 0 || due < wait))
-			wait = due;
-		due = log_due();
-		if (due >= 0 && (wait < 0 || due < wait))
-			wait = due;
-		if (degraded && (wait < 0 || wait > DEGRADED_POLL_MS))
-			wait = DEGRADED_POLL_MS;
-		if (sfd < 0 && (wait < 0 || wait > SIGNAL_POLL_MS))
-			wait = SIGNAL_POLL_MS;
+		wait = ms_sooner(wait, restarts_due());
+		wait = ms_sooner(wait, starts_due());
+		wait = ms_sooner(wait, fail_emergency_due());
+		wait = ms_sooner(wait, ctl_due());
+		wait = ms_sooner(wait, log_due());
+		if (degraded)
+			wait = ms_sooner(wait, DEGRADED_POLL_MS);
+		if (sfd < 0)
+			wait = ms_sooner(wait, SIGNAL_POLL_MS);
 
 		rc = poll(pfds, nfds, (int)wait);
 		if (rc < 0) {

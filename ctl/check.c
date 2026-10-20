@@ -1,6 +1,7 @@
 #include "init.h"
 #include "parser/parser.h"
 #include "util.h"
+#include "../help/time.h"
 #include "../src/ngraph.h"
 
 #include <errno.h>
@@ -36,14 +37,6 @@ static void print_failure(const char *dir, const char *name, char *msg)
 			fprintf(stderr, "ninitctl: %s/%s: %s\n", dir, name, q);
 		q = nl;
 	}
-}
-
-static long long mono_ms(void)
-{
-	struct timespec ts;
-
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
 struct slot {

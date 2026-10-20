@@ -6,9 +6,9 @@
 #include <stdint.h>
 #include <string.h>
 
-static int perl_claims(const char *base, size_t len)
+static int perl_claims(str base)
 {
-	return claims_versioned(base, len, "perl");
+	return claims_versioned(base, STR("perl"));
 }
 
 #define PL_TAG		128
@@ -62,11 +62,15 @@ static size_t pl_ident(const char *s, size_t i)
 	}
 }
 
-static int pl_is(const char *w, size_t l, const char *list)
+static int pl_is(str w, const char *list)
 {
-	for (const char *p = list; *p; p += strlen(p) + 1)
-		if (strlen(p) == l && !memcmp(w, p, l))
+	for (const char *p = list; *p;) {
+		size_t l = strlen(p);
+
+		if (str_eq(w, (str){ p, l }))
 			return 1;
+		p += l + 1;
+	}
 	return 0;
 }
 
@@ -282,7 +286,7 @@ static size_t pl_strip(char *s, size_t n, size_t code, const char *fname)
 					memmove(s + j, s + i, e - i);
 					j += e - i;
 				} else if (bol && s[i + 1] == '%') {
-					late_directive(fname, s + i, e - i);
+					late_directive(fname, (str){ s + i, e - i });
 				}
 				pend = 0;
 				i = e;
@@ -391,13 +395,13 @@ static size_t pl_strip(char *s, size_t n, size_t code, const char *fname)
 					goto bail;
 				ex = PL_OPER;
 			} else if (pl_word((unsigned char)c)) {
-				const char *w = s + i;
 				int parts = 0, mods = 0;
-				size_t l, k;
+				size_t k;
+				str w;
 
 				e = pl_ident(s, i);
-				l = e - i;
-				if ((s[e] == '\'' && pl_word((unsigned char)s[e + 1])) || pl_is(w, l, "__END__\0__DATA__\0"))
+				w = (str){ s + i, e - i };
+				if ((s[e] == '\'' && pl_word((unsigned char)s[e + 1])) || pl_is(w, "__END__\0__DATA__\0"))
 					goto bail;
 				if (arrow) {
 					arrow = 0;
@@ -410,11 +414,11 @@ static size_t pl_strip(char *s, size_t n, size_t code, const char *fname)
 					ex = PL_OPER;
 					goto copy;
 				}
-				if (pl_is(w, l, "q\0qq\0qw\0qx\0"))
+				if (pl_is(w, "q\0qq\0qw\0qx\0"))
 					parts = 1;
-				else if (pl_is(w, l, "m\0qr\0"))
+				else if (pl_is(w, "m\0qr\0"))
 					parts = mods = 1;
-				else if (pl_is(w, l, "s\0tr\0y\0")) {
+				else if (pl_is(w, "s\0tr\0y\0")) {
 					parts = 2; mods = 1;
 				}
 				if (parts) {
@@ -427,18 +431,18 @@ static size_t pl_strip(char *s, size_t n, size_t code, const char *fname)
 					if (e == SIZE_MAX || pl_hidden_hd(s, i, e))
 						goto bail;
 					ex = PL_OPER;
-				} else if (ex == PL_STMT && pl_is(w, l, "format\0")) {
+				} else if (ex == PL_STMT && pl_is(w, "format\0")) {
 					goto bail;
-				} else if (pl_is(w, l, "__FILE__\0__LINE__\0__PACKAGE__\0__SUB__\0")) {
+				} else if (pl_is(w, "__FILE__\0__LINE__\0__PACKAGE__\0__SUB__\0")) {
 					ex = PL_OPER;
-				} else if (pl_is(w, l, opwords) || pl_is(w, l, termwords) ||
-					   (l == 1 && *w == 'x' && ex == PL_OPER)) {
-					fhword = pl_is(w, l, "print\0printf\0say\0exec\0system\0sort\0");
+				} else if (pl_is(w, opwords) || pl_is(w, termwords) ||
+					   (str_eq(w, STR("x")) && ex == PL_OPER)) {
+					fhword = pl_is(w, "print\0printf\0say\0exec\0system\0sort\0");
 					ex = PL_TERM;
 				} else {
 					// the block after else, BEGIN or the name of a sub ends a statement
-					block = pl_is(w, l, blockwords) || sb;
-					sub = l == 3 && !memcmp(w, "sub", 3);
+					block = pl_is(w, blockwords) || sb;
+					sub = str_eq(w, STR("sub"));
 					ex = PL_WORD;
 				}
 			} else if (c == '-' && s[e] == '>') {
@@ -533,17 +537,7 @@ static const char *perl_check_argv(const struct src *s, char **argv, size_t cap)
 // a first line flushes stdout per line for the log and names the script, #line restores line 1
 static void perl_exec_args(struct src *s)
 {
-	static const char head[] = "$| = 1; $0 = '";
-	char *pre = xmalloc(sizeof(head) + 2 * strlen(s->name) + 4), *p = pre;
-
-	memcpy(p, head, sizeof(head) - 1);
-	p += sizeof(head) - 1;
-	for (const char *c = s->name; *c; c++) {
-		if (*c == '\'' || *c == '\\')
-			*p++ = '\\';
-		*p++ = *c;
-	}
-	memcpy(p, "';", 3);
+	char *pre = escape_name(STR("$| = 1; $0 = '"), s->name, '\'', STR("';"));
 
 	strv_push(&s->exec_pre, s->interp);
 	for (uint32_t k = 0; k < s->iargs.n; k++)

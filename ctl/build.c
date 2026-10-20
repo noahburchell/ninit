@@ -52,8 +52,7 @@ int cmd_init(int argc, char **argv)
 	const char *dir = NG_DEFAULT_DIR, *out = NULL;
 	char outbuf[4096];
 	struct build b = { 0 };
-	const char *out_base;
-	size_t out_base_len;
+	str out_base;
 	int k, custom_dir = 0, dry = 0, nocheck = 0, srclock;
 
 	// argv is already past argv[0] and the subcommand
@@ -100,11 +99,11 @@ int cmd_init(int argc, char **argv)
 		}
 	}
 
-	out_base = output_base(dir, out, &out_base_len);
+	out_base = output_base(dir, out);
 
 	srclock = lock_dir(dir);
 
-	if (!out_base) {
+	if (!out_base.p) {
 		char old[4104];
 
 		if (snprintf(old, sizeof(old), "%s.old", out) >= (int)sizeof(old))
@@ -114,7 +113,7 @@ int cmd_init(int argc, char **argv)
 	}
 
 	b.dir = dir;
-	read_sources(&b, out_base, out_base_len);
+	read_sources(&b, out_base);
 	if (!nocheck)
 		check_syntax(b.srcs, b.n, dir);
 	link_graph(&b);

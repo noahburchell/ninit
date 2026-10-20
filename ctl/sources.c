@@ -16,12 +16,12 @@ static int keep(const struct dirent *d)
 	return d->d_name[0] != '.';
 }
 
-static int is_artifact(const char *name, const char *base, size_t base_len)
+static int is_artifact(const char *name, str base)
 {
-	if (!base || strncmp(name, base, base_len))
+	if (!base.p || strncmp(name, base.p, base.n))
 		return 0;
-	return !name[base_len] || !strcmp(name + base_len, ".old") ||
-	       !strcmp(name + base_len, ".tmp");
+	return !name[base.n] || !strcmp(name + base.n, ".old") ||
+	       !strcmp(name + base.n, ".tmp");
 }
 
 static int cmp_dirent(const struct dirent **a, const struct dirent **b)
@@ -29,7 +29,7 @@ static int cmp_dirent(const struct dirent **a, const struct dirent **b)
 	return strcmp((*a)->d_name, (*b)->d_name);
 }
 
-void read_sources(struct build *b, const char *out_base, size_t out_base_len)
+void read_sources(struct build *b, str out_base)
 {
 	const char *dir = b->dir, *why;
 	struct dirent **ents;
@@ -54,9 +54,8 @@ void read_sources(struct build *b, const char *out_base, size_t out_base_len)
 		size_t len;
 		mode_t sm;
 
-		int is_out = is_artifact(ents[k]->d_name, out_base, out_base_len);
-		int is_dg = is_artifact(ents[k]->d_name, "depgraph", 8) ||
-			    ng_reserved_name(ents[k]->d_name);
+		int is_out = is_artifact(ents[k]->d_name, out_base);
+		int is_dg = ng_reserved_name(ents[k]->d_name);
 
 		if (snprintf(path, sizeof(path), "%s/%s", dir, ents[k]->d_name) >= (int)sizeof(path))
 			die("%s/%s: path is too long", dir, ents[k]->d_name);
@@ -66,7 +65,7 @@ void read_sources(struct build *b, const char *out_base, size_t out_base_len)
 		if (is_out || is_dg) {
 			if (!S_ISREG(st.st_mode) || !graph_image(path)) {
 				// the build replaces the output and its .old, never its .tmp
-				if (is_out && strcmp(ents[k]->d_name + out_base_len, ".tmp"))
+				if (is_out && strcmp(ents[k]->d_name + out_base.n, ".tmp"))
 					die("%s/%s: the output would replace this, and it is not "
 					    "a depgraph", dir, ents[k]->d_name);
 				if (!S_ISDIR(st.st_mode))

@@ -253,7 +253,7 @@ void save_hwclock(void)
 		sigprocmask(SIG_SETMASK, &none, NULL);
 		for (int sig = 1; sig < NSIG; sig++)
 			sigaction(sig, &dfl, NULL);
-		ninit_oom_score_adj("0\n", 2);
+		ninit_oom_score_adj(STR("0\n"));
 		umask(022);
 		ninit_cloexec_except(-1);
 		execve("/sbin/hwclock", argv, envp);

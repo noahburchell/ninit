@@ -113,12 +113,13 @@ static int shim_symlink(const char *a, const char *b)
 	return symlink(a, b);
 }
 
+// util.c is the first to include help/io.h, so its write_all takes the shim from here
 #define exit shim_exit
+#define write shim_write
 #include "../../ctl/util.c"
 #undef exit
 #define mkostemp shim_mkostemp
 #define fchmod shim_fchmod
-#define write shim_write
 #define fsync shim_fsync
 #define link shim_link
 #define rename shim_rename

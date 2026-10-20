@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../help/str.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -20,7 +22,7 @@ void log_batch_begin(void);
 void log_reopen_console(void);
 void log_adopt_fd(int fd);
 void ninit_log(int level, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
-void log_raw(int level, const char *buf, size_t len);
+void log_raw(int level, str text);
 void print_welcome(void);
 
 uint64_t log_first(void);
