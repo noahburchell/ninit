@@ -251,8 +251,8 @@ static void test_atomic(void)
 	fail("fsync dir", 0, -1);
 	rc = capture(call_atomic, &a);
 	fail(NULL, 0, 0);
-	snprintf(want, sizeof(want), "ninitctl: %s/depgraph: written, but fsync %s failed: Input/output error\n",
-		 dir, dir);
+	snprintf(want, sizeof(want), "ninitctl: %s/depgraph: written, but fsync %s failed: %s\n",
+		 dir, dir, strerror(EIO));
 	ok(rc == 1001 && !strcmp(errtext, want), "a directory that cannot be synced is reported after the write");
 	slurp_to(path, got, sizeof(got));
 	is_str(got, "third", "the graph is in place");

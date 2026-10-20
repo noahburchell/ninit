@@ -792,7 +792,7 @@ static void fake_script(char *path, size_t cap, const char *dir, const char *nam
 
 static void test_check(void)
 {
-	char dir[] = "/tmp/ninit-t-build-check.XXXXXX", path[512];
+	char dir[] = "/tmp/ninit-t-build-check.XXXXXX", path[512], want[128];
 	static char name[] = "svc";
 	struct src s = { .name = name, .lang = &lang_perl, .script = "print 1;\n" };
 	sigset_t chld;
@@ -858,7 +858,8 @@ static void test_check(void)
 	wait_fail = 1;
 	rc = capture(call_check, &s);
 	wait_fail = 0;
-	if (!ok(rc == 1001 && strstr(errtext, "ninitctl: warning: wait: No child processes\n") &&
+	snprintf(want, sizeof(want), "ninitctl: warning: wait: %s\n", strerror(ECHILD));
+	if (!ok(rc == 1001 && strstr(errtext, want) &&
 		strstr(errtext, "ninitctl: 1 service script could not be checked, use --no-check to skip\n"),
 		"a check that cannot be waited for is not checked"))
 		tap_diag("%d %s", rc, errtext);

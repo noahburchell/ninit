@@ -150,7 +150,11 @@ sleep 1
 is "$(st leaf)" down "a restart waits while a deps uptime prerequisite is down"
 ninitctl start base >/dev/null
 st_is leaf up 5000 "and is made once the prerequisite is up"
-ok $([ "$(cat /run/leaf.pid)" != "$pid" ]; echo $?) "with a new process"
+# up is when the shell execs, the script writes its pid after that
+new_leaf() {
+	[ "$(cat /run/leaf.pid)" != "$pid" ]
+}
+check "with a new process" wait_for 3000 new_leaf
 EOF
 q_boot
 q_import

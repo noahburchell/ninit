@@ -249,8 +249,8 @@ static void test_swap(void)
 	stop_swap();
 	snprintf(expect, sizeof(expect), "%s\n/dev/sdb1\n", longp);
 	is_str(swapped, expect, "a path of 699 bytes reaches swapoff whole");
-	ok(logcap_count("WARN > shutdown: swapoff /dev/sdb1: Device or resource busy") == 1,
-	   "a swapoff failure is a warning");
+	snprintf(expect, sizeof(expect), "WARN > shutdown: swapoff /dev/sdb1: %s", strerror(EBUSY));
+	ok(logcap_count(expect) == 1, "a swapoff failure is a warning");
 	swap_busy = NULL;
 
 	put_file(path, "Filename Type Size Used Priority\n\nnoseparator\n");
@@ -291,7 +291,7 @@ static void add_mnt(const char *path, int ro_fails, int umount_ok)
 
 static void test_remount(void)
 {
-	char path[] = "/tmp/ninit-t-shutdown-mounts.XXXXXX";
+	char path[] = "/tmp/ninit-t-shutdown-mounts.XXXXXX", expect[128];
 	int fd = mkstemp(path);
 
 	close(fd);
@@ -317,11 +317,11 @@ static void test_remount(void)
 	ok(mnts[4].ro && n_sync == 1 &&
 	   logcap_count("WARN > shutdown: /mnt/a b: remounted read-only on retry") == 1,
 	   "one that can be neither is remounted once more after a sync, its escape undone");
-	ok(mnts[5].detached &&
-	   logcap_count("FAIL > shutdown: /data: still mounted writable (Device or resource busy), detaching") == 1,
-	   "one that fails that too is detached and reported");
-	ok(!mnts[0].ro && logcap_count("FAIL > shutdown: /: remount read-only failed: Device or resource busy") == 1,
-	   "a root that stays writable is reported");
+	snprintf(expect, sizeof(expect), "FAIL > shutdown: /data: still mounted writable (%s), detaching",
+		 strerror(EBUSY));
+	ok(mnts[5].detached && logcap_count(expect) == 1, "one that fails that too is detached and reported");
+	snprintf(expect, sizeof(expect), "FAIL > shutdown: /: remount read-only failed: %s", strerror(EBUSY));
+	ok(!mnts[0].ro && logcap_count(expect) == 1, "a root that stays writable is reported");
 	ok(!mnts[0].gone && !mnts[0].detached, "and never unmounted");
 
 	n_mnts = n_sync = n_remount = 0;

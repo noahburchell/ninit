@@ -55,9 +55,9 @@ Q_POLL=q_console_flow
 q_boot
 q_import
 q_poweroff_ok
-q_like "WARN > console: dropped [0-9]+ messages" "a stalled console drops lines and reports the count"
+q_like "WARN > console: dropped [0-9]+ messages?" "a stalled console drops lines and reports the count"
 q_has "after: after the stall" "logging resumes once the console drains"
-dropped=$(sed -n 's/.*console: dropped \([0-9]*\) messages.*/\1/p' "$Q/console.log" | awk '{ s += $1 } END { print s + 0 }')
+dropped=$(sed -n 's/.*console: dropped \([0-9]*\) message.*/\1/p' "$Q/console.log" | awk '{ s += $1 } END { print s + 0 }')
 shown=$(grep -c 'NOTE > flood: flood ' "$Q/console.log")
 t_ok $((dropped + shown < 3000)) "console: every flood line is either shown or counted as dropped ($shown shown, $dropped dropped)"
 partial=$(grep -E 'flood: flood [0-9]{4} ' "$Q/console.log" | grep -vcE 'flood: flood [0-9]{4} x{82}$')

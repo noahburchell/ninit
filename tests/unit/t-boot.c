@@ -203,11 +203,11 @@ static void test_load_graph(void)
 	p = put_graph("depgraph", g.map, g.len);
 	mmap_fail = 1;
 	m = load_graph(p, &why);
-	ok(!m && why && !strcmp(why, "Cannot allocate memory"), "a failed mapping names the error");
+	ok(!m && why && !strcmp(why, strerror(ENOMEM)), "a failed mapping names the error");
 	mmap_fail = 0;
 	read_fail = 1;
 	m = load_graph(p, &why);
-	ok(!m && why && !strcmp(why, "Input/output error"), "so does a failed read");
+	ok(!m && why && !strcmp(why, strerror(EIO)), "so does a failed read");
 	read_fail = 0;
 	read_eof = 1;
 	m = load_graph(p, &why);
