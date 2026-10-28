@@ -14,78 +14,86 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-static int same_dir(const char *a, const char *b)
-{
+static int same_dir(const char* a, const char* b) {
 	struct stat sa, sb;
 
-	return stat(a, &sa) == 0 && stat(b, &sb) == 0 &&
-	       sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino;
+	return stat(a, &sa) == 0 && stat(b, &sb) == 0
+	       && sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino;
 }
 
-int graph_image(const char *path)
-{
+int graph_image(const char* path) {
 	struct ng_hdr h;
 	struct stat st;
 	ssize_t k;
 	int fd = open(path, O_RDONLY | O_CLOEXEC);
 
-	if (fd < 0)
+	if(fd < 0) {
 		return 0;
-	if (fstat(fd, &st) < 0 || (uint64_t)st.st_size < sizeof(h)) {
+	}
+
+	if(fstat(fd, &st) < 0 || (uint64_t)st.st_size < sizeof(h)) {
 		close(fd);
 		return 0;
 	}
+
 	k = read(fd, &h, sizeof(h));
 	close(fd);
-	if (k != (ssize_t)sizeof(h))
+	if(k != (ssize_t)sizeof(h)) {
 		return 0;
+	}
 
 	return h.magic == NG_MAGIC && h.total_len == (uint32_t)st.st_size;
 }
 
 // outside the service directory the scan does not see the output, so it is checked here
-void refuse_nongraph(const char *path)
-{
+void refuse_nongraph(const char* path) {
 	struct stat st;
 
-	if (stat(path, &st) < 0)
+	if(stat(path, &st) < 0) {
 		return;
-	if (!S_ISREG(st.st_mode) || !graph_image(path))
+	}
+
+	if(!S_ISREG(st.st_mode) || !graph_image(path)) {
 		die("%s: the output would replace this, and it is not a depgraph", path);
+	}
 }
 
-int lock_dir(const char *path)
-{
+int lock_dir(const char* path) {
 	int fd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
 
-	if (fd < 0)
+	if(fd < 0) {
 		die("open %s: %s", path, strerror(errno));
-	if (flock(fd, LOCK_EX) < 0)
+	}
+
+	if(flock(fd, LOCK_EX) < 0) {
 		die("lock %s: %s", path, strerror(errno));
+	}
+
 	return fd;
 }
 
-static int same_fd_dir(int fd, const char *path)
-{
+static int same_fd_dir(int fd, const char* path) {
 	struct stat a, b;
 
-	return fstat(fd, &a) == 0 && stat(path, &b) == 0 &&
-	       a.st_dev == b.st_dev && a.st_ino == b.st_ino;
+	return fstat(fd, &a) == 0 && stat(path, &b) == 0
+	       && a.st_dev == b.st_dev && a.st_ino == b.st_ino;
 }
 
-void write_atomic(const char *path, const void *buf, size_t len, mode_t mode, int held)
-{
-	char tmp[8224], keep[8232], old[4104], parent[4104], *slash;
-	const char *dir, *base;
+void write_atomic(const char* path, const void* buf, size_t len, mode_t mode, int held) {
+	char tmp[8224], keep[8232], old[4104], parent[4104];
+	char* slash;
+	const char* dir;
+	const char* base;
 	size_t tl;
 	mode_t um;
 	int fd, dfd, owned = 0;
 
-	if (snprintf(parent, sizeof(parent), "%s", path) >= (int)sizeof(parent))
+	if(snprintf(parent, sizeof(parent), "%s", path) >= (int)sizeof(parent)) {
 		die("output path is too long: %s", path);
+	}
 
 	slash = strrchr(parent, '/');
-	if (slash) {
+	if(slash) {
 		*slash = '\0';
 		base = path + (slash - parent) + 1;
 		dir = *parent ? parent : "/";
@@ -94,12 +102,13 @@ void write_atomic(const char *path, const void *buf, size_t len, mode_t mode, in
 		dir = ".";
 	}
 
-	if (snprintf(tmp, sizeof(tmp), "%s/.%s.XXXXXX", dir, base) >= (int)sizeof(tmp) ||
-	    snprintf(old, sizeof(old), "%s.old", path) >= (int)sizeof(old))
+	if(snprintf(tmp, sizeof(tmp), "%s/.%s.XXXXXX", dir, base) >= (int)sizeof(tmp)
+	   || snprintf(old, sizeof(old), "%s.old", path) >= (int)sizeof(old)) {
 		die("output path is too long: %s", path);
+	}
 
 	// re-locking a directory this process already holds would deadlock
-	if (held >= 0 && same_fd_dir(held, dir)) {
+	if(held >= 0 && same_fd_dir(held, dir)) {
 		dfd = held;
 	} else {
 		dfd = lock_dir(dir);
@@ -110,71 +119,83 @@ void write_atomic(const char *path, const void *buf, size_t len, mode_t mode, in
 	umask(um);
 
 	fd = mkostemp(tmp, O_CLOEXEC);
-	if (fd < 0)
+	if(fd < 0) {
 		die("mkstemp %s: %s", tmp, strerror(errno));
-	if (fchmod(fd, mode & ~um) < 0) {
+	}
+
+	if(fchmod(fd, mode & ~um) < 0) {
 		unlink(tmp);
 		die("fchmod %s: %s", tmp, strerror(errno));
 	}
 
-	if (write_all(fd, buf, len) < 0) {
+	if(write_all(fd, buf, len) < 0) {
 		unlink(tmp);
 		die("write %s: %s", tmp, strerror(errno));
 	}
-	if (fsync(fd) < 0) {
+
+	if(fsync(fd) < 0) {
 		unlink(tmp);
 		die("fsync %s: %s", tmp, strerror(errno));
 	}
+
 	close(fd);
 
 	// .old is the boot fallback, so it is replaced in one rename and never removed first
 	tl = strlen(tmp);
 	memcpy(keep, tmp, tl);
 	memcpy(keep + tl, ".old", sizeof(".old"));
-	if (link(path, keep) == 0) {
-		if (rename(keep, old) < 0) {
+	if(link(path, keep) == 0) {
+		if(rename(keep, old) < 0) {
 			unlink(keep);
 			unlink(tmp);
 			die("rename %s -> %s: %s", keep, old, strerror(errno));
 		}
-	} else if (errno != ENOENT) {
+	} else if(errno != ENOENT) {
 		unlink(tmp);
 		die("link %s -> %s: %s", path, keep, strerror(errno));
 	}
 
-	if (rename(tmp, path) < 0) {
+	if(rename(tmp, path) < 0) {
 		unlink(tmp);
 		die("rename %s -> %s: %s", tmp, path, strerror(errno));
 	}
 
-	if (fsync(dfd) < 0)
+	if(fsync(dfd) < 0) {
 		die("%s: written, but fsync %s failed: %s", path, dir, strerror(errno));
-	if (owned)
+	}
+
+	if(owned) {
 		close(dfd);
+	}
 }
 
 // the basename of OUT when OUT is in DIR, the scan then knows the output and its .old by name
-str output_base(const char *dir, const char *out)
-{
+str output_base(const char* dir, const char* out) {
 	char outdir[4096];
-	char *slash;
-	const char *out_base;
+	char* slash;
+	const char* out_base;
 
-	if (snprintf(outdir, sizeof(outdir), "%s", out) >= (int)sizeof(outdir))
+	if(snprintf(outdir, sizeof(outdir), "%s", out) >= (int)sizeof(outdir)) {
 		usage_die("init: output path is too long: %s", out);
+	}
+
 	slash = strrchr(outdir, '/');
-	if (slash) {
+	if(slash) {
 		out_base = out + (slash - outdir) + 1;
-		if (slash == outdir)
+		if(slash == outdir) {
 			outdir[1] = '\0';
-		else
+		} else {
 			*slash = '\0';
+		}
 	} else {
 		out_base = out;
 		outdir[0] = '.';
 		outdir[1] = '\0';
 	}
-	if (!*out_base || !same_dir(dir, outdir))
+
+	if(!*out_base || !same_dir(dir, outdir)) {
 		return (str){ 0 };
+	}
+
 	return str_c(out_base);
 }

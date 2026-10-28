@@ -8,8 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 
-static void usage(FILE *f)
-{
+static void usage(FILE* f) {
 	fputs("usage: ninitctl COMMAND [OPTION]...\n"
 	      "\n"
 	      "configuration commands:\n"
@@ -34,65 +33,79 @@ static void usage(FILE *f)
 	      f);
 }
 
-static int takes_value(const char *a)
-{
-	return !strcmp(a, "-d") || !strcmp(a, "--dir") ||
-	       !strcmp(a, "-o") || !strcmp(a, "--out") || !strcmp(a, "--root") ||
-	       !strcmp(a, "-f") || !strcmp(a, "--file");
+static int takes_value(const char* a) {
+	return !strcmp(a, "-d") || !strcmp(a, "--dir")
+	       || !strcmp(a, "-o") || !strcmp(a, "--out") || !strcmp(a, "--root")
+	       || !strcmp(a, "-f") || !strcmp(a, "--file");
 }
 
-static int wants_help(int argc, char **argv)
-{
+static int wants_help(int argc, char** argv) {
 	int k;
 
-	for (k = 0; k < argc; k++) {
-		if (!strcmp(argv[k], "--"))
+	for(k = 0; k < argc; k++) {
+		if(!strcmp(argv[k], "--")) {
 			return 0;
-		if (takes_value(argv[k])) {
+		}
+
+		if(takes_value(argv[k])) {
 			k++;
 			continue;
 		}
-		if (!strcmp(argv[k], "-h") || !strcmp(argv[k], "--help"))
+
+		if(!strcmp(argv[k], "-h") || !strcmp(argv[k], "--help")) {
 			return 1;
+		}
 	}
+
 	return 0;
 }
 
-int main(int argc, char **argv)
-{
-	static const char *const ctl_verbs[] = { "status", "log", "start", "stop",
+int main(int argc, char** argv) {
+	static const char* const ctl_verbs[] = { "status", "log", "start", "stop",
 						 "restart", "resume", "reload" };
 	int rest = argc - 2;
-	char **args = argv + 2;
+	char** args = argv + 2;
 	size_t v;
 
-	if (argc < 2) {
+	if(argc < 2) {
 		usage(stderr);
 		return 2;
 	}
-	if (!strcmp(argv[1], "-h") || !strcmp(argv[1], "--help") || !strcmp(argv[1], "help")) {
+
+	if(!strcmp(argv[1], "-h") || !strcmp(argv[1], "--help") || !strcmp(argv[1], "help")) {
 		usage(stdout);
 		return 0;
 	}
 
-	if (wants_help(rest, args)) {
+	if(wants_help(rest, args)) {
 		usage(stdout);
 		return 0;
 	}
 
-	if (!strcmp(argv[1], "init"))
+	if(!strcmp(argv[1], "init")) {
 		return cmd_init(rest, args);
-	if (!strcmp(argv[1], "show"))
+	}
+
+	if(!strcmp(argv[1], "show")) {
 		return cmd_show(rest, args);
-	if (!strcmp(argv[1], "add"))
+	}
+
+	if(!strcmp(argv[1], "add")) {
 		return cmd_add(rest, args);
-	if (!strcmp(argv[1], "del"))
+	}
+
+	if(!strcmp(argv[1], "del")) {
 		return cmd_del(rest, args);
-	for (v = 0; v < sizeof(ctl_verbs) / sizeof(*ctl_verbs); v++)
-		if (!strcmp(argv[1], ctl_verbs[v]))
+	}
+
+	for(v = 0; v < sizeof(ctl_verbs) / sizeof(*ctl_verbs); v++) {
+		if(!strcmp(argv[1], ctl_verbs[v])) {
 			return cmd_ctl(ctl_verbs[v], rest, args);
+		}
+	}
 
 	fprintf(stderr, "ninitctl: unknown command '%s'\n", argv[1]);
 	usage(stderr);
+
 	return 2;
 }

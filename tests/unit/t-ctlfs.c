@@ -15,115 +15,119 @@
 
 static jmp_buf die_jb;
 
-[[noreturn]] static void shim_exit(int code)
-{
+[[noreturn]] static void shim_exit(int code) {
 	longjmp(die_jb, 1000 + code);
 }
 
 // the call that fails, by name, after fail_after calls succeed, fail_times times or -1 for ever
-static const char *fail_call;
+static const char* fail_call;
 static int fail_after, fail_times, n_symlink;
 
-static int failing(const char *call)
-{
-	if (!fail_call || strcmp(fail_call, call))
+static int failing(const char* call) {
+	if(!fail_call || strcmp(fail_call, call)) {
 		return 0;
-	if (fail_after > 0) {
+	}
+
+	if(fail_after > 0) {
 		fail_after--;
 		return 0;
 	}
-	if (!fail_times)
+
+	if(!fail_times) {
 		return 0;
-	if (fail_times > 0)
+	}
+
+	if(fail_times > 0) {
 		fail_times--;
+	}
+
 	return 1;
 }
 
-static void fail(const char *call, int after, int times)
-{
+static void fail(const char* call, int after, int times) {
 	fail_call = call;
 	fail_after = after;
 	fail_times = times;
 }
 
-static int shim_mkostemp(char *tmpl, int flags)
-{
-	if (failing("mkostemp")) {
+static int shim_mkostemp(char* tmpl, int flags) {
+	if(failing("mkostemp")) {
 		errno = EACCES;
 		return -1;
 	}
+
 	return mkostemp(tmpl, flags);
 }
 
-static int shim_fchmod(int fd, mode_t mode)
-{
-	if (failing("fchmod")) {
+static int shim_fchmod(int fd, mode_t mode) {
+	if(failing("fchmod")) {
 		errno = EPERM;
 		return -1;
 	}
+
 	return fchmod(fd, mode);
 }
 
-static ssize_t shim_write(int fd, const void *buf, size_t n)
-{
-	if (failing("write")) {
+static ssize_t shim_write(int fd, const void* buf, size_t n) {
+	if(failing("write")) {
 		errno = ENOSPC;
 		return -1;
 	}
+
 	// a short write, so the caller has to loop
 	return write(fd, buf, n > 3 ? 3 : n);
 }
 
-static int shim_fsync(int fd)
-{
+static int shim_fsync(int fd) {
 	struct stat st;
 
-	if (fstat(fd, &st) == 0 && failing(S_ISDIR(st.st_mode) ? "fsync dir" : "fsync")) {
+	if(fstat(fd, &st) == 0 && failing(S_ISDIR(st.st_mode) ? "fsync dir" : "fsync")) {
 		errno = EIO;
 		return -1;
 	}
+
 	return 0;
 }
 
-static int shim_link(const char *a, const char *b)
-{
-	if (failing("link")) {
+static int shim_link(const char* a, const char* b) {
+	if(failing("link")) {
 		errno = EPERM;
 		return -1;
 	}
+
 	return link(a, b);
 }
 
-static int shim_rename(const char *a, const char *b)
-{
-	if (failing("rename")) {
+static int shim_rename(const char* a, const char* b) {
+	if(failing("rename")) {
 		errno = EXDEV;
 		return -1;
 	}
+
 	return rename(a, b);
 }
 
-static int shim_symlink(const char *a, const char *b)
-{
+static int shim_symlink(const char* a, const char* b) {
 	n_symlink++;
-	if (failing("symlink")) {
+	if(failing("symlink")) {
 		errno = EEXIST;
 		return -1;
 	}
+
 	return symlink(a, b);
 }
 
 // util.c is the first to include help/io.h, so its write_all takes the shim from here
-#define exit shim_exit
+#define exit  shim_exit
 #define write shim_write
 #include "../../ctl/util.c"
 #undef exit
 #define mkostemp shim_mkostemp
-#define fchmod shim_fchmod
-#define fsync shim_fsync
-#define link shim_link
-#define rename shim_rename
-#define symlink shim_symlink
+#define fchmod	 shim_fchmod
+#define fsync	 shim_fsync
+#define link	 shim_link
+#define rename	 shim_rename
+#define symlink	 shim_symlink
 #include "../../ctl/output.c"
 #include "../../ctl/add.c"
 #undef mkostemp
@@ -138,20 +142,19 @@ static char errtext[4096];
 
 // held is the locked directory, a die() would otherwise leave a lock behind that the next call waits on
 struct atomic_arg {
-	const char *path, *text;
-	int held;
+	const char* path;
+	const char* text;
+	int         held;
 };
 
-static void call_atomic(void *p)
-{
-	struct atomic_arg *a = p;
+static void call_atomic(void* p) {
+	struct atomic_arg* a = p;
 
 	write_atomic(a->path, a->text, strlen(a->text), 0644, a->held);
 }
 
 // runs fn with stderr captured, returns 0 or 1000 + the status die() exited with
-static int capture(void (*fn)(void *), void *arg)
-{
+static int capture(void (*fn)(void*), void* arg) {
 	char path[] = "/tmp/ninit-t-ctlfs-err.XXXXXX";
 	int fd = mkstemp(path), saved;
 	volatile int rc;
@@ -161,8 +164,10 @@ static int capture(void (*fn)(void *), void *arg)
 	saved = dup(2);
 	dup2(fd, 2);
 	rc = setjmp(die_jb);
-	if (!rc)
+	if(!rc) {
 		fn(arg);
+	}
+
 	fflush(stderr);
 	dup2(saved, 2);
 	close(saved);
@@ -171,38 +176,44 @@ static int capture(void (*fn)(void *), void *arg)
 	errtext[n > 0 ? n : 0] = '\0';
 	close(fd);
 	unlink(path);
+
 	return rc;
 }
 
-static void slurp_to(const char *path, char *buf, size_t cap)
-{
+static void slurp_to(const char* path, char* buf, size_t cap) {
 	int fd = open(path, O_RDONLY | O_CLOEXEC);
 	ssize_t n = fd >= 0 ? read(fd, buf, cap - 1) : -1;
 
 	buf[n > 0 ? n : 0] = '\0';
-	if (fd >= 0)
+	if(fd >= 0) {
 		close(fd);
+	}
 }
 
 // entries of DIR that begin with a dot, the temporary files write_atomic makes
-static int dot_files(const char *dir)
-{
-	DIR *d = opendir(dir);
-	struct dirent *e;
+static int dot_files(const char* dir) {
+	DIR* d = opendir(dir);
+	struct dirent* e;
 	int n = 0;
 
-	while (d && (e = readdir(d)))
+	while(d && (e = readdir(d))) {
 		n += e->d_name[0] == '.' && strcmp(e->d_name, ".") && strcmp(e->d_name, "..");
-	if (d)
+	}
+
+	if(d) {
 		closedir(d);
+	}
+
 	return n;
 }
 
-static void test_atomic(void)
-{
+static void test_atomic(void) {
 	// each message names the call and a path in the directory, keep is what .old holds after the failure
 	static const struct {
-		const char *call, *msg, *path, *keep;
+		const char* call;
+		const char* msg;
+		const char* path;
+		const char* keep;
 		int after;
 	} v[] = {
 		{ "mkostemp", "mkstemp", ".depgraph.", "first", 0 },
@@ -217,8 +228,10 @@ static void test_atomic(void)
 	struct atomic_arg a = { path, "first", -1 };
 	int rc;
 
-	if (!mkdtemp(dir))
+	if(!mkdtemp(dir)) {
 		abort();
+	}
+
 	a.held = lock_dir(dir);
 	snprintf(path, sizeof(path), "%s/depgraph", dir);
 	snprintf(old, sizeof(old), "%s/depgraph.old", dir);
@@ -234,18 +247,21 @@ static void test_atomic(void)
 	is_str(got, "first", "and the first is kept as .old");
 
 	a.text = "third";
-	for (size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
+	for(size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
 		fail(v[k].call, v[k].after, -1);
 		rc = capture(call_atomic, &a);
 		fail(NULL, 0, 0);
 		snprintf(want, sizeof(want), "ninitctl: %s %s/%s", v[k].msg, dir, v[k].path);
-		if (!ok(rc == 1001 && strstr(errtext, want), "a failed %s ends the build", v[k].call))
+		if(!ok(rc == 1001 && strstr(errtext, want), "a failed %s ends the build", v[k].call)) {
 			tap_diag("%d %s", rc, errtext);
+		}
+
 		slurp_to(path, got, sizeof(got));
 		ok(!strcmp(got, "second") && !dot_files(dir), "the graph is unchanged and no temporary file is left");
 		slurp_to(old, got, sizeof(got));
-		if (!ok(!strcmp(got, v[k].keep), "and .old holds a graph"))
+		if(!ok(!strcmp(got, v[k].keep), "and .old holds a graph")) {
 			tap_diag("'%s'", got);
+		}
 	}
 
 	fail("fsync dir", 0, -1);
@@ -264,35 +280,39 @@ static void test_atomic(void)
 }
 
 // the entries of DIR made by relink for a temporary link
-static int tmp_links(const char *dir)
-{
-	DIR *d = opendir(dir);
-	struct dirent *e;
+static int tmp_links(const char* dir) {
+	DIR* d = opendir(dir);
+	struct dirent* e;
 	int n = 0;
 
-	while (d && (e = readdir(d)))
+	while(d && (e = readdir(d))) {
 		n += !!strstr(e->d_name, ".ninitctl.");
-	if (d)
+	}
+
+	if(d) {
 		closedir(d);
+	}
+
 	return n;
 }
 
-static void read_link(const char *path, char *buf, size_t cap)
-{
+static void read_link(const char* path, char* buf, size_t cap) {
 	ssize_t n = readlink(path, buf, cap - 1);
 
 	buf[n > 0 ? n : 0] = '\0';
 }
 
-static void test_relink(void)
-{
+static void test_relink(void) {
 	char dir[] = "/tmp/ninit-t-ctlfs-link.XXXXXX", path[256], got[256], longt[4300];
 
-	if (!mkdtemp(dir))
+	if(!mkdtemp(dir)) {
 		abort();
+	}
+
 	snprintf(path, sizeof(path), "%s/svc", dir);
-	if (symlink("../shared/svc", path) < 0)
+	if(symlink("../shared/svc", path) < 0) {
 		abort();
+	}
 
 	ok(relink(path, "../shared/svc", 1), "a link moved up a directory is rewritten");
 	read_link(path, got, sizeof(got));
@@ -326,9 +346,9 @@ static void test_relink(void)
 	rmdir(dir);
 }
 
-int main(void)
-{
+int main(void) {
 	test_atomic();
 	test_relink();
+
 	return tap_done();
 }

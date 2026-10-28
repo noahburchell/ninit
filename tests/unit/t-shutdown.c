@@ -16,106 +16,121 @@
 // the shutdown steps run against files the test writes, nothing reaches the system
 
 static long long fake_ms = 100000;
-static const char *mounts_path, *swaps_path, *adjtime_path;
+static const char* mounts_path;
+static const char* swaps_path;
+static const char* adjtime_path;
 
-static int shim_open(const char *path, int flags, ...)
-{
-	const char *to = NULL;
+static int shim_open(const char* path, int flags, ...) {
+	const char* to = NULL;
 
-	if (!strcmp(path, "/proc/self/mounts"))
+	if(!strcmp(path, "/proc/self/mounts")) {
 		to = mounts_path;
-	else if (!strcmp(path, "/proc/swaps"))
+	} else if(!strcmp(path, "/proc/swaps")) {
 		to = swaps_path;
-	else if (!strcmp(path, "/etc/adjtime"))
+	} else if(!strcmp(path, "/etc/adjtime")) {
 		to = adjtime_path;
-	else
+	} else {
 		abort();
-	if (!to) {
+	}
+
+	if(!to) {
 		errno = ENOENT;
 		return -1;
 	}
+
 	return open(to, flags);
 }
 
 static char swapped[8192];
 static size_t n_swapped;
-static const char *swap_busy;
+static const char* swap_busy;
 
 // each name swapoff receives, followed by a newline
-static int shim_swapoff(const char *path)
-{
+static int shim_swapoff(const char* path) {
 	size_t n = strlen(path);
 
-	if (n_swapped + n + 1 < sizeof(swapped)) {
+	if(n_swapped + n + 1 < sizeof(swapped)) {
 		memcpy(swapped + n_swapped, path, n);
 		n_swapped += n;
 		swapped[n_swapped++] = '\n';
 		swapped[n_swapped] = '\0';
 	}
-	if (swap_busy && !strcmp(path, swap_busy)) {
+
+	if(swap_busy && !strcmp(path, swap_busy)) {
 		errno = EBUSY;
 		return -1;
 	}
+
 	return 0;
 }
 
 struct fake_mnt {
-	const char *path;
+	const char* path;
 	// remounts refused before one succeeds, -1 refuses every one
-	int ro_fails;
-	int umount_ok;
-	int ro, gone, detached;
+	int         ro_fails;
+	int         umount_ok;
+	int         ro, gone, detached;
 };
 
 static struct fake_mnt mnts[8];
 static int n_mnts, n_sync, n_remount;
 
-static struct fake_mnt *mnt_of(const char *path)
-{
-	for (int k = 0; k < n_mnts; k++)
-		if (!strcmp(mnts[k].path, path))
+static struct fake_mnt* mnt_of(const char* path) {
+	for(int k = 0; k < n_mnts; k++) {
+		if(!strcmp(mnts[k].path, path)) {
 			return &mnts[k];
+		}
+	}
+
 	abort();
 }
 
-static int shim_mount(const char *src, const char *dst, const char *type, unsigned long flags,
-		      const void *data)
-{
-	struct fake_mnt *m = mnt_of(dst);
+static int shim_mount(const char* src, const char* dst, const char* type, unsigned long flags,
+		      const void* data) {
+	struct fake_mnt* m = mnt_of(dst);
 
-	if (src || type || data || flags != (MS_REMOUNT | MS_RDONLY))
+	if(src || type || data || flags != (MS_REMOUNT | MS_RDONLY)) {
 		abort();
+	}
+
 	n_remount++;
-	if (m->ro_fails) {
-		if (m->ro_fails > 0)
+	if(m->ro_fails) {
+		if(m->ro_fails > 0) {
 			m->ro_fails--;
+		}
+
 		errno = EBUSY;
 		return -1;
 	}
+
 	m->ro = 1;
+
 	return 0;
 }
 
-static int shim_umount2(const char *path, int flags)
-{
-	struct fake_mnt *m = mnt_of(path);
+static int shim_umount2(const char* path, int flags) {
+	struct fake_mnt* m = mnt_of(path);
 
-	if (flags == MNT_DETACH) {
+	if(flags == MNT_DETACH) {
 		m->detached = 1;
 		return 0;
 	}
-	if (flags)
+
+	if(flags) {
 		abort();
-	if (!m->umount_ok) {
+	}
+
+	if(!m->umount_ok) {
 		errno = EBUSY;
 		return -1;
 	}
+
 	m->gone = 1;
+
 	return 0;
 }
 
-static void shim_sync(void)
-{
+static void shim_sync(void) {
 	n_sync++;
 }
 
@@ -123,60 +138,66 @@ static void shim_sync(void)
 static const pid_t hw_pid = 4200000;
 static int hw_exits, hw_killed, hw_forks, fork_fail;
 
-static pid_t shim_fork(void)
-{
-	if (fork_fail) {
+static pid_t shim_fork(void) {
+	if(fork_fail) {
 		errno = EAGAIN;
 		return -1;
 	}
+
 	hw_forks++;
+
 	return hw_pid;
 }
 
-static pid_t shim_waitpid(pid_t pid, int *st, int flags)
-{
-	if (pid != hw_pid || flags != WNOHANG)
+static pid_t shim_waitpid(pid_t pid, int* st, int flags) {
+	if(pid != hw_pid || flags != WNOHANG) {
 		abort();
-	if (!hw_exits && !hw_killed)
+	}
+
+	if(!hw_exits && !hw_killed) {
 		return 0;
+	}
+
 	*st = 0;
+
 	return pid;
 }
 
-static int shim_kill(pid_t pid, int sig)
-{
-	if (pid != hw_pid || sig != SIGKILL)
+static int shim_kill(pid_t pid, int sig) {
+	if(pid != hw_pid || sig != SIGKILL) {
 		abort();
+	}
+
 	hw_killed = 1;
+
 	return 0;
 }
 
-static int shim_poll(struct pollfd *p, nfds_t n, int ms)
-{
+static int shim_poll(struct pollfd* p, nfds_t n, int ms) {
 	(void)p;
 	(void)n;
 	fake_ms += ms;
+
 	return 0;
 }
 
-static int shim_execve(const char *p, char *const *a, char *const *e)
-{
+static int shim_execve(const char* p, char* const* a, char* const* e) {
 	(void)p;
 	(void)a;
 	(void)e;
 	abort();
 }
 
-#define open shim_open
+#define open	shim_open
 #define swapoff shim_swapoff
-#define mount shim_mount
+#define mount	shim_mount
 #define umount2 shim_umount2
-#define sync shim_sync
-#define fork shim_fork
+#define sync	shim_sync
+#define fork	shim_fork
 #define waitpid shim_waitpid
-#define kill shim_kill
-#define poll shim_poll
-#define execve shim_execve
+#define kill	shim_kill
+#define poll	shim_poll
+#define execve	shim_execve
 #include "../../src/shutdown.c"
 #undef open
 #undef swapoff
@@ -193,32 +214,29 @@ static int shim_execve(const char *p, char *const *a, char *const *e)
 
 int sfd = -1;
 
-long long now_ms(void)
-{
+long long now_ms(void) {
 	return fake_ms;
 }
 
-void ninit_cloexec_except(int keep)
-{
+void ninit_cloexec_except(int keep) {
 	(void)keep;
 }
 
-void ninit_oom_score_adj(str v)
-{
+void ninit_oom_score_adj(str v) {
 	(void)v;
 }
 
-static void put_file(const char *path, const char *text)
-{
+static void put_file(const char* path, const char* text) {
 	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
 
-	if (fd < 0 || write(fd, text, strlen(text)) != (ssize_t)strlen(text))
+	if(fd < 0 || write(fd, text, strlen(text)) != (ssize_t)strlen(text)) {
 		abort();
+	}
+
 	close(fd);
 }
 
-static void test_swap(void)
-{
+static void test_swap(void) {
 	char path[] = "/tmp/ninit-t-shutdown-swaps.XXXXXX", text[2048], expect[2048], longp[700];
 	int fd = mkstemp(path);
 
@@ -268,8 +286,7 @@ static void test_swap(void)
 	is_str(swapped, "", "neither does a missing one");
 }
 
-static void test_adjtime(void)
-{
+static void test_adjtime(void) {
 	char path[] = "/tmp/ninit-t-shutdown-adjtime.XXXXXX", text[1024];
 	int fd = mkstemp(path);
 
@@ -284,13 +301,11 @@ static void test_adjtime(void)
 	adjtime_path = NULL;
 }
 
-static void add_mnt(const char *path, int ro_fails, int umount_ok)
-{
+static void add_mnt(const char* path, int ro_fails, int umount_ok) {
 	mnts[n_mnts++] = (struct fake_mnt){ .path = path, .ro_fails = ro_fails, .umount_ok = umount_ok };
 }
 
-static void test_remount(void)
-{
+static void test_remount(void) {
 	char path[] = "/tmp/ninit-t-shutdown-mounts.XXXXXX", expect[128];
 	int fd = mkstemp(path);
 
@@ -314,8 +329,8 @@ static void test_remount(void)
 	ok(mnts[1].ro && mnts[2].ro, "a busy mount is read-only by the third pass");
 	ok(mnts[3].gone && logcap_count("WARN > shutdown: /var: remount read-only failed, unmounted") == 1,
 	   "one that stays writable is unmounted, with a warning");
-	ok(mnts[4].ro && n_sync == 1 &&
-	   logcap_count("WARN > shutdown: /mnt/a b: remounted read-only on retry") == 1,
+	ok(mnts[4].ro && n_sync == 1
+		   && logcap_count("WARN > shutdown: /mnt/a b: remounted read-only on retry") == 1,
 	   "one that can be neither is remounted once more after a sync, its escape undone");
 	snprintf(expect, sizeof(expect), "FAIL > shutdown: /data: still mounted writable (%s), detaching",
 		 strerror(EBUSY));
@@ -343,8 +358,7 @@ static void test_remount(void)
 	ok(n_remount == 1 && mnts[0].ro, "without a mount table / is still remounted");
 }
 
-static void test_hwclock(void)
-{
+static void test_hwclock(void) {
 	long long t0;
 
 	hw_exits = 1;
@@ -369,12 +383,12 @@ static void test_hwclock(void)
 	fork_fail = 0;
 }
 
-int main(void)
-{
+int main(void) {
 	logcap_quiet();
 	test_swap();
 	test_adjtime();
 	test_remount();
 	test_hwclock();
+
 	return tap_done();
 }

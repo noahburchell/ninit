@@ -18,39 +18,46 @@
 static int fake_clock;
 static long long fake_ms;
 
-static int shim_clock_gettime(clockid_t id, struct timespec *ts)
-{
-	if (!fake_clock)
+static int shim_clock_gettime(clockid_t id, struct timespec* ts) {
+	if(!fake_clock) {
 		return clock_gettime(id, ts);
+	}
+
 	ts->tv_sec = fake_ms / 1000;
 	ts->tv_nsec = (fake_ms % 1000) * 1000000;
+
 	return 0;
 }
 
-static const char *osrel_etc, *osrel_lib, *console_path;
+static const char* osrel_etc;
+static const char* osrel_lib;
+static const char* console_path;
 
-static FILE *shim_fopen(const char *path, const char *mode)
-{
-	if (!strcmp(path, "/etc/os-release"))
+static FILE* shim_fopen(const char* path, const char* mode) {
+	if(!strcmp(path, "/etc/os-release")) {
 		path = osrel_etc;
-	else if (!strcmp(path, "/usr/lib/os-release"))
+	} else if(!strcmp(path, "/usr/lib/os-release")) {
 		path = osrel_lib;
-	if (!path) {
+	}
+
+	if(!path) {
 		errno = ENOENT;
 		return NULL;
 	}
+
 	return fopen(path, mode);
 }
 
-static int shim_open(const char *path, int flags, ...)
-{
-	if (!strcmp(path, "/dev/console")) {
-		if (!console_path) {
+static int shim_open(const char* path, int flags, ...) {
+	if(!strcmp(path, "/dev/console")) {
+		if(!console_path) {
 			errno = ENOENT;
 			return -1;
 		}
+
 		path = console_path;
 	}
+
 	return open(path, flags);
 }
 
@@ -58,34 +65,37 @@ static int shim_open(const char *path, int flags, ...)
 static long con_budget = -1;
 static int con_w = -1;
 
-static ssize_t shim_write(int fd, const void *buf, size_t n)
-{
-	if (fd == con_w && con_budget >= 0) {
-		if (!con_budget) {
+static ssize_t shim_write(int fd, const void* buf, size_t n) {
+	if(fd == con_w && con_budget >= 0) {
+		if(!con_budget) {
 			errno = EAGAIN;
 			return -1;
 		}
-		if (n > (size_t)con_budget)
+
+		if(n > (size_t)con_budget) {
 			n = (size_t)con_budget;
+		}
+
 		con_budget -= (long)n;
 	}
+
 	return write(fd, buf, n);
 }
 
-static int shim_poll(struct pollfd *p, nfds_t n, int ms)
-{
-	if (n == 1 && p->fd == con_w && con_budget == 0) {
+static int shim_poll(struct pollfd* p, nfds_t n, int ms) {
+	if(n == 1 && p->fd == con_w && con_budget == 0) {
 		usleep((useconds_t)ms * 1000);
 		return 0;
 	}
+
 	return poll(p, n, ms);
 }
 
 #define clock_gettime shim_clock_gettime
-#define fopen shim_fopen
-#define open shim_open
-#define write shim_write
-#define poll shim_poll
+#define fopen	      shim_fopen
+#define open	      shim_open
+#define write	      shim_write
+#define poll	      shim_poll
 #include "../../src/logging.c"
 #undef clock_gettime
 #undef fopen
@@ -95,100 +105,115 @@ static int shim_poll(struct pollfd *p, nfds_t n, int ms)
 
 static int con_r = -1;
 
-static void console_pipe(int size)
-{
+static void console_pipe(int size) {
 	int p[2];
 
-	if (con_r >= 0)
+	if(con_r >= 0) {
 		close(con_r);
-	if (con_w >= 0)
+	}
+
+	if(con_w >= 0) {
 		close(con_w);
-	if (pipe2(p, O_CLOEXEC) < 0)
+	}
+
+	if(pipe2(p, O_CLOEXEC) < 0) {
 		abort();
-	if (size)
+	}
+
+	if(size) {
 		fcntl(p[1], F_SETPIPE_SZ, size);
+	}
+
 	fcntl(p[0], F_SETFL, O_NONBLOCK);
 	con_r = p[0];
 	con_w = p[1];
 	log_adopt_fd(con_w);
 }
 
-static size_t console_read(char *buf, size_t cap)
-{
+static size_t console_read(char* buf, size_t cap) {
 	size_t at = 0;
 
-	for (;;) {
+	for(;;) {
 		ssize_t k = read(con_r, buf + at, cap - 1 - at);
 
-		if (k <= 0)
+		if(k <= 0) {
 			break;
+		}
+
 		at += (size_t)k;
 	}
+
 	buf[at] = '\0';
+
 	return at;
 }
 
 // fills the console pipe and returns how many bytes it took
-static size_t console_fill(size_t leave)
-{
+static size_t console_fill(size_t leave) {
 	static char junk[65536];
 	size_t total = 0;
 	int cap = fcntl(con_w, F_GETPIPE_SZ);
 
 	memset(junk, 'j', sizeof(junk));
-	if (cap > 0 && leave) {
+	if(cap > 0 && leave) {
 		size_t want = (size_t)cap - leave;
 		ssize_t k = write(con_w, junk, want);
 
 		return k > 0 ? (size_t)k : 0;
 	}
-	for (;;) {
+
+	for(;;) {
 		ssize_t k = write(con_w, junk, sizeof(junk));
 
-		if (k <= 0)
+		if(k <= 0) {
 			break;
+		}
+
 		total += (size_t)k;
 	}
+
 	return total;
 }
 
-static void console_drain(void)
-{
+static void console_drain(void) {
 	char buf[4096];
 
-	while (read(con_r, buf, sizeof(buf)) > 0)
+	while(read(con_r, buf, sizeof(buf)) > 0)
 		;
 }
 
-static int matches(const char *s, const char *re)
-{
+static int matches(const char* s, const char* re) {
 	regex_t r;
 	int m;
 
-	if (regcomp(&r, re, REG_EXTENDED | REG_NOSUB))
+	if(regcomp(&r, re, REG_EXTENDED | REG_NOSUB)) {
 		abort();
+	}
+
 	m = !regexec(&r, s, 0, NULL, 0);
 	regfree(&r);
+
 	return m;
 }
 
 // the last line in the ring
-static const char *ring_last(void)
-{
+static const char* ring_last(void) {
 	static char buf[LOG_LINE + 1];
 	uint64_t at = log_first();
 	size_t n = 0;
 
-	while (at < log_end())
+	while(at < log_end()) {
 		n = log_line(&at, buf);
+	}
+
 	buf[n] = '\0';
+
 	return buf;
 }
 
-static void test_format(void)
-{
+static void test_format(void) {
 	char con[8192];
-	const char *line;
+	const char* line;
 
 	console_pipe(0);
 	fake_clock = 1;
@@ -262,6 +287,7 @@ static void test_format(void)
 		is_str(b, "[000.000] FAIL > y\n", "log_raw skips empty lines");
 		is_int(log_line(&at, b), 0, "and nothing follows");
 	}
+
 	console_read(con, sizeof(con));
 	log_raw(LOG_NOTE, STR("tail"));
 	is_str(ring_last(), "[000.000] NOTE > tail\n", "log_raw takes text without a final newline");
@@ -272,29 +298,30 @@ static void test_format(void)
 }
 
 // the ring from at onwards
-static const char *ring_since(uint64_t at)
-{
+static const char* ring_since(uint64_t at) {
 	static char buf[32768];
 	size_t n = 0;
 
-	while (at < log_end() && n + LOG_LINE + 1 < sizeof(buf))
+	while(at < log_end() && n + LOG_LINE + 1 < sizeof(buf)) {
 		n += log_line(&at, buf + n);
+	}
+
 	buf[n] = '\0';
+
 	return buf;
 }
 
 // a line no other equals ends any repetition, returns where the ring continues
-static uint64_t rep_reset(void)
-{
+static uint64_t rep_reset(void) {
 	static unsigned n;
 
 	ninit_log(LOG_NOTE | LOG_NOCON, "reset %u", ++n);
+
 	return log_end();
 }
 
-static void test_repeat(void)
-{
-	static const char *const block[] = { "iwd: a", "iwd: b", "iwd: c", "iwd: d" };
+static void test_repeat(void) {
+	static const char* const block[] = { "iwd: a", "iwd: b", "iwd: c", "iwd: d" };
 	char con[8192], want[2048];
 	uint64_t at;
 	size_t w;
@@ -306,10 +333,11 @@ static void test_repeat(void)
 	log_adopt_fd(con_w);
 
 	at = rep_reset();
-	for (int k = 0; k < 5; k++) {
+	for(int k = 0; k < 5; k++) {
 		fake_ms = k;
 		ninit_log(LOG_NOTE, "same");
 	}
+
 	is_str(ring_since(at), "[000.000] NOTE > same\n", "a line logged again is held back");
 	ok(log_due() >= 0, "and a count is pending");
 	fake_ms = 10;
@@ -345,29 +373,36 @@ static void test_repeat(void)
 
 	// the iwd case, a block of lines repeating every few seconds
 	at = rep_reset();
-	for (int r = 0; r < 10; r++) {
+	for(int r = 0; r < 10; r++) {
 		fake_ms = 1000 + r * 100;
-		for (int k = 0; k < 4; k++)
+		for(int k = 0; k < 4; k++) {
 			ninit_log(LOG_NOTE, "%s", block[k]);
+		}
 	}
+
 	fake_ms = 3000;
 	ninit_log(LOG_NOTE, "end");
 	w = 0;
-	for (int r = 0; r < 2; r++)
-		for (int k = 0; k < 4; k++)
+	for(int r = 0; r < 2; r++) {
+		for(int k = 0; k < 4; k++) {
 			w += (size_t)snprintf(want + w, sizeof(want) - w, "[001.%03d] NOTE > %s\n",
 					      r * 100, block[k]);
+		}
+	}
+
 	snprintf(want + w, sizeof(want) - w, "[001.900] NOTE > last 4 messages repeated 8 times\n"
 					     "[003.000] NOTE > end\n");
 	is_str(ring_since(at), want, "a block logged twice in a row is counted from then on");
 
 	// a repetition cut short is logged as it arrived
 	at = rep_reset();
-	for (int r = 0; r < 3; r++)
-		for (int k = 0; k < 4; k++) {
+	for(int r = 0; r < 3; r++) {
+		for(int k = 0; k < 4; k++) {
 			fake_ms = 5000 + r * 10 + k;
 			ninit_log(LOG_NOTE, "%s", block[k]);
 		}
+	}
+
 	fake_ms = 5100;
 	ninit_log(LOG_NOTE, "%s", block[0]);
 	fake_ms = 5101;
@@ -375,10 +410,13 @@ static void test_repeat(void)
 	fake_ms = 5200;
 	ninit_log(LOG_NOTE, "z");
 	w = 0;
-	for (int r = 0; r < 3; r++)
-		for (int k = 0; k < 4; k++)
+	for(int r = 0; r < 3; r++) {
+		for(int k = 0; k < 4; k++) {
 			w += (size_t)snprintf(want + w, sizeof(want) - w, "[005.%03d] NOTE > %s\n",
 					      r * 10 + k, block[k]);
+		}
+	}
+
 	snprintf(want + w, sizeof(want) - w, "[005.100] NOTE > iwd: a\n[005.101] NOTE > iwd: b\n"
 					     "[005.200] NOTE > z\n");
 	is_str(ring_since(at), want, "a single repetition and a partial one are logged with their times");
@@ -386,9 +424,12 @@ static void test_repeat(void)
 	// a held line is logged after LOG_HOLD_MS when nothing completes the block
 	at = rep_reset();
 	fake_ms = 6000;
-	for (int r = 0; r < 2; r++)
-		for (int k = 0; k < 4; k++)
+	for(int r = 0; r < 2; r++) {
+		for(int k = 0; k < 4; k++) {
 			ninit_log(LOG_NOTE, "%s", block[k]);
+		}
+	}
+
 	fake_ms = 6050;
 	ninit_log(LOG_NOTE, "%s", block[0]);
 	has_str(ring_last(), "iwd: d", "the start of a third repetition is held");
@@ -404,10 +445,11 @@ static void test_repeat(void)
 	// the count is logged after 30 s, 120 s, then every 600 s
 	at = rep_reset();
 	fake_ms = 10000;
-	for (int k = 0; k < 4; k++) {
+	for(int k = 0; k < 4; k++) {
 		fake_ms = 10000 + k;
 		ninit_log(LOG_WARN, "flood");
 	}
+
 	is_int(log_due(), 29998, "a count is due 30 s after the first repeat");
 	fake_ms = 40001;
 	log_tick();
@@ -429,10 +471,11 @@ static void test_repeat(void)
 	// the count takes the most severe tag of its block
 	at = rep_reset();
 	fake_ms = 0;
-	for (int r = 0; r < 4; r++) {
+	for(int r = 0; r < 4; r++) {
 		ninit_log(LOG_NOTE, "n");
 		ninit_log(LOG_WARN, "w");
 	}
+
 	ninit_log(LOG_NOTE, "done");
 	is_str(ring_since(at), "[000.000] NOTE > n\n[000.000] WARN > w\n[000.000] NOTE > n\n[000.000] WARN > w\n"
 			       "[000.000] WARN > last 2 messages repeated 2 times\n[000.000] NOTE > done\n",
@@ -440,8 +483,10 @@ static void test_repeat(void)
 
 	console_read(con, sizeof(con));
 	at = rep_reset();
-	for (int k = 0; k < 3; k++)
+	for(int k = 0; k < 3; k++) {
 		ninit_log(LOG_NOTE | LOG_NOCON, "quiet");
+	}
+
 	rep_reset();
 	has_str(ring_since(at), "NOTE > last message repeated 2 times\n", "a ring-only line is counted in the ring");
 	is_int(console_read(con, sizeof(con)), 0, "and its count stays off the console");
@@ -452,38 +497,37 @@ static void test_repeat(void)
 
 static unsigned feeds;
 
-static void count_feed(void)
-{
+static void count_feed(void) {
 	feeds++;
 }
 
 // each line carries its number and a length derived from it, so corruption shows
-static void make_line(char *buf, size_t cap, unsigned seq)
-{
+static void make_line(char* buf, size_t cap, unsigned seq) {
 	unsigned pad = (seq * 37u) % 300u;
 
 	snprintf(buf, cap, "seq %u pad %u ", seq, pad);
-	for (size_t k = strlen(buf); pad-- && k + 1 < cap; k++) {
+	for(size_t k = strlen(buf); pad-- && k + 1 < cap; k++) {
 		buf[k] = (char)('a' + (seq + k) % 26);
 		buf[k + 1] = '\0';
 	}
 }
 
-static int check_line(const char *line, unsigned *seq)
-{
+static int check_line(const char* line, unsigned* seq) {
 	char want[512];
-	const char *p = strstr(line, "seq ");
+	const char* p = strstr(line, "seq ");
 	size_t n;
 
-	if (!p || sscanf(p, "seq %u", seq) != 1)
+	if(!p || sscanf(p, "seq %u", seq) != 1) {
 		return 0;
+	}
+
 	make_line(want, sizeof(want), *seq);
 	n = strlen(want);
+
 	return !strncmp(p, want, n) && p[n] == '\n' && !p[n + 1];
 }
 
-static void test_ring(void)
-{
+static void test_ring(void) {
 	char line[512], buf[LOG_LINE + 1];
 	uint64_t start, at;
 	unsigned seq, first = 0, last = 0, count = 0, bad = 0, expect;
@@ -492,10 +536,11 @@ static void test_ring(void)
 	log_feed(count_feed);
 	feeds = 0;
 	start = log_end();
-	for (unsigned k = 0; k < 2000; k++) {
+	for(unsigned k = 0; k < 2000; k++) {
 		make_line(line, sizeof(line), k);
 		ninit_log(LOG_NOTE | LOG_NOCON, "%s", line);
 	}
+
 	is_int(feeds, 2000, "the feed hook runs after every append");
 	log_feed(NULL);
 
@@ -504,23 +549,29 @@ static void test_ring(void)
 
 	at = log_first();
 	expect = UINT32_MAX;
-	while (at < log_end()) {
+	while(at < log_end()) {
 		size_t n = log_line(&at, buf);
 
 		buf[n] = '\0';
-		if (!check_line(buf, &seq)) {
-			if (bad++ < 3)
+		if(!check_line(buf, &seq)) {
+			if(bad++ < 3) {
 				tap_diag_str("corrupt line: ", buf, n);
+			}
+
 			continue;
 		}
-		if (!count)
+
+		if(!count) {
 			first = seq;
-		else if (seq != expect && bad++ < 3)
+		} else if(seq != expect && bad++ < 3) {
 			tap_diag("line %u follows %u", seq, expect - 1);
+		}
+
 		expect = seq + 1;
 		last = seq;
 		count++;
 	}
+
 	ok(!bad, "every line in the ring is whole and in order across the wrap");
 	is_int(last, 1999, "the newest line is kept");
 	ok(first > 0, "the oldest lines were dropped (first kept is %u)", first);
@@ -539,12 +590,13 @@ static void test_ring(void)
 		has_str(buf, want, "the skip counts the bytes lost");
 		is_int(at, log_first(), "and resumes at the oldest line");
 	}
+
 	at = log_end();
 	is_int(log_line(&at, buf), 0, "a reader at the end gets nothing");
 
 	// lines of every length wrap at every offset
 	bad = 0;
-	for (unsigned k = 0; k < 3000; k++) {
+	for(unsigned k = 0; k < 3000; k++) {
 		uint64_t mark = log_end();
 		size_t n;
 
@@ -552,14 +604,15 @@ static void test_ring(void)
 		ninit_log(LOG_INFO | LOG_NOCON, "%s", line);
 		n = log_line(&mark, buf);
 		buf[n] = '\0';
-		if (!check_line(buf, &seq) && bad++ < 3)
+		if(!check_line(buf, &seq) && bad++ < 3) {
 			tap_diag_str("reread: ", buf, n);
+		}
 	}
+
 	ok(!bad, "a line reads back intact wherever it lands in the ring");
 }
 
-static void test_console_stall(void)
-{
+static void test_console_stall(void) {
 	char con[65536 * 4];
 	long long t0, t1;
 	size_t n;
@@ -576,8 +629,10 @@ static void test_console_stall(void)
 	is_int(log_dropped, 1, "the line it did not take is dropped and counted");
 
 	t0 = mono_ms();
-	for (int k = 0; k < 5; k++)
+	for(int k = 0; k < 5; k++) {
 		ninit_log(LOG_NOTE, "stalled more %d", k);
+	}
+
 	t1 = mono_ms();
 	ok(t1 - t0 < 50, "once stalled no further line waits (%lld ms)", t1 - t0);
 	is_int(log_dropped, 6, "each dropped line is counted");
@@ -589,8 +644,10 @@ static void test_console_stall(void)
 	n = console_read(con, sizeof(con));
 	ok(matches(con, "^\\[[0-9.]+\\] WARN > console: dropped [0-9]+ messages\n\\[[0-9.]+\\] NOTE > resumed\n$"),
 	   "the drop count is reported before the next line");
-	if (!matches(con, "dropped 6 messages"))
+	if(!matches(con, "dropped 6 messages")) {
 		tap_diag_str("console: ", con, n);
+	}
+
 	is_int(log_dropped, 0, "the count is reset once reported");
 
 	// a single drop reads as one message
@@ -620,26 +677,27 @@ static void test_console_stall(void)
 }
 
 // the console receives whole lines only
-static int whole_lines(const char *s, size_t n, const char **bad)
-{
-	const char *p = s, *end = s + n;
+static int whole_lines(const char* s, size_t n, const char** bad) {
+	const char* p = s;
+	const char* end = s + n;
 
-	while (p < end) {
-		const char *nl = memchr(p, '\n', (size_t)(end - p));
+	while(p < end) {
+		const char* nl = memchr(p, '\n', (size_t)(end - p));
 
-		if (!nl || !matches(p, "^\\[[0-9]{3,}\\.[0-9]{3}\\] [A-Z]{4} > ")) {
+		if(!nl || !matches(p, "^\\[[0-9]{3,}\\.[0-9]{3}\\] [A-Z]{4} > ")) {
 			*bad = p;
 			return 0;
 		}
+
 		p = nl + 1;
 	}
+
 	return 1;
 }
 
-static void test_console_partial(void)
-{
+static void test_console_partial(void) {
 	char con[65536], line[200];
-	const char *bad;
+	const char* bad;
 	size_t n;
 
 	console_pipe(0);
@@ -664,8 +722,10 @@ static void test_console_partial(void)
 	n = console_read(con, sizeof(con));
 	bad = NULL;
 	ok(whole_lines(con, n, &bad), "the console received only whole lines");
-	if (bad)
+	if(bad) {
 		tap_diag_str("at: ", bad, strlen(bad));
+	}
+
 	ok(matches(con, "^\\[[0-9.]+\\] NOTE > p{80}\n"), "the partial line arrived whole");
 	has_str(con, "console: dropped 1 message\n", "the dropped line is reported");
 	has_str(con, "NOTE > next\n", "logging continues");
@@ -719,8 +779,10 @@ static void test_console_partial(void)
 	{
 		int p[2];
 
-		if (pipe2(p, O_CLOEXEC) < 0)
+		if(pipe2(p, O_CLOEXEC) < 0) {
 			abort();
+		}
+
 		close(p[0]);
 		log_adopt_fd(p[1]);
 		signal(SIGPIPE, SIG_IGN);
@@ -733,21 +795,22 @@ static void test_console_partial(void)
 	}
 }
 
-static void test_tty(void)
-{
+static void test_tty(void) {
 	int m = posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC), s;
 	char buf[1024];
 	ssize_t n;
 
-	if (m < 0 || grantpt(m) < 0 || unlockpt(m) < 0) {
+	if(m < 0 || grantpt(m) < 0 || unlockpt(m) < 0) {
 		ok(1, "# SKIP no pty available");
 		return;
 	}
+
 	s = open(ptsname(m), O_RDWR | O_NOCTTY | O_CLOEXEC);
-	if (s < 0) {
+	if(s < 0) {
 		ok(1, "# SKIP no pty available");
 		return;
 	}
+
 	{
 		struct termios t;
 
@@ -755,6 +818,7 @@ static void test_tty(void)
 		cfmakeraw(&t);
 		tcsetattr(s, TCSANOW, &t);
 	}
+
 	log_adopt_fd(s);
 	ok(log_color, "a terminal console is coloured");
 	fake_clock = 1;
@@ -768,7 +832,7 @@ static void test_tty(void)
 	is_str(ring_last(), "[000.000] NOTE > colour\n", "the ring never holds colour codes");
 
 	{
-		static const char *const want[] = {
+		static const char* const want[] = {
 			"[000.000] \033[32mDONE\033[0m > t\n",
 			"t\n",
 			"[000.000] \033[33mWARN\033[0m > t\n",
@@ -776,7 +840,7 @@ static void test_tty(void)
 			"[000.000] \033[1;34mWAIT\033[0m > t\n",
 		};
 
-		for (int lv = 0; lv < 5; lv++) {
+		for(int lv = 0; lv < 5; lv++) {
 			char what[32];
 
 			ninit_log(lv, "t");
@@ -786,6 +850,7 @@ static void test_tty(void)
 			is_str(buf, want[lv], what);
 		}
 	}
+
 	fake_clock = 0;
 	close(s);
 	close(m);
@@ -794,24 +859,25 @@ static void test_tty(void)
 
 static char tmpdir[] = "/tmp/ninit-t-logging.XXXXXX";
 
-static const char *put(const char *name, const char *text)
-{
+static const char* put(const char* name, const char* text) {
 	static char paths[8][256];
 	static int k;
-	char *p = paths[k++ & 7];
-	FILE *f;
+	char* p = paths[k++ & 7];
+	FILE* f;
 
 	snprintf(p, 256, "%s/%s", tmpdir, name);
 	f = fopen(p, "w");
-	if (!f)
+	if(!f) {
 		abort();
+	}
+
 	fputs(text, f);
 	fclose(f);
+
 	return p;
 }
 
-static void welcome_case(const char *what, const char *etc, const char *lib, const char *want_os)
-{
+static void welcome_case(const char* what, const char* etc, const char* lib, const char* want_os) {
 	struct utsname u;
 	char want[512], con[2048], got[LOG_LINE + 1];
 	uint64_t at = log_end();
@@ -838,10 +904,11 @@ static void welcome_case(const char *what, const char *etc, const char *lib, con
 #endif
 }
 
-static void test_welcome(void)
-{
-	if (!mkdtemp(tmpdir))
+static void test_welcome(void) {
+	if(!mkdtemp(tmpdir)) {
 		abort();
+	}
+
 	console_pipe(0);
 	welcome_case("PRETTY_NAME in double quotes",
 		     put("a", "NAME=x\nPRETTY_NAME=\"Gentoo Linux\"\nID=gentoo\n"), NULL, "Gentoo Linux");
@@ -859,10 +926,9 @@ static void test_welcome(void)
 	osrel_etc = osrel_lib = NULL;
 }
 
-static void test_reopen(void)
-{
+static void test_reopen(void) {
 	char con[256];
-	const char *path = put("console", "");
+	const char* path = put("console", "");
 	int fd;
 
 	console_path = NULL;
@@ -881,6 +947,7 @@ static void test_reopen(void)
 
 		con[n > 0 ? n : 0] = '\0';
 	}
+
 	close(fd);
 	has_str(con, "WARN > to the file", "log_reopen_console moves the log to /dev/console");
 	ok(fcntl(log_fd, F_GETFL) & O_NONBLOCK, "the console is non-blocking");
@@ -893,8 +960,7 @@ static void test_reopen(void)
 }
 
 #ifdef NINIT_QUIET
-static void test_quiet(void)
-{
+static void test_quiet(void) {
 	char con[1024];
 
 	console_pipe(0);
@@ -912,8 +978,7 @@ static void test_quiet(void)
 }
 #endif
 
-int main(void)
-{
+int main(void) {
 	log_init();
 	test_format();
 	test_repeat();
@@ -927,5 +992,6 @@ int main(void)
 	test_quiet();
 #endif
 	rmdir(tmpdir);
+
 	return tap_done();
 }

@@ -13,78 +13,117 @@
 #include <unistd.h>
 
 struct style {
-	const char *bold, *dim, *cyan, *yellow, *green, *red, *reset;
-	const char *bar, *vbar, *arrow, *none;
+	const char* bold;
+	const char* dim;
+	const char* cyan;
+	const char* yellow;
+	const char* green;
+	const char* red;
+	const char* reset;
+	const char* bar;
+	const char* vbar;
+	const char* arrow;
+	const char* none;
 };
 
 static const struct style style_tty = {
-	"\033[1m", "\033[2m", "\033[36m", "\033[33m", "\033[32m", "\033[1;31m", "\033[0m",
-	"─", "│", "→", "—",
+	"\033[1m",
+	"\033[2m",
+	"\033[36m",
+	"\033[33m",
+	"\033[32m",
+	"\033[1;31m",
+	"\033[0m",
+	"─",
+	"│",
+	"→",
+	"—",
 };
 
 static const struct style style_plain = {
-	"", "", "", "", "", "", "",
-	"-", "|", "->", "-",
+	"",
+	"",
+	"",
+	"",
+	"",
+	"",
+	"",
+	"-",
+	"|",
+	"->",
+	"-",
 };
 
 // one argument, in single quotes when a shell would split or expand it
-static void print_arg(const char *a)
-{
-	const char *p = a;
+static void print_arg(const char* a) {
+	const char* p = a;
 
-	while (*p && (strchr("_@%+=:,./-", *p) || (*p >= '0' && *p <= '9') ||
-		      ((*p | 0x20) >= 'a' && (*p | 0x20) <= 'z')))
+	while(*p && (strchr("_@%+=:,./-", *p) || (*p >= '0' && *p <= '9') || ((*p | 0x20) >= 'a' && (*p | 0x20) <= 'z'))) {
 		p++;
-	if (!*p && *a) {
+	}
+
+	if(!*p && *a) {
 		printf(" %s", a);
 		return;
 	}
+
 	fputs(" '", stdout);
-	for (p = a; *p; p++) {
-		if (*p == '\'')
+	for(p = a; *p; p++) {
+		if(*p == '\'') {
 			fputs("'\\''", stdout);
-		else
+		} else {
 			putchar(*p);
+		}
 	}
+
 	putchar('\'');
 }
 
 // what runs the script, the shell by its argv[0], an interpreter by its basename, or direct
-static const char *via_of(const void *map, uint32_t i)
-{
-	if (ng_direct(map, i))
+static const char* via_of(const void* map, uint32_t i) {
+	if(ng_direct(map, i)) {
 		return "direct";
-	if (ng_interp(map, i))
+	}
+
+	if(ng_interp(map, i)) {
 		return path_base(ng_exec(map, i));
+	}
+
 	return NG_SHELL_ARGV0;
 }
 
-int cmd_show(int argc, char **argv)
-{
-	const char *path = NG_DEFAULT_FILE, *why;
-	const struct style *st;
-	const struct ng_hdr *h;
-	const struct ng_svc *sv;
-	const uint32_t *roff, *ridx;
-	uint32_t *doff = NULL, *didx = NULL, *fill = NULL, *level = NULL, *chain = NULL;
+int cmd_show(int argc, char** argv) {
+	const char* path = NG_DEFAULT_FILE;
+	const char* why;
+	const struct style* st;
+	const struct ng_hdr* h;
+	const struct ng_svc* sv;
+	const uint32_t* roff;
+	const uint32_t* ridx;
+	uint32_t* doff = NULL;
+	uint32_t* didx = NULL;
+	uint32_t* fill = NULL;
+	uint32_t* level = NULL;
+	uint32_t* chain = NULL;
 	uint32_t n, m, i, j, wname = 7, wvia = 3, maxlvl = 0, deepest = 0;
 	struct stat sb;
 	size_t maplen = 0;
-	void *map = MAP_FAILED;
+	void* map = MAP_FAILED;
 	int fd, k, verbose = 0, rc = 1;
 
-	for (k = 0; k < argc; k++) {
-		if (!strcmp(argv[k], "-f") || !strcmp(argv[k], "--file")) {
-			if (++k == argc) {
+	for(k = 0; k < argc; k++) {
+		if(!strcmp(argv[k], "-f") || !strcmp(argv[k], "--file")) {
+			if(++k == argc) {
 				fprintf(stderr, "ninitctl: show: %s needs a file\n", argv[k - 1]);
 				return 2;
 			}
+
 			path = argv[k];
-		} else if (!strcmp(argv[k], "-v") || !strcmp(argv[k], "--verbose"))
+		} else if(!strcmp(argv[k], "-v") || !strcmp(argv[k], "--verbose")) {
 			verbose = 1;
-		else if (argv[k][0] != '-')
+		} else if(argv[k][0] != '-') {
 			path = argv[k];
-		else {
+		} else {
 			fprintf(stderr, "ninitctl: show: unexpected argument '%s'\n", argv[k]);
 			return 2;
 		}
@@ -92,25 +131,27 @@ int cmd_show(int argc, char **argv)
 
 	// a fifo would block the open until a writer came
 	fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
-	if (fd < 0) {
+	if(fd < 0) {
 		fprintf(stderr, "ninitctl: open %s: %s\n", path, strerror(errno));
 		return 1;
 	}
-	if (fstat(fd, &sb) < 0 || !S_ISREG(sb.st_mode) || sb.st_size <= 0) {
+
+	if(fstat(fd, &sb) < 0 || !S_ISREG(sb.st_mode) || sb.st_size <= 0) {
 		fprintf(stderr, "ninitctl: %s: not a regular file\n", path);
 		close(fd);
 		return 1;
 	}
+
 	maplen = (size_t)sb.st_size;
 	map = mmap(NULL, maplen, PROT_READ, MAP_PRIVATE, fd, 0);
 	close(fd);
-	if (map == MAP_FAILED) {
+	if(map == MAP_FAILED) {
 		fprintf(stderr, "ninitctl: mmap %s: %s\n", path, strerror(errno));
 		return 1;
 	}
 
 	why = ng_verify(map, maplen);
-	if (why) {
+	if(why) {
 		fprintf(stderr, "ninitctl: %s: %s\n", path, why);
 		goto out;
 	}
@@ -128,33 +169,47 @@ int cmd_show(int argc, char **argv)
 	didx = calloc(m ? m : 1, sizeof(*didx));
 	fill = calloc(n + 1, sizeof(*fill));
 	level = calloc(n, sizeof(*level));
-	if (!doff || !didx || !fill || !level) {
+	if(!doff || !didx || !fill || !level) {
 		fprintf(stderr, "ninitctl: out of memory\n");
 		goto out;
 	}
-	for (i = 0; i < m; i++)
-		doff[ridx[i] + 1]++;
-	for (i = 0; i < n; i++)
-		doff[i + 1] += doff[i];
-	for (i = 0; i < n; i++)
-		for (j = roff[i]; j < roff[i + 1]; j++)
-			didx[doff[ridx[j]] + fill[ridx[j]]++] = i;
 
-	for (i = 0; i < n; i++) {
+	for(i = 0; i < m; i++) {
+		doff[ridx[i] + 1]++;
+	}
+
+	for(i = 0; i < n; i++) {
+		doff[i + 1] += doff[i];
+	}
+
+	for(i = 0; i < n; i++) {
+		for(j = roff[i]; j < roff[i + 1]; j++) {
+			didx[doff[ridx[j]] + fill[ridx[j]]++] = i;
+		}
+	}
+
+	for(i = 0; i < n; i++) {
 		uint32_t lv = 1;
 
-		for (j = doff[i]; j < doff[i + 1]; j++)
-			if (level[didx[j]] + 1 > lv)
+		for(j = doff[i]; j < doff[i + 1]; j++) {
+			if(level[didx[j]] + 1 > lv) {
 				lv = level[didx[j]] + 1;
+			}
+		}
+
 		level[i] = lv;
-		if (lv > maxlvl) {
+		if(lv > maxlvl) {
 			maxlvl = lv;
 			deepest = i;
 		}
-		if (strlen(ng_name(map, i)) > wname)
+
+		if(strlen(ng_name(map, i)) > wname) {
 			wname = (uint32_t)strlen(ng_name(map, i));
-		if (sv[i].type != NG_TYPE_TARGET && strlen(via_of(map, i)) > wvia)
+		}
+
+		if(sv[i].type != NG_TYPE_TARGET && strlen(via_of(map, i)) > wvia) {
 			wvia = (uint32_t)strlen(via_of(map, i));
+		}
 	}
 
 	printf("%s%sdepgraph%s  %s\n", st->bold, st->cyan, st->reset, path);
@@ -165,31 +220,36 @@ int cmd_show(int argc, char **argv)
 	       st->dim, (int)wname, "service", "type", (int)wvia, "via", st->reset);
 	fputs(st->dim, stdout);
 	fputs("  ", stdout);
-	for (i = 0; i < wname + wvia + 61; i++)
+	for(i = 0; i < wname + wvia + 61; i++) {
 		fputs(st->bar, stdout);
+	}
+
 	printf("%s\n", st->reset);
 
-	for (i = 0; i < n; i++) {
-		const char *col = i < h->n_roots ? st->green : "";
-		const char *cend = i < h->n_roots ? st->reset : "";
+	for(i = 0; i < n; i++) {
+		const char* col = i < h->n_roots ? st->green : "";
+		const char* cend = i < h->n_roots ? st->reset : "";
 		uint8_t pol = ng_onfail(map, i);
-		const char *pcol = pol == NG_ONFAIL_SHELL ? st->red :
-				   pol == NG_ONFAIL_STOP ? st->yellow : st->dim;
+		const char* pcol = pol == NG_ONFAIL_SHELL ? st->red :
+				   pol == NG_ONFAIL_STOP  ? st->yellow
+				   			  : st->dim;
 
 		// a width in printf counts bytes
 		char rdy[8], rst[8];
-		const char *via = sv[i].type == NG_TYPE_TARGET ? st->none : via_of(map, i);
+		const char* via = sv[i].type == NG_TYPE_TARGET ? st->none : via_of(map, i);
 		int vpad = (int)wvia - (sv[i].type == NG_TYPE_TARGET ? 1 : (int)strlen(via));
 
-		if (sv[i].notify_fd)
+		if(sv[i].notify_fd) {
 			snprintf(rdy, sizeof(rdy), "%3u", sv[i].notify_fd);
-		else
+		} else {
 			snprintf(rdy, sizeof(rdy), "  %s", st->none);
+		}
 
-		if (ng_restart(map, i))
+		if(ng_restart(map, i)) {
 			snprintf(rst, sizeof(rst), "yes");
-		else
+		} else {
 			snprintf(rst, sizeof(rst), "  %s", st->none);
+		}
 
 		printf("%s%3u%s  %s%-*s%s  %s%-7s%s  %s%s%*s%s  %3u  %5u  %s%-6s%s  %s%s%s  %s%s%s  ",
 		       st->dim, i, st->reset,
@@ -201,60 +261,75 @@ int cmd_show(int argc, char **argv)
 		       sv[i].notify_fd ? st->green : st->dim, rdy, st->reset,
 		       ng_restart(map, i) ? st->green : st->dim, rst, st->reset);
 
-		if (doff[i] == doff[i + 1]) {
+		if(doff[i] == doff[i + 1]) {
 			printf("%s%s%s", st->dim, st->none, st->reset);
 		} else {
-			for (j = doff[i]; j < doff[i + 1]; j++)
+			for(j = doff[i]; j < doff[i + 1]; j++) {
 				printf("%s%s", j > doff[i] ? " " : "", ng_name(map, didx[j]));
+			}
 		}
+
 		putchar('\n');
 
-		if (verbose) {
-			const struct ng_pol *pl = ng_pol(map, i);
-			const char *p;
+		if(verbose) {
+			const struct ng_pol* pl = ng_pol(map, i);
+			const char* p;
 
 			printf("%s     %s start-timeout %u ms, stop-timeout %u ms, "
 			       "start-tries %u, start-delay %u ms, deps %s%s%s\n",
 			       st->dim, st->vbar, ng_start_ms(map, i), ng_stop_ms(map, i),
 			       ng_start_tries(map, i), pl->retry_ms,
 			       ng_order_only(map, i) ? "order" : "uptime",
-			       pl->start_ms || pl->stop_ms || pl->start_tries ||
-			       pl->retry_ms || pl->pflags ? " (set)" : " (default)",
+			       pl->start_ms || pl->stop_ms || pl->start_tries
+					       || pl->retry_ms || pl->pflags
+				       ? " (set)"
+				       : " (default)",
 			       st->reset);
 
-			if (ng_interp(map, i)) {
-				const char *a = ng_exec(map, i);
+			if(ng_interp(map, i)) {
+				const char* a = ng_exec(map, i);
 
 				printf("%s     %s runs", st->dim, st->vbar);
-				for (; *a; a += strlen(a) + 1)
+				for(; *a; a += strlen(a) + 1) {
 					print_arg(a);
+				}
+
 				fputs(" SCRIPT", stdout);
-				for (a++; *a; a += strlen(a) + 1)
+				for(a++; *a; a += strlen(a) + 1) {
 					print_arg(a);
+				}
+
 				printf("%s\n", st->reset);
-			} else if (ng_direct(map, i)) {
-				const char *a = ng_exec(map, i);
+			} else if(ng_direct(map, i)) {
+				const char* a = ng_exec(map, i);
 
 				printf("%s     %s execs", st->dim, st->vbar);
-				for (; *a; a += strlen(a) + 1)
+				for(; *a; a += strlen(a) + 1) {
 					print_arg(a);
+				}
+
 				printf("%s\n", st->reset);
 			}
 
-			if (sv[i].type == NG_TYPE_TARGET)
+			if(sv[i].type == NG_TYPE_TARGET) {
 				continue;
-			p = ng_script(map, i);
-			while (*p == '\n')
-				p++;
+			}
 
-			while (*p) {
-				const char *nl = strchr(p, '\n');
+			p = ng_script(map, i);
+			while(*p == '\n') {
+				p++;
+			}
+
+			while(*p) {
+				const char* nl = strchr(p, '\n');
 				int w = nl ? (int)(nl - p) : (int)strlen(p);
 
 				printf("%s     %s %.*s%s\n",
 				       st->dim, st->vbar, w, p, st->reset);
-				if (!nl)
+				if(!nl) {
 					break;
+				}
+
 				p = nl + 1;
 			}
 		}
@@ -264,24 +339,28 @@ int cmd_show(int argc, char **argv)
 		uint32_t cur = deepest, c = maxlvl;
 
 		chain = calloc(maxlvl ? maxlvl : 1, sizeof(*chain));
-		if (!chain) {
+		if(!chain) {
 			fprintf(stderr, "ninitctl: out of memory\n");
 			goto out;
 		}
-		while (c) {
+
+		while(c) {
 			chain[--c] = cur;
-			for (j = doff[cur]; j < doff[cur + 1]; j++)
-				if (level[didx[j]] == level[cur] - 1) {
+			for(j = doff[cur]; j < doff[cur + 1]; j++) {
+				if(level[didx[j]] == level[cur] - 1) {
 					cur = didx[j];
 					break;
 				}
+			}
 		}
 
 		printf("\n%s%sdeepest dependency chain%s %s(%u services)%s\n  ",
 		       st->bold, st->yellow, st->reset, st->dim, maxlvl, st->reset);
-		for (i = 0; i < maxlvl; i++)
+		for(i = 0; i < maxlvl; i++) {
 			printf("%s%s%s%s", i ? " " : "", i ? st->arrow : "",
 			       i ? " " : "", ng_name(map, chain[i]));
+		}
+
 		putchar('\n');
 	}
 
@@ -292,7 +371,9 @@ out:
 	free(fill);
 	free(didx);
 	free(doff);
-	if (map != MAP_FAILED)
+	if(map != MAP_FAILED) {
 		munmap(map, maplen);
+	}
+
 	return rc;
 }

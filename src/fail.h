@@ -6,12 +6,12 @@
 #include <stddef.h>
 #include <sys/types.h>
 
-#define NG_ST_PENDING	0
-#define NG_ST_RUNNING	1
+#define NG_ST_PENDING 0
+#define NG_ST_RUNNING 1
 
-#define NG_ST_DONE	2
-#define NG_ST_FAILED	3
-#define NG_ST_SKIPPED	4
+#define NG_ST_DONE    2
+#define NG_ST_FAILED  3
+#define NG_ST_SKIPPED 4
 
 enum fail_act {
 	FAIL_RETRY,
@@ -20,26 +20,26 @@ enum fail_act {
 	FAIL_SHELL,
 };
 
-#define FAIL_ST_NOTIFY_HUP	(-1)
-#define FAIL_ST_TIMEOUT		(-2)
+#define FAIL_ST_NOTIFY_HUP (-1)
+#define FAIL_ST_TIMEOUT	   (-2)
 
-void fail_describe(int status, char *buf, size_t cap);
+void fail_describe(int status, char* buf, size_t cap);
 
-enum fail_act fail_service(const void *map, uint32_t i, int status, unsigned attempt,
+enum fail_act fail_service(const void* map, uint32_t i, int status, unsigned attempt,
 			   unsigned tries, str tail);
 
-uint32_t fail_poison(const void *map, uint32_t i, uint8_t *state, const uint8_t *up,
-		     uint32_t *undone);
+uint32_t fail_poison(const void* map, uint32_t i, uint8_t* state, const uint8_t* up,
+		     uint32_t* undone);
 
-uint32_t fail_poison_deps(const void *map, uint32_t i, uint8_t *state, const uint8_t *up,
-			  uint32_t *undone);
+uint32_t fail_poison_deps(const void* map, uint32_t i, uint8_t* state, const uint8_t* up,
+			  uint32_t* undone);
 
 void ninit_cloexec_except(int keep);
 void console_front(int text);
 
 void ninit_oom_score_adj(str v);
 
-void fail_emergency_shell(const char *why);
+void fail_emergency_shell(const char* why);
 
 int fail_emergency_reaped(pid_t pid, int status);
 
@@ -51,4 +51,4 @@ int fail_emergency_fd(void);
 
 void fail_emergency_report(void);
 
-void fail_summary(const void *map, const uint8_t *state);
+void fail_summary(const void* map, const uint8_t* state);

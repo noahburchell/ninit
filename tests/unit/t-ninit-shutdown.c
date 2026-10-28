@@ -19,8 +19,8 @@ static struct {
 	int kills, kill_sig, kill_errno;
 	pid_t kill_pid;
 	int reboots, reboot_cmd, syncs;
-	const char *comm;
-	const char *self;
+	const char* comm;
+	const char* self;
 	int execs;
 	char exec_path[PATH_MAX + 128];
 	char exec_argv[8][64];
@@ -33,76 +33,81 @@ static struct {
 	unsigned sleep_calls, sleep_short;
 	uid_t euid;
 	time_t now;
-	const char *can;
+	const char* can;
 } sh;
 
 static jmp_buf exit_jb;
 static char con_path[] = "/tmp/ninit-t-shutdown-console.XXXXXX";
 
-static int shim_kill(pid_t pid, int sig)
-{
+static int shim_kill(pid_t pid, int sig) {
 	sh.kills++;
 	sh.kill_pid = pid;
 	sh.kill_sig = sig;
-	if (sh.kill_errno) {
+	if(sh.kill_errno) {
 		errno = sh.kill_errno;
 		return -1;
 	}
+
 	return 0;
 }
 
-static int shim_reboot(int cmd)
-{
+static int shim_reboot(int cmd) {
 	sh.reboots++;
 	sh.reboot_cmd = cmd;
 	errno = EPERM;
+
 	return -1;
 }
 
-static void shim_sync(void)
-{
+static void shim_sync(void) {
 	sh.syncs++;
 }
 
-static int shim_open(const char *path, int flags, ...)
-{
-	if (!strcmp(path, "/proc/1/comm")) {
+static int shim_open(const char* path, int flags, ...) {
+	if(!strcmp(path, "/proc/1/comm")) {
 		char tmp[] = "/tmp/ninit-t-shutdown-comm.XXXXXX";
 		int fd;
 
-		if (!sh.comm) {
+		if(!sh.comm) {
 			errno = ENOENT;
 			return -1;
 		}
+
 		fd = mkstemp(tmp);
 		unlink(tmp);
 		(void)!write(fd, sh.comm, strlen(sh.comm));
 		lseek(fd, 0, SEEK_SET);
 		return fd;
 	}
-	if (!strcmp(path, "/dev/console"))
+
+	if(!strcmp(path, "/dev/console")) {
 		return open(con_path, O_WRONLY | O_APPEND | O_CLOEXEC);
+	}
+
 	errno = EACCES;
+
 	return -1;
 }
 
-static ssize_t shim_readlink(const char *restrict path, char *restrict buf, size_t n)
-{
+static ssize_t shim_readlink(const char* restrict path, char* restrict buf, size_t n) {
 	size_t len;
 
-	if (strcmp(path, "/proc/self/exe") || !sh.self) {
+	if(strcmp(path, "/proc/self/exe") || !sh.self) {
 		errno = ENOENT;
 		return -1;
 	}
+
 	len = strlen(sh.self);
-	if (len > n)
+	if(len > n) {
 		len = n;
+	}
+
 	memcpy(buf, sh.self, len);
+
 	return (ssize_t)len;
 }
 
-static int shim_execv(const char *path, char *const argv[])
-{
+static int shim_execv(const char* path, char* const argv[]) {
 	sh.execs++;
 	{
 		size_t n = strnlen(path, sizeof(sh.exec_path) - 1);
@@ -110,110 +115,120 @@ static int shim_execv(const char *path, char *const argv[])
 		memcpy(sh.exec_path, path, n);
 		sh.exec_path[n] = '\0';
 	}
-	for (sh.exec_argc = 0; argv[sh.exec_argc] && sh.exec_argc < 8; sh.exec_argc++)
+
+	for(sh.exec_argc = 0; argv[sh.exec_argc] && sh.exec_argc < 8; sh.exec_argc++) {
 		snprintf(sh.exec_argv[sh.exec_argc], sizeof(sh.exec_argv[0]), "%s", argv[sh.exec_argc]);
+	}
+
 	errno = ENOENT;
+
 	return -1;
 }
 
-static pid_t shim_fork(void)
-{
+static pid_t shim_fork(void) {
 	sh.forks++;
-	if (sh.fork_ret < 0)
+	if(sh.fork_ret < 0) {
 		errno = EAGAIN;
+	}
+
 	return sh.fork_ret;
 }
 
-static int shim_execlp(const char *file, const char *arg, ...)
-{
+static int shim_execlp(const char* file, const char* arg, ...) {
 	va_list ap;
-	const char *a;
+	const char* a;
 
 	sh.lp_argc = 0;
 	snprintf(sh.lp_args[sh.lp_argc++], sizeof(sh.lp_args[0]), "%s", file);
 	va_start(ap, arg);
-	for (a = arg; a && sh.lp_argc < 12; a = va_arg(ap, const char *))
+	for(a = arg; a && sh.lp_argc < 12; a = va_arg(ap, const char*)) {
 		snprintf(sh.lp_args[sh.lp_argc++], sizeof(sh.lp_args[0]), "%s", a);
+	}
+
 	va_end(ap);
 	errno = ENOENT;
+
 	return -1;
 }
 
-static pid_t shim_waitpid(pid_t pid, int *st, int flags)
-{
+static pid_t shim_waitpid(pid_t pid, int* st, int flags) {
 	(void)flags;
-	if (sh.wait_eintr) {
+	if(sh.wait_eintr) {
 		sh.wait_eintr--;
 		errno = EINTR;
 		return -1;
 	}
+
 	*st = sh.wait_status;
+
 	return pid;
 }
 
-[[noreturn]] static void shim_exit(int code)
-{
+[[noreturn]] static void shim_exit(int code) {
 	longjmp(exit_jb, 1000 + code);
 }
 
-[[noreturn]] static void shim__exit(int code)
-{
+[[noreturn]] static void shim__exit(int code) {
 	longjmp(exit_jb, 2000 + code);
 }
 
-static unsigned shim_sleep(unsigned s)
-{
+static unsigned shim_sleep(unsigned s) {
 	unsigned left = 0;
 
 	sh.sleep_calls++;
 	// an interrupted sleep returns the remaining seconds
-	if (sh.sleep_short && s > 1) {
+	if(sh.sleep_short && s > 1) {
 		sh.sleep_short--;
 		left = s / 2;
 	}
+
 	sh.slept += s - left;
+
 	return left;
 }
 
 // the pipe holds what dbus-send would print for a Can method
-static int shim_pipe2(int fd[2], int flags)
-{
-	if (pipe2(fd, flags) < 0)
+static int shim_pipe2(int fd[2], int flags) {
+	if(pipe2(fd, flags) < 0) {
 		return -1;
-	if (sh.can)
+	}
+
+	if(sh.can) {
 		(void)!write(fd[1], sh.can, strlen(sh.can));
+	}
+
 	return 0;
 }
 
-static uid_t shim_geteuid(void)
-{
+static uid_t shim_geteuid(void) {
 	return sh.euid;
 }
 
-static time_t shim_time(time_t *t)
-{
-	if (t)
+static time_t shim_time(time_t* t) {
+	if(t) {
 		*t = sh.now;
+	}
+
 	return sh.now;
 }
 
-#define main shutdown_main
-#define kill shim_kill
-#define reboot shim_reboot
-#define sync shim_sync
-#define open shim_open
+#define main	 shutdown_main
+#define kill	 shim_kill
+#define reboot	 shim_reboot
+#define sync	 shim_sync
+#define open	 shim_open
 #define readlink shim_readlink
-#define execv shim_execv
-#define fork shim_fork
-#define execlp shim_execlp
-#define waitpid shim_waitpid
-#define exit shim_exit
-#define _exit shim__exit
-#define sleep shim_sleep
-#define geteuid shim_geteuid
-#define time shim_time
-#define pipe2 shim_pipe2
-int shutdown_main(int argc, char **argv);
+#define execv	 shim_execv
+#define fork	 shim_fork
+#define execlp	 shim_execlp
+#define waitpid	 shim_waitpid
+#define exit	 shim_exit
+#define _exit	 shim__exit
+#define sleep	 shim_sleep
+#define geteuid	 shim_geteuid
+#define time	 shim_time
+#define pipe2	 shim_pipe2
+int shutdown_main(int argc, char** argv);
 #include "../../tools/shutdown.c"
 #undef main
 #undef kill
@@ -234,18 +249,17 @@ int shutdown_main(int argc, char **argv);
 
 static char out[8192], err[8192], con[1024];
 
-static void slurp(const char *path, char *buf, size_t cap)
-{
+static void slurp(const char* path, char* buf, size_t cap) {
 	int fd = open(path, O_RDONLY | O_CLOEXEC);
 	ssize_t n = fd >= 0 ? read(fd, buf, cap - 1) : -1;
 
 	buf[n > 0 ? n : 0] = '\0';
-	if (fd >= 0)
+	if(fd >= 0) {
 		close(fd);
+	}
 }
 
-static void reset(void)
-{
+static void reset(void) {
 	memset(&sh, 0, sizeof(sh));
 	sh.comm = "ninit\n";
 	sh.self = "/usr/sbin/ninit-shutdown";
@@ -255,22 +269,22 @@ static void reset(void)
 }
 
 // runs ninit-shutdown with the effects recorded, returns its exit status or 1000 + exit()
-static int run(const char *argv0, ...)
-{
+static int run(const char* argv0, ...) {
 	static char argbuf[16][128];
-	char *argv[17];
+	char* argv[17];
 	char opath[] = "/tmp/ninit-t-shutdown-out.XXXXXX", epath[] = "/tmp/ninit-t-shutdown-err.XXXXXX";
 	int argc = 0, o, e, fo, fe;
 	volatile int rc;
 	va_list ap;
-	const char *a;
+	const char* a;
 
 	va_start(ap, argv0);
-	for (a = argv0; a && argc < 16; a = va_arg(ap, const char *)) {
+	for(a = argv0; a && argc < 16; a = va_arg(ap, const char*)) {
 		snprintf(argbuf[argc], sizeof(argbuf[0]), "%s", a);
 		argv[argc] = argbuf[argc];
 		argc++;
 	}
+
 	va_end(ap);
 	argv[argc] = NULL;
 
@@ -281,6 +295,7 @@ static int run(const char *argv0, ...)
 
 		close(c);
 	}
+
 	fflush(stdout);
 	fflush(stderr);
 	o = dup(1);
@@ -288,8 +303,10 @@ static int run(const char *argv0, ...)
 	dup2(fo, 1);
 	dup2(fe, 2);
 	rc = setjmp(exit_jb);
-	if (!rc)
+	if(!rc) {
 		rc = shutdown_main(argc, argv);
+	}
+
 	fflush(stdout);
 	fflush(stderr);
 	dup2(o, 1);
@@ -303,23 +320,23 @@ static int run(const char *argv0, ...)
 	slurp(con_path, con, sizeof(con));
 	unlink(opath);
 	unlink(epath);
+
 	return rc;
 }
 
-static void expect_signal(int rc, int sig, const char *what)
-{
+static void expect_signal(int rc, int sig, const char* what) {
 	char w[160];
 
 	snprintf(w, sizeof(w), "%s: exits 0", what);
 	is_int(rc, 0, w);
 	snprintf(w, sizeof(w), "%s: signals pid 1 once with %s", what, strsignal(sig));
 	ok(sh.kills == 1 && sh.kill_pid == 1 && sh.kill_sig == sig, "%s", w);
-	if (sh.kills != 1 || sh.kill_sig != sig)
+	if(sh.kills != 1 || sh.kill_sig != sig) {
 		tap_diag("kills %d pid %d sig %d", sh.kills, (int)sh.kill_pid, sh.kill_sig);
+	}
 }
 
-static void test_names(void)
-{
+static void test_names(void) {
 	reset();
 	expect_signal(run("poweroff", NULL), SIGUSR2, "poweroff");
 	reset();
@@ -341,8 +358,7 @@ static void test_names(void)
 	ok(!sh.syncs && !sh.reboots, "signalling pid 1 neither syncs nor calls reboot(2)");
 }
 
-static void test_options(void)
-{
+static void test_options(void) {
 	reset();
 	expect_signal(run("shutdown", "-r", "now", NULL), SIGTERM, "shutdown -r now");
 	reset();
@@ -375,8 +391,7 @@ static void test_options(void)
 	expect_signal(run("reboot", "now", NULL), SIGTERM, "reboot takes an optional TIME");
 }
 
-static void test_errors(void)
-{
+static void test_errors(void) {
 	int rc;
 
 	reset();
@@ -404,7 +419,7 @@ static void test_errors(void)
 	rc = run("telinit", "Q", NULL);
 	is_int(rc + sh.kills, 0, "telinit Q does nothing either");
 
-	for (const char *const *lv = (const char *const[]){ "1", "2", "3", "5", "s", "06", NULL }; *lv; lv++) {
+	for(const char* const* lv = (const char* const[]){ "1", "2", "3", "5", "s", "06", NULL }; *lv; lv++) {
 		char want[96];
 
 		reset();
@@ -425,26 +440,44 @@ static void test_errors(void)
 	has_str(err, "a pending shutdown runs in the foreground, interrupt it instead", "with the reason");
 	is_int(sh.kills, 0, "and nothing is signalled");
 
-	static const char *const bad[] = {
-		"+", "+-1", "+x", "+5m", "25:00", "24:00", "12:60", "12:", ":30", "noon", "1200",
-		"+99999999999999999999", "+153722867280912931", "12:30:00", "-1:00",
-		"+ 5", "++5", "12:+5", "12:-5", " 12:00", "12: 5",
+	static const char* const bad[] = {
+		"+",
+		"+-1",
+		"+x",
+		"+5m",
+		"25:00",
+		"24:00",
+		"12:60",
+		"12:",
+		":30",
+		"noon",
+		"1200",
+		"+99999999999999999999",
+		"+153722867280912931",
+		"12:30:00",
+		"-1:00",
+		"+ 5",
+		"++5",
+		"12:+5",
+		"12:-5",
+		" 12:00",
+		"12: 5",
 	};
-	for (size_t k = 0; k < sizeof(bad) / sizeof(*bad); k++) {
+	for(size_t k = 0; k < sizeof(bad) / sizeof(*bad); k++) {
 		char want[96];
 
 		reset();
 		rc = run("shutdown", bad[k], NULL);
 		snprintf(want, sizeof(want), "shutdown: invalid time '%s'\n", bad[k]);
-		if (bad[k][0] == '-')
+		if(bad[k][0] == '-') {
 			ok(rc == 2 && !sh.kills, "TIME %s is a usage error", bad[k]);
-		else
+		} else {
 			ok(rc == 2 && strstr(err, want) && !sh.kills, "TIME %s is a usage error", bad[k]);
+		}
 	}
 }
 
-static void test_time(void)
-{
+static void test_time(void) {
 	int rc;
 
 	reset();
@@ -504,10 +537,10 @@ static void test_time(void)
 	is_int(sh.slept, 0, "on another init nothing is waited on before delegating");
 }
 
-static void test_force(void)
-{
+static void test_force(void) {
 	static const struct {
-		const char *argv0, *opt;
+		const char* argv0;
+		const char* opt;
 		int cmd;
 	} v[] = {
 		{ "poweroff", "-f", RB_POWER_OFF },
@@ -517,12 +550,14 @@ static void test_force(void)
 	};
 	int rc;
 
-	for (size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
+	for(size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
 		reset();
-		if (!strcmp(v[k].argv0, "shutdown"))
+		if(!strcmp(v[k].argv0, "shutdown")) {
 			rc = run(v[k].argv0, "-f", v[k].opt, "now", NULL);
-		else
+		} else {
 			rc = run(v[k].argv0, v[k].opt, NULL);
+		}
+
 		ok(sh.syncs == 1 && sh.reboots == 1 && sh.reboot_cmd == v[k].cmd,
 		   "%s -f syncs and calls reboot(2) with %#x", v[k].argv0, (unsigned)v[k].cmd);
 		ok(!sh.kills, "%s -f does not signal pid 1", v[k].argv0);
@@ -536,8 +571,7 @@ static void test_force(void)
 	is_int(sh.sleep_calls, 0, "-f does not wait for TIME");
 }
 
-static void test_delegate(void)
-{
+static void test_delegate(void) {
 	int rc;
 
 	reset();
@@ -545,8 +579,8 @@ static void test_delegate(void)
 	rc = run("reboot", "--no-wall", NULL);
 	is_int(sh.execs, 1, "on another init NAME.old is executed");
 	is_str(sh.exec_path, "/usr/sbin/reboot.old", "from the directory of the running binary");
-	ok(sh.exec_argc == 2 && !strcmp(sh.exec_argv[0], "reboot") &&
-	   !strcmp(sh.exec_argv[1], "--no-wall"),
+	ok(sh.exec_argc == 2 && !strcmp(sh.exec_argv[0], "reboot")
+		   && !strcmp(sh.exec_argv[1], "--no-wall"),
 	   "with argv[0] set to its name and options it does not know passed on");
 	is_int(sh.kills, 0, "pid 1 is not signalled");
 	is_int(rc, 1001, "a failed exec exits 1");
@@ -589,32 +623,33 @@ static void test_delegate(void)
 	is_int(sh.execs, 1, "a comm that only starts with ninit is another init");
 }
 
-static void test_user(void)
-{
+static void test_user(void) {
 	static const struct {
-		const char *argv0, *method;
+		const char* argv0;
+		const char* method;
 	} v[] = {
 		{ "poweroff", "org.freedesktop.login1.Manager.PowerOff" },
 		{ "reboot", "org.freedesktop.login1.Manager.Reboot" },
 		{ "halt", "org.freedesktop.login1.Manager.Halt" },
 	};
-	static const char *const refused[] = { "   no", "   na", "", "   yesno" };
+	static const char* const refused[] = { "   no", "   na", "", "   yesno" };
 	int rc;
 
-	for (size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
+	for(size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
 		reset();
 		sh.euid = 1000;
 		sh.fork_ret = 0;
 		rc = run(v[k].argv0, NULL);
 		is_int(rc, 2127, "the dbus-send child exits 127 when it cannot exec");
-		ok(sh.lp_argc == 7 && !strcmp(sh.lp_args[0], "dbus-send") &&
-		   !strcmp(sh.lp_args[1], "dbus-send") && !strcmp(sh.lp_args[2], "--system") &&
-		   !strcmp(sh.lp_args[3], "--dest=org.freedesktop.login1") &&
-		   !strcmp(sh.lp_args[4], "/org/freedesktop/login1") &&
-		   !strcmp(sh.lp_args[5], v[k].method),
+		ok(sh.lp_argc == 7 && !strcmp(sh.lp_args[0], "dbus-send")
+			   && !strcmp(sh.lp_args[1], "dbus-send") && !strcmp(sh.lp_args[2], "--system")
+			   && !strcmp(sh.lp_args[3], "--dest=org.freedesktop.login1")
+			   && !strcmp(sh.lp_args[4], "/org/freedesktop/login1")
+			   && !strcmp(sh.lp_args[5], v[k].method),
 		   "%s as a user calls %s", v[k].argv0, v[k].method);
 		ok(!sh.kills, "%s as a user does not signal pid 1", v[k].argv0);
 	}
+
 	reset();
 	sh.euid = 1000;
 	sh.fork_ret = 0;
@@ -647,18 +682,19 @@ static void test_user(void)
 	sh.euid = 1000;
 	sh.fork_ret = 0;
 	rc = run("shutdown", "+5", NULL);
-	ok(rc == 2127 && sh.lp_argc == 7 && !strcmp(sh.lp_args[3], "--print-reply=literal") &&
-	   !strcmp(sh.lp_args[6], "org.freedesktop.login1.Manager.CanPowerOff"),
+	ok(rc == 2127 && sh.lp_argc == 7 && !strcmp(sh.lp_args[3], "--print-reply=literal")
+		   && !strcmp(sh.lp_args[6], "org.freedesktop.login1.Manager.CanPowerOff"),
 	   "shutdown +5 as a user asks logind CanPowerOff");
 	ok(!sh.slept && !*con, "before it waits or broadcasts");
 
-	for (size_t k = 0; k < sizeof(refused) / sizeof(*refused); k++) {
+	for(size_t k = 0; k < sizeof(refused) / sizeof(*refused); k++) {
 		reset();
 		sh.euid = 1000;
 		sh.can = refused[k];
 		rc = run("shutdown", "+5", NULL);
 		ok(rc == 1 && !sh.slept && !*con && sh.forks == 1, "the answer '%s' refuses at once", refused[k] + strspn(refused[k], " "));
 	}
+
 	has_str(err, "shutdown: permission denied, must be run as root\n", "as permission denied");
 
 	reset();
@@ -691,8 +727,7 @@ static void test_user(void)
 	has_str(err, "reboot: cannot signal pid 1: Operation not permitted\n", "and says why");
 }
 
-static void test_usage(void)
-{
+static void test_usage(void) {
 	int rc;
 
 	reset();
@@ -715,8 +750,7 @@ static void test_usage(void)
 	is_int(sh.kills + rc, 0, "--help anywhere wins over the action");
 }
 
-int main(void)
-{
+int main(void) {
 	int fd;
 
 	setenv("TZ", "UTC", 1);
@@ -733,5 +767,6 @@ int main(void)
 	test_user();
 	test_usage();
 	unlink(con_path);
+
 	return tap_done();
 }

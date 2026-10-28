@@ -8,17 +8,18 @@
 #include "tap.h"
 
 // ng_locale_env reads a fixed path, so it is pointed at a scratch file here
-static const char *locale_path;
+static const char* locale_path;
 
-static int shim_open(const char *path, int flags, ...)
-{
-	if (!strcmp(path, "/etc/locale.conf")) {
-		if (!locale_path) {
+static int shim_open(const char* path, int flags, ...) {
+	if(!strcmp(path, "/etc/locale.conf")) {
+		if(!locale_path) {
 			errno = ENOENT;
 			return -1;
 		}
+
 		path = locale_path;
 	}
+
 	return open(path, flags);
 }
 
@@ -28,10 +29,9 @@ static int shim_open(const char *path, int flags, ...)
 
 #include "gbuild.h"
 
-static void test_crc(void)
-{
+static void test_crc(void) {
 	static const struct {
-		const char *in;
+		const char* in;
 		size_t len;
 		uint32_t crc;
 	} v[] = {
@@ -42,15 +42,17 @@ static void test_crc(void)
 	};
 	unsigned char zeros[32] = { 0 }, ones[32], inc[32], dec[32];
 
-	for (size_t k = 0; k < sizeof(v) / sizeof(*v); k++)
+	for(size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
 		ok(ng_crc32c(v[k].in, v[k].len) == v[k].crc, "crc32c of \"%s\"", v[k].in);
+	}
 
 	// rfc 3720 b.4
 	memset(ones, 0xff, sizeof(ones));
-	for (int k = 0; k < 32; k++) {
+	for(int k = 0; k < 32; k++) {
 		inc[k] = (unsigned char)k;
 		dec[k] = (unsigned char)(31 - k);
 	}
+
 	is_int(ng_crc32c(zeros, 32), 0x8a9136aau, "crc32c of 32 zero bytes");
 	is_int(ng_crc32c(ones, 32), 0x62a8ab43u, "crc32c of 32 0xff bytes");
 	is_int(ng_crc32c(inc, 32), 0x46dd794eu, "crc32c of 0..31");
@@ -61,57 +63,64 @@ static void test_crc(void)
 		unsigned char buf[600];
 		int bad = 0;
 
-		for (size_t k = 0; k < sizeof(buf); k++)
+		for(size_t k = 0; k < sizeof(buf); k++) {
 			buf[k] = (unsigned char)tap_rand();
-		for (size_t at = 0; at < 9; at++)
-			for (size_t len = 0; len + at <= sizeof(buf); len += 1 + len / 7) {
+		}
+
+		for(size_t at = 0; at < 9; at++) {
+			for(size_t len = 0; len + at <= sizeof(buf); len += 1 + len / 7) {
 				uint32_t sw = ~(uint32_t)crc32c_feed_sw(~0u, buf + at, len);
 
-				if (sw != ng_crc32c(buf + at, len) && bad++ < 5)
+				if(sw != ng_crc32c(buf + at, len) && bad++ < 5) {
 					tap_diag("mismatch at offset %zu length %zu", at, len);
+				}
 			}
+		}
+
 		ok(!bad, "crc32c dispatcher matches the table implementation");
 	}
 
 	// incremental feeding must equal a single pass
 	{
-		const char *s = "split anywhere and the running crc must not care";
+		const char* s = "split anywhere and the running crc must not care";
 		size_t n = strlen(s);
 		int bad = 0;
 
-		for (size_t cut = 0; cut <= n; cut++) {
+		for(size_t cut = 0; cut <= n; cut++) {
 			uint64_t c = crc32c_feed(~0u, s, cut);
 
 			c = crc32c_feed(c, s + cut, n - cut);
 			bad += ~(uint32_t)c != ng_crc32c(s, n);
 		}
+
 		ok(!bad, "crc32c is the same however the input is split");
 	}
 }
 
-static struct gb_img sample(void)
-{
+static struct gb_img sample(void) {
 	static const struct gb_svc sv[] = {
 		GB_ONESHOT("fs", "fsck /"),
 		GB_ONESHOT("udev", "exec udevd"),
 		GB_ONESHOT("mounts", "mount -a"),
-		{ .name = "dbus", .type = NG_TYPE_DAEMON, .onfail = GB_DEFAULT, .script = "run()",
-		  GB_EXEC("/usr/bin/lua\0-e\0x()\0-e\0\0") },
+		{ .name = "dbus", .type = NG_TYPE_DAEMON, .onfail = GB_DEFAULT, .script = "run()", GB_EXEC("/usr/bin/lua\0-e\0x()\0-e\0\0") },
 		GB_TARGET("basic"),
-		{ .name = "getty", .type = NG_TYPE_DAEMON, .onfail = GB_DEFAULT, .script = "exec agetty tty1",
-		  GB_DIRECT("agetty\0tty1\0") },
+		{ .name = "getty", .type = NG_TYPE_DAEMON, .onfail = GB_DEFAULT, .script = "exec agetty tty1", GB_DIRECT("agetty\0tty1\0") },
 	};
 	static const struct gb_edge e[] = {
-		{ 0, 2 }, { 1, 3 }, { 2, 3 }, { 2, 4 }, { 3, 4 }, { 4, 5 },
+		{ 0, 2 },
+		{ 1, 3 },
+		{ 2, 3 },
+		{ 2, 4 },
+		{ 3, 4 },
+		{ 4, 5 },
 	};
 
 	return gb_build(sv, 6, e, 6);
 }
 
-static void test_image_crc(void)
-{
+static void test_image_crc(void) {
 	struct gb_img g = sample();
-	struct ng_hdr *h = gb_hdr(&g);
+	struct ng_hdr* h = gb_hdr(&g);
 	uint32_t c = h->crc32;
 
 	is_int(ng_image_crc32c(g.map, g.len), c, "image crc skips its own field");
@@ -123,10 +132,10 @@ static void test_image_crc(void)
 	free(g.map);
 }
 
-static void test_names(void)
-{
+static void test_names(void) {
 	static const struct {
-		const char *name, *why;
+		const char* name;
+		const char* why;
 	} v[] = {
 		{ "", "is empty" },
 		{ ".hidden", "starts with a dot" },
@@ -140,7 +149,9 @@ static void test_names(void)
 		{ "a b", "contains whitespace or a control character" },
 		{ "a\tb", "contains whitespace or a control character" },
 		{ "a\nb", "contains whitespace or a control character" },
-		{ "a\x01" "b", "contains whitespace or a control character" },
+		{ "a\x01"
+		  "b",
+		  "contains whitespace or a control character" },
 		{ "a\x7f", "contains whitespace or a control character" },
 		{ "#", NULL },
 		{ "#foo", NULL },
@@ -154,7 +165,7 @@ static void test_names(void)
 	};
 	char longname[300];
 
-	for (size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
+	for(size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
 		char what[96];
 
 		snprintf(what, sizeof(what), "name problem for case %zu", k);
@@ -191,18 +202,14 @@ static void test_names(void)
 	       "onfail ignores the restart bit");
 }
 
-static void test_accessors(void)
-{
+static void test_accessors(void) {
 	static const struct gb_svc sv[] = {
 		GB_ONESHOT("a", "true"),
 		GB_DAEMON("b", "exec sleep 1"),
-		{ .name = "c", .type = NG_TYPE_DAEMON, .onfail = NG_ONFAIL_SHELL, .restart = 1,
-		  .notify = 7, .script = "x",
-		  .pol = { .start_ms = 1, .stop_ms = 2, .retry_ms = 3, .start_tries = 4,
-			   .pflags = NG_PF_ORDER_ONLY } },
+		{ .name = "c", .type = NG_TYPE_DAEMON, .onfail = NG_ONFAIL_SHELL, .restart = 1, .notify = 7, .script = "x", .pol = { .start_ms = 1, .stop_ms = 2, .retry_ms = 3, .start_tries = 4, .pflags = NG_PF_ORDER_ONLY } },
 	};
 	struct gb_img g = gb_build(sv, 3, NULL, 0);
-	const void *m = g.map;
+	const void* m = g.map;
 
 	is_str(ng_verify(m, g.len), NULL, "accessor sample verifies");
 	is_int(ng_start_ms(m, 0), 90000, "start-timeout defaults to 90 s");
@@ -224,79 +231,202 @@ static void test_accessors(void)
 	free(g.map);
 }
 
-typedef void (*mutator)(struct gb_img *);
+typedef void (*mutator)(struct gb_img*);
 
 struct vcase {
-	const char *what;
-	const char *why;
-	mutator fn;
-	int recrc;
+	const char* what;
+	const char* why;
+	mutator     fn;
+	int         recrc;
 };
 
-#define HDR(g)	gb_hdr(g)
+#define HDR(g)	  gb_hdr(g)
 #define SVC(g, i) gb_svc_at(g, i)
 #define POL(g, i) gb_pol_at(g, i)
 
-static void m_none(struct gb_img *g) { (void)g; }
-static void m_magic(struct gb_img *g) { HDR(g)->magic ^= 1; }
-static void m_version(struct gb_img *g) { HDR(g)->version = NG_VERSION - 1; }
-static void m_version_new(struct gb_img *g) { HDR(g)->version = NG_VERSION + 1; }
-static void m_total(struct gb_img *g) { HDR(g)->total_len++; }
-static void m_nsvc_max(struct gb_img *g) { HDR(g)->n_svc = NG_MAX_SVC + 1; }
-static void m_roots(struct gb_img *g) { HDR(g)->n_roots = HDR(g)->n_svc + 1; }
-static void m_reserved(struct gb_img *g) { HDR(g)->reserved = 1; }
-static void m_edges_nosvc(struct gb_img *g) { HDR(g)->n_svc = 0; HDR(g)->n_roots = 0; }
-static void m_edges_max(struct gb_img *g) { HDR(g)->n_edges = 16; }
-static void m_svc_oob(struct gb_img *g) { HDR(g)->off_svc = HDR(g)->total_len - 8; }
-static void m_svc_align(struct gb_img *g) { HDR(g)->off_svc += 4; }
-static void m_roff_oob(struct gb_img *g) { HDR(g)->off_rdep_off = HDR(g)->total_len; }
-static void m_roff_align(struct gb_img *g) { HDR(g)->off_rdep_off += 2; }
-static void m_ridx_oob(struct gb_img *g) { HDR(g)->off_rdep_idx = HDR(g)->total_len - 4; }
-static void m_blob_oob(struct gb_img *g) { HDR(g)->blob_len += 1; }
-static void m_pol_oob(struct gb_img *g) { HDR(g)->off_pol = HDR(g)->total_len - 4; }
-static void m_overlap(struct gb_img *g) { HDR(g)->off_pol = HDR(g)->off_svc; }
-static void m_overlap_hdr(struct gb_img *g) { HDR(g)->off_rdep_off = 56; }
-static void m_crc(struct gb_img *g) { HDR(g)->crc32 ^= 0x10; }
-static void m_payload(struct gb_img *g) { gb_blob(g)[0] ^= 0x20; }
-static void m_blob_nul(struct gb_img *g) { gb_blob(g)[HDR(g)->blob_len - 1] = 'x'; }
-static void m_roff0(struct gb_img *g) { gb_roff(g)[0] = 1; }
-static void m_roffn(struct gb_img *g) { gb_roff(g)[HDR(g)->n_svc] = 5; }
-static void m_roff_mono(struct gb_img *g) { gb_roff(g)[1] = 2; gb_roff(g)[2] = 1; }
-static void m_ridx_range(struct gb_img *g) { gb_ridx(g)[5] = 99; }
-static void m_ridx_back(struct gb_img *g) { gb_ridx(g)[0] = 0; }
-static void m_ridx_sort(struct gb_img *g) { gb_ridx(g)[2] = 4; gb_ridx(g)[3] = 3; }
-static void m_ndesc_dep(struct gb_img *g) { SVC(g, 2)->n_desc = 1; }
-static void m_unmet_big(struct gb_img *g) { SVC(g, 5)->unmet = 6; }
-static void m_ndesc_big(struct gb_img *g) { SVC(g, 0)->n_desc = 6; }
-static void m_notify_range(struct gb_img *g) { SVC(g, 3)->notify_fd = 2; }
-static void m_notify_big(struct gb_img *g) { SVC(g, 3)->notify_fd = 256; }
-static void m_notify_type(struct gb_img *g) { SVC(g, 2)->notify_fd = 3; }
-static void m_type(struct gb_img *g) { SVC(g, 5)->type = 3; }
-static void m_onfail(struct gb_img *g) { SVC(g, 5)->flags = 3; }
-static void m_flags(struct gb_img *g) { SVC(g, 5)->flags |= 0x20; }
-static void m_interp_noexec(struct gb_img *g) { SVC(g, 1)->flags |= NG_FLAG_INTERP; }
-static void m_exec_noflag(struct gb_img *g) { POL(g, 1)->exec_off = 0; }
-static void m_interp_target(struct gb_img *g) { SVC(g, 4)->flags |= NG_FLAG_INTERP; }
-static void m_direct_noexec(struct gb_img *g) { SVC(g, 1)->flags |= NG_FLAG_DIRECT; }
-static void m_direct_target(struct gb_img *g) { SVC(g, 4)->flags |= NG_FLAG_DIRECT; }
-static void m_direct_interp(struct gb_img *g) { SVC(g, 3)->flags |= NG_FLAG_DIRECT; }
-static void m_direct_empty(struct gb_img *g) { gb_blob(g)[POL(g, 5)->exec_off] = '\0'; }
-static void m_warn_deps(struct gb_img *g) { SVC(g, 2)->flags = NG_ONFAIL_WARN; }
-static void m_restart_type(struct gb_img *g) { SVC(g, 2)->flags |= NG_FLAG_RESTART; }
-static void m_name_off(struct gb_img *g) { SVC(g, 1)->name_off = HDR(g)->blob_len; }
-static void m_name_bad(struct gb_img *g) { gb_blob(g)[SVC(g, 1)->name_off] = '.'; }
-static void m_root_unmet(struct gb_img *g) { SVC(g, 0)->unmet = 1; }
-static void m_nonroot_unmet(struct gb_img *g) { HDR(g)->n_roots = 1; }
-static void m_target_script(struct gb_img *g) { SVC(g, 4)->script_off = 0; }
-static void m_script_off(struct gb_img *g) { SVC(g, 3)->script_off = HDR(g)->blob_len; }
-static void m_tmo(struct gb_img *g) { POL(g, 1)->start_ms = NG_MAX_MS + 1; }
-static void m_stop_tmo(struct gb_img *g) { POL(g, 1)->stop_ms = NG_MAX_MS + 1; }
-static void m_tmo_max(struct gb_img *g) { POL(g, 1)->start_ms = NG_MAX_MS; }
-static void m_tries(struct gb_img *g) { POL(g, 1)->start_tries = NG_MAX_TRIES + 1; }
-static void m_tries_max(struct gb_img *g) { POL(g, 1)->start_tries = NG_MAX_TRIES; }
-static void m_pflags(struct gb_img *g) { POL(g, 1)->pflags = 2; }
-static void m_unmet_mismatch(struct gb_img *g) { SVC(g, 3)->unmet = 1; }
-static void m_dup_name(struct gb_img *g) { SVC(g, 5)->name_off = SVC(g, 3)->name_off; }
+static void m_none(struct gb_img* g) {
+	(void)g;
+}
+static void m_magic(struct gb_img* g) {
+	HDR(g)->magic ^= 1;
+}
+static void m_version(struct gb_img* g) {
+	HDR(g)->version = NG_VERSION - 1;
+}
+static void m_version_new(struct gb_img* g) {
+	HDR(g)->version = NG_VERSION + 1;
+}
+static void m_total(struct gb_img* g) {
+	HDR(g)->total_len++;
+}
+static void m_nsvc_max(struct gb_img* g) {
+	HDR(g)->n_svc = NG_MAX_SVC + 1;
+}
+static void m_roots(struct gb_img* g) {
+	HDR(g)->n_roots = HDR(g)->n_svc + 1;
+}
+static void m_reserved(struct gb_img* g) {
+	HDR(g)->reserved = 1;
+}
+static void m_edges_nosvc(struct gb_img* g) {
+	HDR(g)->n_svc = 0;
+	HDR(g)->n_roots = 0;
+}
+static void m_edges_max(struct gb_img* g) {
+	HDR(g)->n_edges = 16;
+}
+static void m_svc_oob(struct gb_img* g) {
+	HDR(g)->off_svc = HDR(g)->total_len - 8;
+}
+static void m_svc_align(struct gb_img* g) {
+	HDR(g)->off_svc += 4;
+}
+static void m_roff_oob(struct gb_img* g) {
+	HDR(g)->off_rdep_off = HDR(g)->total_len;
+}
+static void m_roff_align(struct gb_img* g) {
+	HDR(g)->off_rdep_off += 2;
+}
+static void m_ridx_oob(struct gb_img* g) {
+	HDR(g)->off_rdep_idx = HDR(g)->total_len - 4;
+}
+static void m_blob_oob(struct gb_img* g) {
+	HDR(g)->blob_len += 1;
+}
+static void m_pol_oob(struct gb_img* g) {
+	HDR(g)->off_pol = HDR(g)->total_len - 4;
+}
+static void m_overlap(struct gb_img* g) {
+	HDR(g)->off_pol = HDR(g)->off_svc;
+}
+static void m_overlap_hdr(struct gb_img* g) {
+	HDR(g)->off_rdep_off = 56;
+}
+static void m_crc(struct gb_img* g) {
+	HDR(g)->crc32 ^= 0x10;
+}
+static void m_payload(struct gb_img* g) {
+	gb_blob(g)[0] ^= 0x20;
+}
+static void m_blob_nul(struct gb_img* g) {
+	gb_blob(g)[HDR(g)->blob_len - 1] = 'x';
+}
+static void m_roff0(struct gb_img* g) {
+	gb_roff(g)[0] = 1;
+}
+static void m_roffn(struct gb_img* g) {
+	gb_roff(g)[HDR(g)->n_svc] = 5;
+}
+static void m_roff_mono(struct gb_img* g) {
+	gb_roff(g)[1] = 2;
+	gb_roff(g)[2] = 1;
+}
+static void m_ridx_range(struct gb_img* g) {
+	gb_ridx(g)[5] = 99;
+}
+static void m_ridx_back(struct gb_img* g) {
+	gb_ridx(g)[0] = 0;
+}
+static void m_ridx_sort(struct gb_img* g) {
+	gb_ridx(g)[2] = 4;
+	gb_ridx(g)[3] = 3;
+}
+static void m_ndesc_dep(struct gb_img* g) {
+	SVC(g, 2)->n_desc = 1;
+}
+static void m_unmet_big(struct gb_img* g) {
+	SVC(g, 5)->unmet = 6;
+}
+static void m_ndesc_big(struct gb_img* g) {
+	SVC(g, 0)->n_desc = 6;
+}
+static void m_notify_range(struct gb_img* g) {
+	SVC(g, 3)->notify_fd = 2;
+}
+static void m_notify_big(struct gb_img* g) {
+	SVC(g, 3)->notify_fd = 256;
+}
+static void m_notify_type(struct gb_img* g) {
+	SVC(g, 2)->notify_fd = 3;
+}
+static void m_type(struct gb_img* g) {
+	SVC(g, 5)->type = 3;
+}
+static void m_onfail(struct gb_img* g) {
+	SVC(g, 5)->flags = 3;
+}
+static void m_flags(struct gb_img* g) {
+	SVC(g, 5)->flags |= 0x20;
+}
+static void m_interp_noexec(struct gb_img* g) {
+	SVC(g, 1)->flags |= NG_FLAG_INTERP;
+}
+static void m_exec_noflag(struct gb_img* g) {
+	POL(g, 1)->exec_off = 0;
+}
+static void m_interp_target(struct gb_img* g) {
+	SVC(g, 4)->flags |= NG_FLAG_INTERP;
+}
+static void m_direct_noexec(struct gb_img* g) {
+	SVC(g, 1)->flags |= NG_FLAG_DIRECT;
+}
+static void m_direct_target(struct gb_img* g) {
+	SVC(g, 4)->flags |= NG_FLAG_DIRECT;
+}
+static void m_direct_interp(struct gb_img* g) {
+	SVC(g, 3)->flags |= NG_FLAG_DIRECT;
+}
+static void m_direct_empty(struct gb_img* g) {
+	gb_blob(g)[POL(g, 5)->exec_off] = '\0';
+}
+static void m_warn_deps(struct gb_img* g) {
+	SVC(g, 2)->flags = NG_ONFAIL_WARN;
+}
+static void m_restart_type(struct gb_img* g) {
+	SVC(g, 2)->flags |= NG_FLAG_RESTART;
+}
+static void m_name_off(struct gb_img* g) {
+	SVC(g, 1)->name_off = HDR(g)->blob_len;
+}
+static void m_name_bad(struct gb_img* g) {
+	gb_blob(g)[SVC(g, 1)->name_off] = '.';
+}
+static void m_root_unmet(struct gb_img* g) {
+	SVC(g, 0)->unmet = 1;
+}
+static void m_nonroot_unmet(struct gb_img* g) {
+	HDR(g)->n_roots = 1;
+}
+static void m_target_script(struct gb_img* g) {
+	SVC(g, 4)->script_off = 0;
+}
+static void m_script_off(struct gb_img* g) {
+	SVC(g, 3)->script_off = HDR(g)->blob_len;
+}
+static void m_tmo(struct gb_img* g) {
+	POL(g, 1)->start_ms = NG_MAX_MS + 1;
+}
+static void m_stop_tmo(struct gb_img* g) {
+	POL(g, 1)->stop_ms = NG_MAX_MS + 1;
+}
+static void m_tmo_max(struct gb_img* g) {
+	POL(g, 1)->start_ms = NG_MAX_MS;
+}
+static void m_tries(struct gb_img* g) {
+	POL(g, 1)->start_tries = NG_MAX_TRIES + 1;
+}
+static void m_tries_max(struct gb_img* g) {
+	POL(g, 1)->start_tries = NG_MAX_TRIES;
+}
+static void m_pflags(struct gb_img* g) {
+	POL(g, 1)->pflags = 2;
+}
+static void m_unmet_mismatch(struct gb_img* g) {
+	SVC(g, 3)->unmet = 1;
+}
+static void m_dup_name(struct gb_img* g) {
+	SVC(g, 5)->name_off = SVC(g, 3)->name_off;
+}
 
 // sample services by index, fs udev mounts dbus basic getty
 static const struct vcase vcases[] = {
@@ -367,26 +497,27 @@ static const struct vcase vcases[] = {
 	{ "two services named alike", "two services share a name", m_dup_name, 1 },
 };
 
-static void test_verify_cases(void)
-{
+static void test_verify_cases(void) {
 	struct gb_img base = sample();
 
-	for (size_t k = 0; k < sizeof(vcases) / sizeof(*vcases); k++) {
+	for(size_t k = 0; k < sizeof(vcases) / sizeof(*vcases); k++) {
 		struct gb_img g = gb_copy(&base);
 
 		vcases[k].fn(&g);
-		if (vcases[k].recrc)
+		if(vcases[k].recrc) {
 			gb_recrc(&g);
+		}
+
 		is_str(ng_verify(g.map, g.len), vcases[k].why, vcases[k].what);
 		free(g.map);
 	}
+
 	free(base.map);
 }
 
-static void test_verify_edges(void)
-{
+static void test_verify_edges(void) {
 	struct gb_img g = sample(), c;
-	char *odd;
+	char* odd;
 
 	is_str(ng_verify(g.map, 63), "shorter than header", "63 bytes is shorter than the header");
 	is_str(ng_verify(g.map, 0), "shorter than header", "0 bytes is shorter than the header");
@@ -426,7 +557,9 @@ static void test_verify_edges(void)
 	// two leaves under one service, each satisfied by n_desc 1 but not both
 	{
 		static const struct gb_svc sv[] = {
-			GB_ONESHOT("a", ":"), GB_ONESHOT("b", ":"), GB_ONESHOT("c", ":"),
+			GB_ONESHOT("a", ":"),
+			GB_ONESHOT("b", ":"),
+			GB_ONESHOT("c", ":"),
 		};
 		static const struct gb_edge e[] = { { 0, 1 }, { 0, 2 } };
 		struct gb_img t = gb_build(sv, 3, e, 2);
@@ -448,7 +581,7 @@ static void test_verify_edges(void)
 
 	// a script of exactly NG_MAX_SCRIPT bytes fits, one more does not
 	{
-		char *big = malloc(NG_MAX_SCRIPT + 2);
+		char* big = malloc(NG_MAX_SCRIPT + 2);
 		struct gb_svc sv[1] = { GB_ONESHOT("big", big) };
 		struct gb_img t;
 
@@ -473,92 +606,115 @@ static void test_verify_edges(void)
 		uint32_t m = 0;
 		struct gb_img t;
 
-		for (uint32_t i = 0; i < 6; i++) {
-			static const char *const nm[] = { "a", "b", "c", "d", "e", "f" };
+		for(uint32_t i = 0; i < 6; i++) {
+			static const char* const nm[] = { "a", "b", "c", "d", "e", "f" };
 
 			sv[i] = (struct gb_svc)GB_ONESHOT(nm[i], ":");
-			for (uint32_t j = i + 1; j < 6; j++)
+			for(uint32_t j = i + 1; j < 6; j++) {
 				e[m++] = (struct gb_edge){ i, j };
+			}
 		}
+
 		t = gb_build(sv, 6, e, m);
 		is_str(ng_verify(t.map, t.len), NULL, "a complete dag of 6 services verifies");
 		free(t.map);
 	}
+
 	free(g.map);
 }
 
 // whatever ng_verify accepts, ninit indexes without further checks
-static const char *recheck(const void *map, size_t len)
-{
-	const struct ng_hdr *h = map;
-	const struct ng_svc *sv = ng_svcs(map);
-	const uint32_t *roff = ng_rdep_off(map), *ridx = ng_rdep_idx(map);
+static const char* recheck(const void* map, size_t len) {
+	const struct ng_hdr* h = map;
+	const struct ng_svc* sv = ng_svcs(map);
+	const uint32_t* roff = ng_rdep_off(map);
+	const uint32_t* ridx = ng_rdep_idx(map);
 	uint32_t n = h->n_svc, i, j;
 
-	if (h->total_len != len)
+	if(h->total_len != len) {
 		return "length";
-	for (i = 0; i < n; i++) {
-		if (sv[i].name_off >= h->blob_len ||
-		    !memchr(ng_blob(map) + sv[i].name_off, 0, h->blob_len - sv[i].name_off))
+	}
+
+	for(i = 0; i < n; i++) {
+		if(sv[i].name_off >= h->blob_len
+		   || !memchr(ng_blob(map) + sv[i].name_off, 0, h->blob_len - sv[i].name_off)) {
 			return "name runs off the blob";
-		if (sv[i].type != NG_TYPE_TARGET &&
-		    (sv[i].script_off >= h->blob_len ||
-		     !memchr(ng_blob(map) + sv[i].script_off, 0, h->blob_len - sv[i].script_off)))
+		}
+
+		if(sv[i].type != NG_TYPE_TARGET
+		   && (sv[i].script_off >= h->blob_len
+		       || !memchr(ng_blob(map) + sv[i].script_off, 0, h->blob_len - sv[i].script_off))) {
 			return "script runs off the blob";
-		for (j = roff[i]; j < roff[i + 1]; j++)
-			if (ridx[j] <= i || ridx[j] >= n)
+		}
+
+		for(j = roff[i]; j < roff[i + 1]; j++) {
+			if(ridx[j] <= i || ridx[j] >= n) {
 				return "edge out of order";
-		if ((i < h->n_roots) != (sv[i].unmet == 0))
+			}
+		}
+
+		if((i < h->n_roots) != (sv[i].unmet == 0)) {
 			return "roots";
-		if (sv[i].flags & (NG_FLAG_INTERP | NG_FLAG_DIRECT)) {
+		}
+
+		if(sv[i].flags & (NG_FLAG_INTERP | NG_FLAG_DIRECT)) {
 			uint32_t off = ng_pol(map, i)->exec_off, k = 0;
 			int lists = sv[i].flags & NG_FLAG_INTERP ? 2 : 1;
 
 			// the walk child_exec does
-			for (int list = 0; list < lists; list++) {
-				while (off < h->blob_len && ng_blob(map)[off]) {
-					const char *z = memchr(ng_blob(map) + off, 0, h->blob_len - off);
+			for(int list = 0; list < lists; list++) {
+				while(off < h->blob_len && ng_blob(map)[off]) {
+					const char* z = memchr(ng_blob(map) + off, 0, h->blob_len - off);
 
-					if (!z)
+					if(!z) {
 						return "an argument runs off the blob";
+					}
+
 					off = (uint32_t)(z - ng_blob(map)) + 1;
 					k++;
 				}
-				if (off >= h->blob_len)
+
+				if(off >= h->blob_len) {
 					return "an argv runs off the blob";
+				}
+
 				off++;
 			}
-			if (k > NG_MAX_EXEC_ARGS)
+
+			if(k > NG_MAX_EXEC_ARGS) {
 				return "too many arguments for child_exec";
+			}
 		}
 	}
+
 	return NULL;
 }
 
 // encodes PRE, an empty string, SUF, an empty string into BUF
-static size_t exec_enc(char *buf, const char *const *pre, size_t np, const char *const *suf, size_t ns)
-{
+static size_t exec_enc(char* buf, const char* const* pre, size_t np, const char* const* suf, size_t ns) {
 	size_t at = 0;
 
-	for (size_t k = 0; k < np; k++) {
+	for(size_t k = 0; k < np; k++) {
 		memcpy(buf + at, pre[k], strlen(pre[k]) + 1);
 		at += strlen(pre[k]) + 1;
 	}
+
 	buf[at++] = '\0';
-	for (size_t k = 0; k < ns; k++) {
+	for(size_t k = 0; k < ns; k++) {
 		memcpy(buf + at, suf[k], strlen(suf[k]) + 1);
 		at += strlen(suf[k]) + 1;
 	}
+
 	buf[at++] = '\0';
+
 	return at;
 }
 
-static const char *exec_verdict(const char *exec, size_t len)
-{
+static const char* exec_verdict(const char* exec, size_t len) {
 	static char why[128];
 	struct gb_svc sv[1] = { GB_ONESHOT("a", "print(1)") };
 	struct gb_img g;
-	const char *r;
+	const char* r;
 
 	sv[0].exec = exec;
 	sv[0].exec_len = len;
@@ -566,30 +722,48 @@ static const char *exec_verdict(const char *exec, size_t len)
 	r = ng_verify(g.map, g.len);
 	snprintf(why, sizeof(why), "%s", r ? r : "");
 	free(g.map);
+
 	return r ? why : NULL;
 }
 
-static void test_verify_exec(void)
-{
+static void test_verify_exec(void) {
 	static const char py[] = "/usr/bin/python3\0-I\0-B\0-u\0-c\0\0a\0";
-	static const char *const many[NG_MAX_EXEC_ARGS + 1] = {
-		"/bin/x", "-a", "-a", "-a", "-a", "-a", "-a", "-a", "-a",
-		"-a", "-a", "-a", "-a", "-a", "-a", "-a", "-a",
+	static const char* const many[NG_MAX_EXEC_ARGS + 1] = {
+		"/bin/x",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
 	};
-	static const char *const one[] = { "name" };
-	struct gb_svc sv[1] = { { .name = "a", .type = NG_TYPE_ONESHOT, .onfail = GB_DEFAULT,
-				  .script = "print(1)", GB_EXEC(py) } };
+	static const char* const one[] = { "name" };
+	struct gb_svc sv[1] = { { .name = "a", .type = NG_TYPE_ONESHOT, .onfail = GB_DEFAULT, .script = "print(1)", GB_EXEC(py) } };
 	struct gb_img g = gb_build(sv, 1, NULL, 0);
-	char *buf = malloc(2 * NG_MAX_EXEC_ARG + 64), *big = malloc(NG_MAX_EXEC_ARG + 2);
-	const char *p, *pre[2];
+	char* buf = malloc(2 * NG_MAX_EXEC_ARG + 64);
+	char* big = malloc(NG_MAX_EXEC_ARG + 2);
+	const char* p;
+	const char* pre[2];
 	size_t n;
 
 	is_str(ng_verify(g.map, g.len), NULL, "a service with an interpreter argv verifies");
 	ok(ng_interp(g.map, 0), "the interpreter flag is returned");
 	p = ng_exec(g.map, 0);
 	is_str(p, "/usr/bin/python3", "the argv starts with the interpreter");
-	for (n = 0; *p; p += strlen(p) + 1)
+	for(n = 0; *p; p += strlen(p) + 1) {
 		n++;
+	}
+
 	is_int(n, 5, "five strings come before the script");
 	is_str(p + 1, "a", "the service name comes after it");
 	free(g.map);
@@ -604,9 +778,9 @@ static void test_verify_exec(void)
 	is_str(exec_verdict(buf, n), "too many interpreter arguments",
 	       "17 counting the one after the script are refused");
 
-	n = exec_enc(buf, (const char *const[]){ "x", "-c" }, 2, NULL, 0);
+	n = exec_enc(buf, (const char* const[]){ "x", "-c" }, 2, NULL, 0);
 	is_str(exec_verdict(buf, n), "interpreter is not an absolute path", "a relative interpreter is refused");
-	n = exec_enc(buf, (const char *const[]){ "/bin/x" }, 1, NULL, 0);
+	n = exec_enc(buf, (const char* const[]){ "/bin/x" }, 1, NULL, 0);
 	is_str(exec_verdict(buf, n), NULL, "nothing but the interpreter verifies");
 	is_str(exec_verdict("/bin/x\0-c", sizeof("/bin/x\0-c")), "interpreter arguments run past the string table",
 	       "an argv without its empty strings is refused");
@@ -640,12 +814,11 @@ static void test_verify_exec(void)
 	free(big);
 }
 
-static const char *direct_verdict(const char *exec, size_t len)
-{
+static const char* direct_verdict(const char* exec, size_t len) {
 	static char why[128];
 	struct gb_svc sv[1] = { GB_DAEMON("a", "exec x") };
 	struct gb_img g;
-	const char *r;
+	const char* r;
 
 	sv[0].exec = exec;
 	sv[0].exec_len = len;
@@ -654,31 +827,49 @@ static const char *direct_verdict(const char *exec, size_t len)
 	r = ng_verify(g.map, g.len);
 	snprintf(why, sizeof(why), "%s", r ? r : "");
 	free(g.map);
+
 	return r ? why : NULL;
 }
 
 // encodes the words and an empty string into BUF
-static size_t direct_enc(char *buf, const char *const *w, size_t n)
-{
+static size_t direct_enc(char* buf, const char* const* w, size_t n) {
 	size_t at = 0;
 
-	for (size_t k = 0; k < n; k++) {
+	for(size_t k = 0; k < n; k++) {
 		memcpy(buf + at, w[k], strlen(w[k]) + 1);
 		at += strlen(w[k]) + 1;
 	}
+
 	buf[at++] = '\0';
+
 	return at;
 }
 
-static void test_verify_direct(void)
-{
-	static const char *const many[NG_MAX_EXEC_ARGS + 1] = {
-		"agetty", "-a", "-a", "-a", "-a", "-a", "-a", "-a", "-a",
-		"-a", "-a", "-a", "-a", "-a", "-a", "-a", "-a",
+static void test_verify_direct(void) {
+	static const char* const many[NG_MAX_EXEC_ARGS + 1] = {
+		"agetty",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
+		"-a",
 	};
 	struct gb_img g = sample();
-	char *buf = malloc(2 * NG_MAX_EXEC_ARG + 64), *big = malloc(NG_MAX_EXEC_ARG + 2);
-	const char *p, *w[2];
+	char* buf = malloc(2 * NG_MAX_EXEC_ARG + 64);
+	char* big = malloc(NG_MAX_EXEC_ARG + 2);
+	const char* p;
+	const char* w[2];
 	size_t n;
 
 	is_str(ng_verify(g.map, g.len), NULL, "a service with a direct argv verifies");
@@ -695,9 +886,9 @@ static void test_verify_direct(void)
 	is_str(direct_verdict(buf, n), NULL, "16 words verify");
 	n = direct_enc(buf, many, NG_MAX_EXEC_ARGS + 1);
 	is_str(direct_verdict(buf, n), "too many direct arguments", "17 words are refused");
-	n = direct_enc(buf, (const char *const[]){ "/bin/x" }, 1);
+	n = direct_enc(buf, (const char* const[]){ "/bin/x" }, 1);
 	is_str(direct_verdict(buf, n), NULL, "an absolute command alone verifies");
-	n = direct_enc(buf, (const char *const[]){ "bin/x" }, 1);
+	n = direct_enc(buf, (const char* const[]){ "bin/x" }, 1);
 	is_str(direct_verdict(buf, n), "command with a slash is not an absolute path",
 	       "a relative command with a slash is refused");
 	is_str(direct_verdict("\0", 1), "direct argv is empty", "an argv without a command is refused");
@@ -731,69 +922,77 @@ static void test_verify_direct(void)
 	free(big);
 }
 
-static void test_verify_fuzz(void)
-{
+static void test_verify_fuzz(void) {
 	struct gb_img base = sample();
 	unsigned accepted = 0, bad = 0, iters = 200000;
 
-	for (unsigned it = 0; it < iters; it++) {
+	for(unsigned it = 0; it < iters; it++) {
 		struct gb_img g = gb_copy(&base);
 		unsigned flips = 1 + tap_below(4);
-		const char *why;
+		const char* why;
 
-		for (unsigned f = 0; f < flips; f++) {
+		for(unsigned f = 0; f < flips; f++) {
 			size_t at = tap_below((uint32_t)g.len);
 
-			if (tap_below(3))
-				((unsigned char *)g.map)[at] ^= (unsigned char)(1u << tap_below(8));
-			else
-				((unsigned char *)g.map)[at] = (unsigned char)tap_rand();
+			if(tap_below(3)) {
+				((unsigned char*)g.map)[at] ^= (unsigned char)(1u << tap_below(8));
+			} else {
+				((unsigned char*)g.map)[at] = (unsigned char)tap_rand();
+			}
 		}
+
 		// the crc is recomputed on 7 of 8 iterations so mutations reach the structural checks
-		if (tap_below(8))
+		if(tap_below(8)) {
 			gb_recrc(&g);
+		}
+
 		why = ng_verify(g.map, g.len);
-		if (!why) {
-			const char *r = recheck(g.map, g.len);
+		if(!why) {
+			const char* r = recheck(g.map, g.len);
 
 			accepted++;
-			if (r && bad++ < 5)
+			if(r && bad++ < 5) {
 				tap_diag("iteration %u accepted an image that is unsafe: %s", it, r);
+			}
 		}
+
 		free(g.map);
 	}
+
 	ok(!bad, "%u mutated images, every accepted one (%u) is safe to index", iters, accepted);
 	free(base.map);
 }
 
 static char locale_tmp[] = "/tmp/ninit-t-ngraph-locale.XXXXXX";
 
-static void put_locale(const char *text, size_t len)
-{
+static void put_locale(const char* text, size_t len) {
 	int fd = open(locale_tmp, O_WRONLY | O_TRUNC | O_CLOEXEC);
 
-	if (fd < 0 || write(fd, text, len) != (ssize_t)len)
+	if(fd < 0 || write(fd, text, len) != (ssize_t)len) {
 		abort();
+	}
+
 	close(fd);
 }
 
-static int run_locale(const char *text, char (*out)[NG_LOCALE_LEN], int max, const char **why)
-{
+static int run_locale(const char* text, char (*out)[NG_LOCALE_LEN], int max, const char** why) {
 	put_locale(text, strlen(text));
 	locale_path = locale_tmp;
 	memset(out, 0, (size_t)NG_LOCALE_MAX * NG_LOCALE_LEN);
+
 	return ng_locale_env(out, max, why);
 }
 
-static void test_locale(void)
-{
+static void test_locale(void) {
 	char out[NG_LOCALE_MAX][NG_LOCALE_LEN];
-	const char *why;
+	const char* why;
 	int n, fd;
 
 	fd = mkstemp(locale_tmp);
-	if (fd < 0)
+	if(fd < 0) {
 		abort();
+	}
+
 	close(fd);
 
 	locale_path = NULL;
@@ -861,16 +1060,29 @@ static void test_locale(void)
 	is_str(why, "sets more variables than ninit can carry", "the excess is reported");
 
 	{
-		static const char *const all[] = {
-			"LANG", "LC_ALL", "LC_CTYPE", "LC_NUMERIC", "LC_TIME", "LC_COLLATE",
-			"LC_MONETARY", "LC_MESSAGES", "LC_PAPER", "LC_NAME", "LC_ADDRESS",
-			"LC_TELEPHONE", "LC_MEASUREMENT", "LC_IDENTIFICATION",
+		static const char* const all[] = {
+			"LANG",
+			"LC_ALL",
+			"LC_CTYPE",
+			"LC_NUMERIC",
+			"LC_TIME",
+			"LC_COLLATE",
+			"LC_MONETARY",
+			"LC_MESSAGES",
+			"LC_PAPER",
+			"LC_NAME",
+			"LC_ADDRESS",
+			"LC_TELEPHONE",
+			"LC_MEASUREMENT",
+			"LC_IDENTIFICATION",
 		};
 		char text[1024];
 		size_t at = 0;
 
-		for (size_t k = 0; k < 14; k++)
+		for(size_t k = 0; k < 14; k++) {
 			at += (size_t)snprintf(text + at, sizeof(text) - at, "%s=C\n", all[k]);
+		}
+
 		n = run_locale(text, out, NG_LOCALE_MAX, &why);
 		is_int(n, 14, "all 14 locale variables are carried");
 		is_str(out[13], "LC_IDENTIFICATION=C", "the last of them too");
@@ -880,7 +1092,7 @@ static void test_locale(void)
 	is_int(n, 1, "a last line without a newline counts");
 
 	{
-		char *big = malloc(9000);
+		char* big = malloc(9000);
 
 		memset(big, '#', 9000);
 		memcpy(big, "LANG=C\n", 7);
@@ -903,8 +1115,7 @@ static void test_locale(void)
 	unlink(locale_tmp);
 }
 
-int main(void)
-{
+int main(void) {
 	test_crc();
 	test_image_crc();
 	test_names();
@@ -915,5 +1126,6 @@ int main(void)
 	test_verify_direct();
 	test_verify_fuzz();
 	test_locale();
+
 	return tap_done();
 }

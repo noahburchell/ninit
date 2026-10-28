@@ -12,12 +12,12 @@
 #include <time.h>
 #include <unistd.h>
 
-#define LOG_WRITE_MS	100
-#define LOG_BATCH_MS	250
-#define LOG_CON		(LOG_LINE + 16)
-#define LOG_REPEAT	16
-#define LOG_SEEN	(2 * LOG_REPEAT)
-#define LOG_HOLD_MS	1000
+#define LOG_WRITE_MS 100
+#define LOG_BATCH_MS 250
+#define LOG_CON	     (LOG_LINE + 16)
+#define LOG_REPEAT   16
+#define LOG_SEEN     (2 * LOG_REPEAT)
+#define LOG_HOLD_MS  1000
 
 static int log_fd = 2;
 static int log_color;
@@ -30,7 +30,7 @@ static long long log_wait_until;
 static char log_pend[LOG_CON];
 static size_t pend_at, pend_len;
 
-static const char *const tag_color[] = {
+static const char* const tag_color[] = {
 	"\033[32mDONE\033[0m",
 	"",
 	"\033[33mWARN\033[0m",
@@ -39,7 +39,7 @@ static const char *const tag_color[] = {
 	"\033[36mNOTE\033[0m",
 };
 
-static const char *const tag_plain[] = {
+static const char* const tag_plain[] = {
 	"DONE",
 	"",
 	"WARN",
@@ -64,7 +64,7 @@ struct seen {
 	uint64_t at;
 	uint32_t hash;
 	uint16_t len;
-	uint8_t key;
+	uint8_t  key;
 };
 
 // the last LOG_SEEN lines logged, the newest at seen_n - 1
@@ -81,109 +81,115 @@ static long long hold_ms[LOG_REPEAT], first_ms[LOG_REPEAT];
 static const long long repeat_ms[] = { 30000, 120000, 600000 };
 
 // the offset past the newline that ends the line starting at at, at < ring_head
-static uint64_t ring_eol(uint64_t at)
-{
-	for (;;) {
+static uint64_t ring_eol(uint64_t at) {
+	for(;;) {
 		size_t off = (size_t)(at & (LOG_RING - 1)), seg = LOG_RING - off;
-		const char *nl;
+		const char* nl;
 
-		if (seg > ring_head - at)
+		if(seg > ring_head - at) {
 			seg = (size_t)(ring_head - at);
+		}
+
 		nl = memchr(log_ring + off, '\n', seg);
-		if (nl)
+		if(nl) {
 			return at + (uint64_t)(nl - (log_ring + off)) + 1;
+		}
+
 		at += seg;
 	}
 }
 
-static void ring_put(const char *s, size_t n)
-{
+static void ring_put(const char* s, size_t n) {
 	size_t off = (size_t)(ring_head & (LOG_RING - 1)), k = LOG_RING - off;
 
-	while (ring_head + n - ring_tail > LOG_RING)
+	while(ring_head + n - ring_tail > LOG_RING) {
 		ring_tail = ring_eol(ring_tail);
-	if (k > n)
+	}
+
+	if(k > n) {
 		k = n;
+	}
+
 	memcpy(log_ring + off, s, k);
 	memcpy(log_ring, s + k, n - k);
 	ring_head += n;
-	if (ring_feed)
+	if(ring_feed) {
 		ring_feed();
+	}
 }
 
-static void ring_get(uint64_t at, char *dst, size_t n)
-{
+static void ring_get(uint64_t at, char* dst, size_t n) {
 	size_t off = (size_t)(at & (LOG_RING - 1)), k = LOG_RING - off;
 
-	if (k > n)
+	if(k > n) {
 		k = n;
+	}
+
 	memcpy(dst, log_ring + off, k);
 	memcpy(dst + k, log_ring, n - k);
 }
 
-static int ring_eq(uint64_t at, str s)
-{
+static int ring_eq(uint64_t at, str s) {
 	size_t off = (size_t)(at & (LOG_RING - 1)), k = LOG_RING - off;
 
-	if (k > s.n)
+	if(k > s.n) {
 		k = s.n;
+	}
+
 	return !memcmp(log_ring + off, s.p, k) && !memcmp(log_ring, s.p + k, s.n - k);
 }
 
 // fn runs after every append, to serve readers the ring would otherwise overtake
-void log_feed(void (*fn)(void))
-{
+void log_feed(void (*fn)(void)) {
 	ring_feed = fn;
 }
 
-uint64_t log_first(void)
-{
+uint64_t log_first(void) {
 	return ring_tail;
 }
 
-uint64_t log_end(void)
-{
+uint64_t log_end(void) {
 	return ring_head;
 }
 
-static void log_set_nonblock(void)
-{
+static void log_set_nonblock(void) {
 	int fl = fcntl(log_fd, F_GETFL);
 
-	if (fl >= 0 && !(fl & O_NONBLOCK))
+	if(fl >= 0 && !(fl & O_NONBLOCK)) {
 		fcntl(log_fd, F_SETFL, fl | O_NONBLOCK);
+	}
 }
 
-void log_batch_begin(void)
-{
+void log_batch_begin(void) {
 	log_wait_until = mono_ms() + LOG_BATCH_MS;
 	log_stalled = 0;
 }
 
-void log_init(void)
-{
+void log_init(void) {
 	clock_gettime(CLOCK_MONOTONIC, &log_start);
 	log_color = isatty(log_fd);
 	log_set_nonblock();
 	log_batch_begin();
 }
 
-void log_reopen_console(void)
-{
+void log_reopen_console(void) {
 	int fd = open("/dev/console", O_WRONLY | O_NONBLOCK | O_NOCTTY | O_CLOEXEC);
 
-	if (fd < 0)
+	if(fd < 0) {
 		return;
-	if (log_fd != 2)
+	}
+
+	if(log_fd != 2) {
 		close(log_fd);
+	}
+
 	log_fd = fd;
 	log_color = isatty(log_fd);
 	log_set_nonblock();
 	pend_at = pend_len = 0;
 }
 
-void log_adopt_fd(int fd)
-{
+void log_adopt_fd(int fd) {
 	log_fd = fd;
 	log_color = isatty(fd);
 	log_set_nonblock();
@@ -191,107 +197,129 @@ void log_adopt_fd(int fd)
 }
 
 // the bytes the console accepts, waiting only as the batch allows. -1 on a hard error
-static ssize_t log_push(const char *buf, size_t len, int wait)
-{
+static ssize_t log_push(const char* buf, size_t len, int wait) {
 	long long deadline = 0, now;
 	size_t done = 0;
 
-	while (done < len) {
+	while(done < len) {
 		struct pollfd p = { .fd = log_fd, .events = POLLOUT };
 		ssize_t w = write(log_fd, buf + done, len - done);
 
-		if (w > 0) {
+		if(w > 0) {
 			done += (size_t)w;
 			log_stalled = 0;
 			continue;
 		}
-		if (w < 0 && errno == EINTR)
+
+		if(w < 0 && errno == EINTR) {
 			continue;
-		if (w < 0 && errno != EAGAIN)
+		}
+
+		if(w < 0 && errno != EAGAIN) {
 			return -1;
-		if (!wait)
+		}
+
+		if(!wait) {
 			break;
+		}
+
 		now = mono_ms();
-		if (log_stalled || now >= log_wait_until)
+		if(log_stalled || now >= log_wait_until) {
 			break;
-		if (!deadline) {
+		}
+
+		if(!deadline) {
 			deadline = now + LOG_WRITE_MS;
-			if (deadline > log_wait_until)
+			if(deadline > log_wait_until) {
 				deadline = log_wait_until;
-		} else if (now >= deadline) {
+			}
+		} else if(now >= deadline) {
 			log_stalled = 1;
 			break;
 		}
+
 		poll(&p, 1, 10);
 	}
+
 	return (ssize_t)done;
 }
 
 // a line reaches the console whole or not at all, the caller counts a line that does not
-static int log_write(const char *buf, size_t len)
-{
+static int log_write(const char* buf, size_t len) {
 	ssize_t n;
 
-	if (pend_len) {
+	if(pend_len) {
 		n = log_push(log_pend + pend_at, pend_len - pend_at, 1);
-		if (n < 0 || pend_at + (size_t)n < pend_len) {
-			if (n < 0)
+		if(n < 0 || pend_at + (size_t)n < pend_len) {
+			if(n < 0) {
 				pend_at = pend_len = 0;
-			else
+			} else {
 				pend_at += (size_t)n;
+			}
+
 			return 0;
 		}
+
 		pend_at = pend_len = 0;
 	}
+
 	n = log_push(buf, len, 1);
-	if (n == (ssize_t)len)
+	if(n == (ssize_t)len) {
 		return 1;
-	if (n <= 0 || len - (size_t)n > sizeof(log_pend))
+	}
+
+	if(n <= 0 || len - (size_t)n > sizeof(log_pend)) {
 		return 0;
+	}
+
 	pend_len = len - (size_t)n;
 	memcpy(log_pend, buf + n, pend_len);
+
 	return 1;
 }
 
-int log_pending_fd(void)
-{
+int log_pending_fd(void) {
 	return pend_len ? log_fd : -1;
 }
 
 // called when the console is writable. a wakeup that writes nothing gives up the line
-void log_flush(void)
-{
+void log_flush(void) {
 	ssize_t n = log_push(log_pend + pend_at, pend_len - pend_at, 0);
 
-	if (n > 0)
+	if(n > 0) {
 		pend_at += (size_t)n;
-	if (n <= 0 || pend_at == pend_len) {
-		if (n <= 0)
+	}
+
+	if(n <= 0 || pend_at == pend_len) {
+		if(n <= 0) {
 			log_dropped++;
+		}
+
 		pend_at = pend_len = 0;
 	}
 }
 
-#define LOG_PREFIX_MAX	64
+#define LOG_PREFIX_MAX 64
 
-static int fitted(int ret, int at, size_t cap)
-{
-	if (ret < 0)
+static int fitted(int ret, int at, size_t cap) {
+	if(ret < 0) {
 		return at;
-	if ((size_t)ret >= cap - (size_t)at)
+	}
+
+	if((size_t)ret >= cap - (size_t)at) {
 		return (int)cap - 1;
+	}
+
 	return at + ret;
 }
 
-static long long log_elapsed_ms(void)
-{
+static long long log_elapsed_ms(void) {
 	long long ms = mono_ms_since(&log_start);
 
 	return ms < 0 ? 0 : ms;
 }
 
-static int prefix(char *buf, size_t cap, const char *tag, long long ms)
-{
+static int prefix(char* buf, size_t cap, const char* tag, long long ms) {
 	int n = fitted(snprintf(buf, cap, "[%03lld.%03lld] %s > ", ms / 1000, ms % 1000, tag),
 		       0, cap);
 
@@ -300,31 +328,34 @@ static int prefix(char *buf, size_t cap, const char *tag, long long ms)
 
 // copies the line at *at into buf, which holds LOG_LINE bytes, and advances *at,
 // a reader the ring has overtaken gets a notice instead, and 0 is returned at the end
-size_t log_line(uint64_t *at, char *buf)
-{
+size_t log_line(uint64_t* at, char* buf) {
 	uint64_t end;
 	size_t n;
 	int p;
 
-	if (*at < ring_tail) {
+	if(*at < ring_tail) {
 		p = prefix(buf, LOG_LINE, tag_plain[LOG_WARN], log_elapsed_ms());
 		p = fitted(snprintf(buf + p, LOG_LINE - (size_t)p, "log: skipped %llu bytes\n",
-				    (unsigned long long)(ring_tail - *at)), p, LOG_LINE);
+				    (unsigned long long)(ring_tail - *at)),
+			   p, LOG_LINE);
 		*at = ring_tail;
 		return (size_t)p;
 	}
-	if (*at >= ring_head)
+
+	if(*at >= ring_head) {
 		return 0;
+	}
+
 	end = ring_eol(*at);
 	n = (size_t)(end - *at);
 	ring_get(*at, buf, n);
 	*at = end;
+
 	return n;
 }
 
-static int log_report_dropped(unsigned long lost)
-{
-	const char *const *tags = log_color ? tag_color : tag_plain;
+static int log_report_dropped(unsigned long lost) {
+	const char* const* tags = log_color ? tag_color : tag_plain;
 	char buf[160];
 	int n, ret;
 
@@ -332,64 +363,70 @@ static int log_report_dropped(unsigned long lost)
 	ret = snprintf(buf + n, sizeof(buf) - n, "console: dropped %lu message%s",
 		       lost, lost == 1 ? "" : "s");
 	n = fitted(ret, n, sizeof(buf));
-	if (n > (int)sizeof(buf) - 2)
+	if(n > (int)sizeof(buf) - 2) {
 		n = (int)sizeof(buf) - 2;
+	}
+
 	buf[n++] = '\n';
 
 	return log_write(buf, (size_t)n);
 }
 
 // key is the level with LOG_NOCON, the body of the line is at buf + p
-static void log_out(int key, long long ms, const char *buf, int p, int n)
-{
+static void log_out(int key, long long ms, const char* buf, int p, int n) {
 	char con[LOG_CON];
 	int c;
 
 	ring_put(buf, (size_t)n);
-	if (key & LOG_NOCON)
+	if(key & LOG_NOCON) {
 		return;
+	}
 
 	// reporting before the console has caught up would take the place of real lines
-	if (log_dropped && !pend_len) {
+	if(log_dropped && !pend_len) {
 		unsigned long lost = log_dropped;
 
-		if (log_report_dropped(lost))
+		if(log_report_dropped(lost)) {
 			log_dropped -= lost;
+		}
 	}
-	if (!log_color || !p) {
-		if (!log_write(buf, (size_t)n))
+
+	if(!log_color || !p) {
+		if(!log_write(buf, (size_t)n)) {
 			log_dropped++;
+		}
+
 		return;
 	}
+
 	c = prefix(con, sizeof(con), tag_color[key & ~LOG_NOCON], ms);
 	memcpy(con + c, buf + p, (size_t)(n - p));
-	if (!log_write(con, (size_t)(c + n - p)))
+	if(!log_write(con, (size_t)(c + n - p))) {
 		log_dropped++;
+	}
 }
 
-static uint32_t body_hash(int key, str s)
-{
+static uint32_t body_hash(int key, str s) {
 	uint32_t h = 2166136261u ^ (uint32_t)key;
 
-	while (s.n--)
+	while(s.n--) {
 		h = (h ^ (uint8_t)*s.p++) * 16777619u;
+	}
+
 	return h;
 }
 
-static struct seen *seen_back(uint32_t back)
-{
+static struct seen* seen_back(uint32_t back) {
 	return &seen[(seen_n - back) & (LOG_SEEN - 1)];
 }
 
-static int seen_is(const struct seen *e, int key, uint32_t h, str s)
-{
-	return e->key == key && e->hash == h && e->len == s.n && e->at >= ring_tail &&
-	       ring_eq(e->at, s);
+static int seen_is(const struct seen* e, int key, uint32_t h, str s) {
+	return e->key == key && e->hash == h && e->len == s.n && e->at >= ring_tail
+	       && ring_eq(e->at, s);
 }
 
-static void log_emit(int key, long long ms, const char *buf, int p, int n, uint32_t h)
-{
-	struct seen *e = &seen[seen_n++ & (LOG_SEEN - 1)];
+static void log_emit(int key, long long ms, const char* buf, int p, int n, uint32_t h) {
+	struct seen* e = &seen[seen_n++ & (LOG_SEEN - 1)];
 
 	e->at = ring_head + (uint64_t)p;
 	e->hash = h;
@@ -398,137 +435,159 @@ static void log_emit(int key, long long ms, const char *buf, int p, int n, uint3
 	log_out(key, ms, buf, p, n);
 }
 
-static int log_head(char *buf, int level, long long ms)
-{
+static int log_head(char* buf, int level, long long ms) {
 	return level == LOG_INFO ? 0 : prefix(buf, LOG_LINE, tag_plain[level], ms);
 }
 
 // logs a held line after all, with the time it arrived
-static void log_again(const struct seen *s, long long ms)
-{
+static void log_again(const struct seen* s, long long ms) {
 	struct seen e = *s;
 	char buf[LOG_LINE];
 	int p = log_head(buf, e.key & ~LOG_NOCON, ms);
 	size_t n = e.len;
 
-	if (n > sizeof(buf) - 1 - (size_t)p)
+	if(n > sizeof(buf) - 1 - (size_t)p) {
 		n = sizeof(buf) - 1 - (size_t)p;
+	}
+
 	ring_get(e.at, buf + p, n);
 	buf[p + n - 1] = '\n';
-	if (n != e.len)
+	if(n != e.len) {
 		e.hash = body_hash(e.key, (str){ buf + p, n });
+	}
+
 	log_emit(e.key, ms, buf, p, p + (int)n, e.hash);
 }
 
 // the most severe tag in the block, on the console if any line of it was
-static int rep_key(void)
-{
+static int rep_key(void) {
 	int level = LOG_NOTE, nocon = LOG_NOCON;
 
-	for (uint32_t k = 1; k <= rep_len; k++) {
+	for(uint32_t k = 1; k <= rep_len; k++) {
 		int key = seen_back(k)->key;
 
-		if ((key & ~LOG_NOCON) == LOG_FAIL)
+		if((key & ~LOG_NOCON) == LOG_FAIL) {
 			level = LOG_FAIL;
-		else if ((key & ~LOG_NOCON) == LOG_WARN && level != LOG_FAIL)
+		} else if((key & ~LOG_NOCON) == LOG_WARN && level != LOG_FAIL) {
 			level = LOG_WARN;
+		}
+
 		nocon &= key;
 	}
+
 	return level | nocon;
 }
 
 // a single repetition is logged as it was. the block stays the last rep_len lines either way
-static void rep_flush(void)
-{
+static void rep_flush(void) {
 	char buf[LOG_LINE];
 	int key, p, n;
 
-	if (rep_count == 1) {
+	if(rep_count == 1) {
 		rep_count = 0;
-		for (uint32_t k = 0; k < rep_len; k++)
+		for(uint32_t k = 0; k < rep_len; k++) {
 			log_again(seen_back(rep_len), first_ms[k]);
+		}
+
 		return;
 	}
-	if (!rep_count)
+
+	if(!rep_count) {
 		return;
+	}
+
 	key = rep_key();
 	p = prefix(buf, sizeof(buf), tag_plain[key & ~LOG_NOCON], rep_ms);
-	if (rep_len == 1)
+	if(rep_len == 1) {
 		n = snprintf(buf + p, sizeof(buf) - (size_t)p, "last message repeated %lu times\n",
 			     rep_count);
-	else
+	} else {
 		n = snprintf(buf + p, sizeof(buf) - (size_t)p, "last %u messages repeated %lu times\n",
 			     rep_len, rep_count);
+	}
+
 	rep_count = 0;
 	log_out(key, rep_ms, buf, p, p + n);
 }
 
-static void rep_break(void)
-{
+static void rep_break(void) {
 	uint32_t pos = rep_pos;
 
 	rep_flush();
-	for (uint32_t k = 0; k < pos; k++)
+	for(uint32_t k = 0; k < pos; k++) {
 		log_again(seen_back(rep_len), hold_ms[k]);
+	}
+
 	rep_len = rep_pos = 0;
 	rep_backoff = 0;
 }
 
-static int seen_twice(uint32_t len)
-{
-	for (uint32_t k = 1; k <= len; k++) {
-		const struct seen *a = seen_back(k), *b = seen_back(k + len);
+static int seen_twice(uint32_t len) {
+	for(uint32_t k = 1; k <= len; k++) {
+		const struct seen* a = seen_back(k);
+		const struct seen* b = seen_back(k + len);
 
-		if (a->key != b->key || a->hash != b->hash || a->len != b->len)
+		if(a->key != b->key || a->hash != b->hash || a->len != b->len) {
 			return 0;
+		}
 	}
+
 	return 1;
 }
 
 // a line repeats once logged again. a longer block repeats once logged twice in a row,
 // so a line that only recurs is never held back
-static uint32_t rep_find(int key, uint32_t h, str s)
-{
-	if (seen_n && seen_is(seen_back(1), key, h, s))
+static uint32_t rep_find(int key, uint32_t h, str s) {
+	if(seen_n && seen_is(seen_back(1), key, h, s)) {
 		return 1;
-	for (uint32_t len = 2; len <= LOG_REPEAT && 2 * len <= seen_n; len++)
-		if (seen_is(seen_back(len), key, h, s) && seen_twice(len))
+	}
+
+	for(uint32_t len = 2; len <= LOG_REPEAT && 2 * len <= seen_n; len++) {
+		if(seen_is(seen_back(len), key, h, s) && seen_twice(len)) {
 			return len;
+		}
+	}
+
 	return 0;
 }
 
-long long log_due(void)
-{
+long long log_due(void) {
 	long long due;
 
-	if (!rep_pos && !rep_count)
+	if(!rep_pos && !rep_count) {
 		return -1;
+	}
+
 	due = rep_pos ? hold_due : rep_due;
-	if (rep_pos && rep_count && rep_due < due)
+	if(rep_pos && rep_count && rep_due < due) {
 		due = rep_due;
+	}
+
 	return ms_until(due, mono_ms());
 }
 
-void log_tick(void)
-{
+void log_tick(void) {
 	long long now;
 
-	if (!rep_pos && !rep_count)
+	if(!rep_pos && !rep_count) {
 		return;
+	}
+
 	now = mono_ms();
-	if (rep_pos && now >= hold_due) {
+	if(rep_pos && now >= hold_due) {
 		rep_break();
 		return;
 	}
-	if (rep_count && now >= rep_due) {
+
+	if(rep_count && now >= rep_due) {
 		rep_flush();
-		if (rep_backoff + 1 < sizeof(repeat_ms) / sizeof(*repeat_ms))
+		if(rep_backoff + 1 < sizeof(repeat_ms) / sizeof(*repeat_ms)) {
 			rep_backoff++;
+		}
 	}
 }
 
-void ninit_log(int level, const char *fmt, ...)
-{
+void ninit_log(int level, const char* fmt, ...) {
 	char buf[LOG_LINE];
 	int nocon = level & LOG_NOCON, n, p, ret, key;
 	long long ms = log_elapsed_ms();
@@ -537,8 +596,10 @@ void ninit_log(int level, const char *fmt, ...)
 	str body;
 
 	level &= ~LOG_NOCON;
-	if ((unsigned)level >= LOG_N)
+	if((unsigned)level >= LOG_N) {
 		level = LOG_INFO;
+	}
+
 	p = log_head(buf, level, ms);
 
 	va_start(ap, fmt);
@@ -546,77 +607,94 @@ void ninit_log(int level, const char *fmt, ...)
 	va_end(ap);
 
 	n = fitted(ret, p, sizeof(buf));
-	if (n > (int)sizeof(buf) - 2)
+	if(n > (int)sizeof(buf) - 2) {
 		n = (int)sizeof(buf) - 2;
+	}
+
 	buf[n++] = '\n';
 
 	key = level | nocon;
 	body = (str){ buf + p, (size_t)(n - p) };
 	h = body_hash(key, body);
-	if (rep_len && !seen_is(seen_back(rep_len - rep_pos), key, h, body))
+	if(rep_len && !seen_is(seen_back(rep_len - rep_pos), key, h, body)) {
 		rep_break();
-	if (!rep_len)
+	}
+
+	if(!rep_len) {
 		rep_len = rep_find(key, h, body);
-	if (!rep_len) {
+	}
+
+	if(!rep_len) {
 		log_emit(key, ms, buf, p, n, h);
 		return;
 	}
 
 	// held until the repetition completes, logged after all if it does not
-	if (!rep_pos && rep_len > 1)
+	if(!rep_pos && rep_len > 1) {
 		hold_due = mono_ms() + LOG_HOLD_MS;
+	}
+
 	hold_ms[rep_pos++] = ms;
-	if (rep_pos < rep_len)
+	if(rep_pos < rep_len) {
 		return;
+	}
+
 	rep_pos = 0;
 	rep_ms = ms;
-	if (!rep_count++) {
+	if(!rep_count++) {
 		memcpy(first_ms, hold_ms, rep_len * sizeof(*hold_ms));
 		rep_due = mono_ms() + repeat_ms[rep_backoff];
 	}
 }
 
-void log_raw(int level, str text)
-{
-	while (text.n) {
+void log_raw(int level, str text) {
+	while(text.n) {
 		str line = str_cut(&text, '\n');
 
-		if (line.n)
+		if(line.n) {
 			ninit_log(level, "%.*s", (int)line.n, line.p);
+		}
 	}
 }
 
-void print_welcome(void)
-{
-	FILE *file = fopen("/etc/os-release", "r");
+void print_welcome(void) {
+	FILE* file = fopen("/etc/os-release", "r");
 	char line[128], buf[LOG_LINE];
-	const char *os = "Linux";
+	const char* os = "Linux";
 	struct utsname u;
 	int n;
 
-	if (!file)
+	if(!file) {
 		file = fopen("/usr/lib/os-release", "r");
+	}
 
-	while (file && fgets(line, sizeof(line), file)) {
-		char *name;
+	while(file && fgets(line, sizeof(line), file)) {
+		char* name;
 		size_t len;
 		char quote;
 
-		if (strncmp(line, "PRETTY_NAME=", 12))
+		if(strncmp(line, "PRETTY_NAME=", 12)) {
 			continue;
+		}
 
 		name = line + 12;
 		quote = (*name == '"' || *name == '\'') ? *name++ : 0;
 		len = strlen(name);
-		if (len && name[len - 1] == '\n')
+		if(len && name[len - 1] == '\n') {
 			name[--len] = '\0';
-		if (quote && len && name[len - 1] == quote)
+		}
+
+		if(quote && len && name[len - 1] == quote) {
 			name[--len] = '\0';
+		}
+
 		os = name;
 		break;
 	}
-	if (file)
+
+	if(file) {
 		fclose(file);
+	}
 
 	uname(&u);
 
@@ -624,10 +702,14 @@ void print_welcome(void)
 	n = fitted(snprintf(buf, sizeof(buf), "Welcome to %s! (%s)\n\n", os, u.release), 0, sizeof(buf));
 	ring_put(buf, (size_t)n);
 #ifndef NINIT_QUIET
-	if (log_color)
+	if(log_color) {
 		n = fitted(snprintf(buf, sizeof(buf), "Welcome to \033[1m%s\033[0m! (%s)\n\n",
-				    os, u.release), 0, sizeof(buf));
-	if (!log_write(buf, (size_t)n))
+				    os, u.release),
+			   0, sizeof(buf));
+	}
+
+	if(!log_write(buf, (size_t)n)) {
 		log_dropped++;
+	}
 #endif
 }

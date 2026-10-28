@@ -12,5 +12,5 @@ void ensure_stdio(void);
 void mount_api_fs(void);
 void seed_dev(void);
 void raise_nofile(void);
-const void *load_graph(const char *path, const char **why);
+const void* load_graph(const char* path, const char** why);
 void load_locale(void);

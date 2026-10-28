@@ -21,45 +21,50 @@
 
 static long long fake_ms = 100000;
 
-static int shim_clock_gettime(clockid_t id, struct timespec *ts)
-{
+static int shim_clock_gettime(clockid_t id, struct timespec* ts) {
 	(void)id;
 	ts->tv_sec = fake_ms / 1000;
 	ts->tv_nsec = (fake_ms % 1000) * 1000000;
+
 	return 0;
 }
 
 static int console_fd = -1, console_errno = ENOENT;
-static const char *oom_path, *shadow_path;
+static const char* oom_path;
+static const char* shadow_path;
 
-static int shim_open(const char *path, int flags, ...)
-{
-	if (!strcmp(path, "/dev/console")) {
-		if (console_fd < 0) {
+static int shim_open(const char* path, int flags, ...) {
+	if(!strcmp(path, "/dev/console")) {
+		if(console_fd < 0) {
 			errno = console_errno;
 			return -1;
 		}
+
 		return fcntl(console_fd, F_DUPFD_CLOEXEC, 3);
 	}
-	if (!strcmp(path, "/proc/self/oom_score_adj")) {
-		if (!oom_path) {
+
+	if(!strcmp(path, "/proc/self/oom_score_adj")) {
+		if(!oom_path) {
 			errno = ENOENT;
 			return -1;
 		}
+
 		path = oom_path;
 	}
+
 	return open(path, flags);
 }
 
-[[maybe_unused]] static FILE *shim_fopen(const char *path, const char *mode)
-{
-	if (!strcmp(path, "/etc/shadow")) {
-		if (!shadow_path) {
+[[maybe_unused]] static FILE* shim_fopen(const char* path, const char* mode) {
+	if(!strcmp(path, "/etc/shadow")) {
+		if(!shadow_path) {
 			errno = EACCES;
 			return NULL;
 		}
+
 		path = shadow_path;
 	}
+
 	return fopen(path, mode);
 }
 
@@ -67,24 +72,28 @@ static int shim_open(const char *path, int flags, ...)
 static int last_pipe_w = -1, child_bar = -1, fork_fail;
 static pid_t next_pid = 4000000;
 
-static int shim_pipe2(int p[2], int flags)
-{
+static int shim_pipe2(int p[2], int flags) {
 	int r = pipe2(p, flags);
 
-	if (!r)
+	if(!r) {
 		last_pipe_w = p[1];
+	}
+
 	return r;
 }
 
-static pid_t shim_fork(void)
-{
-	if (fork_fail) {
+static pid_t shim_fork(void) {
+	if(fork_fail) {
 		errno = EAGAIN;
 		return -1;
 	}
-	if (child_bar >= 0)
+
+	if(child_bar >= 0) {
 		close(child_bar);
+	}
+
 	child_bar = fcntl(last_pipe_w, F_DUPFD_CLOEXEC, 3);
+
 	return ++next_pid;
 }
 
@@ -95,8 +104,7 @@ static int shim_ioctl(int fd, unsigned long req, ...);
 
 static int force_nosys;
 
-static long shim_syscall(long nr, ...)
-{
+static long shim_syscall(long nr, ...) {
 	va_list ap;
 	unsigned a, b, c;
 
@@ -105,15 +113,15 @@ static long shim_syscall(long nr, ...)
 	b = va_arg(ap, unsigned);
 	c = va_arg(ap, unsigned);
 	va_end(ap);
-	if (force_nosys) {
+	if(force_nosys) {
 		errno = ENOSYS;
 		return -1;
 	}
+
 	return syscall(nr, a, b, c);
 }
 
-static int shim_execve(const char *p, char *const *a, char *const *e)
-{
+static int shim_execve(const char* p, char* const* a, char* const* e) {
 	(void)p;
 	(void)a;
 	(void)e;
@@ -121,13 +129,13 @@ static int shim_execve(const char *p, char *const *a, char *const *e)
 }
 
 #define clock_gettime shim_clock_gettime
-#define open shim_open
-#define fopen shim_fopen
-#define pipe2 shim_pipe2
-#define fork shim_fork
-#define ioctl shim_ioctl
-#define syscall shim_syscall
-#define execve shim_execve
+#define open	      shim_open
+#define fopen	      shim_fopen
+#define pipe2	      shim_pipe2
+#define fork	      shim_fork
+#define ioctl	      shim_ioctl
+#define syscall	      shim_syscall
+#define execve	      shim_execve
 #include "../../src/fail.c"
 #undef clock_gettime
 #undef open
@@ -141,44 +149,42 @@ static int shim_execve(const char *p, char *const *a, char *const *e)
 #include "gbuild.h"
 #include "logcap.h"
 
-static int shim_ioctl(int fd, unsigned long req, ...)
-{
+static int shim_ioctl(int fd, unsigned long req, ...) {
 	va_list ap;
-	void *arg;
+	void* arg;
 
 	va_start(ap, req);
-	arg = va_arg(ap, void *);
+	arg = va_arg(ap, void*);
 	va_end(ap);
-	if (fake_vt) {
-		switch (req) {
-		case NG_KDGKBTYPE:
-			*(char *)arg = 2;
-			return 0;
-		case NG_KDGETMODE:
-			*(int *)arg = vt_mode;
-			return 0;
-		case NG_KDSETMODE:
-			set_mode = (int)(intptr_t)arg;
-			return 0;
-		case NG_KDGKBMODE:
-			*(int *)arg = kb_mode;
-			return 0;
-		case NG_KDSKBMODE:
-			set_kb = (int)(intptr_t)arg;
-			return 0;
-		default:
-			break;
+	if(fake_vt) {
+		switch(req) {
+			case NG_KDGKBTYPE:
+				*(char*)arg = 2;
+				return 0;
+			case NG_KDGETMODE:
+				*(int*)arg = vt_mode;
+				return 0;
+			case NG_KDSETMODE:
+				set_mode = (int)(intptr_t)arg;
+				return 0;
+			case NG_KDGKBMODE:
+				*(int*)arg = kb_mode;
+				return 0;
+			case NG_KDSKBMODE:
+				set_kb = (int)(intptr_t)arg;
+				return 0;
+			default:
+				break;
 		}
 	}
+
 	return ioctl(fd, req, arg);
 }
 
-
-static void test_describe(void)
-{
+static void test_describe(void) {
 	static const struct {
 		int st;
-		const char *want;
+		const char* want;
 	} v[] = {
 		{ 0, "exit 0" },
 		{ 1 << 8, "exit 1" },
@@ -200,13 +206,14 @@ static void test_describe(void)
 	};
 	char buf[64];
 
-	for (size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
+	for(size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
 		char what[64];
 
 		fail_describe(v[k].st, buf, sizeof(buf));
 		snprintf(what, sizeof(what), "status %#x reads as %s", (unsigned)v[k].st, v[k].want);
 		is_str(buf, v[k].want, what);
 	}
+
 	// volatile keeps lto from flagging the intended truncation
 	{
 		volatile size_t cap = 8;
@@ -217,19 +224,21 @@ static void test_describe(void)
 }
 
 // a(0) x(1) | b(2) <- a, t(3) target <- b, d(4) <- t, e(5) <- a x
-static struct gb_img poison_graph(void)
-{
+static struct gb_img poison_graph(void) {
 	static const struct gb_svc sv[] = {
-		GB_ONESHOT("a", ":"), GB_ONESHOT("x", ":"), GB_ONESHOT("b", ":"),
-		GB_TARGET("t"), GB_ONESHOT("d", ":"), GB_ONESHOT("e", ":"),
+		GB_ONESHOT("a", ":"),
+		GB_ONESHOT("x", ":"),
+		GB_ONESHOT("b", ":"),
+		GB_TARGET("t"),
+		GB_ONESHOT("d", ":"),
+		GB_ONESHOT("e", ":"),
 	};
 	static const struct gb_edge e[] = { { 0, 2 }, { 2, 3 }, { 3, 4 }, { 0, 5 }, { 1, 5 } };
 
 	return gb_build(sv, 6, e, 5);
 }
 
-static void test_poison(void)
-{
+static void test_poison(void) {
 	struct gb_img g = poison_graph();
 	uint8_t st[6], up[6];
 	uint32_t n, undone;
@@ -243,8 +252,9 @@ static void test_poison(void)
 	is_int(n, 4, "a failed root skips its four pending dependents");
 	is_int(undone, 0, "none of them had completed");
 	is_int(st[0], NG_ST_FAILED, "the service itself is failed");
-	ok(st[2] == NG_ST_SKIPPED && st[3] == NG_ST_SKIPPED && st[4] == NG_ST_SKIPPED &&
-	   st[5] == NG_ST_SKIPPED, "every dependent is skipped, transitively");
+	ok(st[2] == NG_ST_SKIPPED && st[3] == NG_ST_SKIPPED && st[4] == NG_ST_SKIPPED
+		   && st[5] == NG_ST_SKIPPED,
+	   "every dependent is skipped, transitively");
 	is_int(st[1], NG_ST_PENDING, "an unrelated root is untouched");
 
 	memset(st, NG_ST_PENDING, sizeof(st));
@@ -297,8 +307,7 @@ static void test_poison(void)
 	free(g.map);
 }
 
-static struct gb_img fail_graph(void)
-{
+static struct gb_img fail_graph(void) {
 	static const struct gb_svc sv[] = {
 		GB_ONESHOT("root", ":"),
 		{ .name = "sh", .type = NG_TYPE_ONESHOT, .onfail = NG_ONFAIL_SHELL, .script = ":" },
@@ -313,10 +322,9 @@ static struct gb_img fail_graph(void)
 	return gb_build(sv, 7, e, 5);
 }
 
-static void test_fail_service(void)
-{
+static void test_fail_service(void) {
 	struct gb_img g = fail_graph();
-	const char *t;
+	const char* t;
 	enum fail_act a;
 
 	is_str(ng_verify(g.map, g.len), NULL, "fail graph verifies");
@@ -334,8 +342,9 @@ static void test_fail_service(void)
 	has_str(t, "FAIL > out one\n", "the output tail is logged");
 	has_str(t, "FAIL > out two\n", "line by line");
 	has_str(t, "FAIL > root: 3 services depend on it, stopping\n", "the stop is reported");
-	ok(strstr(t, "failed 3 times") < strstr(t, "out one") &&
-	   strstr(t, "out two") < strstr(t, "stopping"), "the tail sits between the two");
+	ok(strstr(t, "failed 3 times") < strstr(t, "out one")
+		   && strstr(t, "out two") < strstr(t, "stopping"),
+	   "the tail sits between the two");
 
 	logcap_begin();
 	fail_service(g.map, 4, SIGKILL, 1, 1, (str){ 0 });
@@ -367,11 +376,10 @@ static void test_fail_service(void)
 	free(g.map);
 }
 
-static void test_summary(void)
-{
+static void test_summary(void) {
 	struct gb_img g = fail_graph();
 	uint8_t st[7];
-	const char *t;
+	const char* t;
 
 	memset(st, NG_ST_DONE, sizeof(st));
 	logcap_begin();
@@ -397,35 +405,37 @@ static void test_summary(void)
 	free(g.map);
 }
 
-static void test_cloexec(void)
-{
+static void test_cloexec(void) {
 	static const int fds[] = { 3, 4, 5, 9, 63, 200 };
 	int tmp = open("/dev/null", O_RDONLY | O_CLOEXEC), null = fcntl(tmp, F_DUPFD_CLOEXEC, 300), bad;
 	char what[64];
 
 	close(tmp);
-	for (size_t k = 0; k < sizeof(fds) / sizeof(*fds); k++)
-		if (fcntl(fds[k], F_GETFD) >= 0) {
+	for(size_t k = 0; k < sizeof(fds) / sizeof(*fds); k++) {
+		if(fcntl(fds[k], F_GETFD) >= 0) {
 			ok(1, "# SKIP fd %d is already open", fds[k]);
 			close(null);
 			return;
 		}
+	}
 
-	for (int pass = 0; pass < 2; pass++) {
+	for(int pass = 0; pass < 2; pass++) {
 		force_nosys = pass;
-		for (int keep = -1; keep <= 9; keep += (keep < 5 ? 1 : 4)) {
-			for (size_t k = 0; k < sizeof(fds) / sizeof(*fds); k++) {
+		for(int keep = -1; keep <= 9; keep += (keep < 5 ? 1 : 4)) {
+			for(size_t k = 0; k < sizeof(fds) / sizeof(*fds); k++) {
 				dup2(null, fds[k]);
 				fcntl(fds[k], F_SETFD, 0);
 			}
+
 			ninit_cloexec_except(keep);
 			bad = 0;
-			for (size_t k = 0; k < sizeof(fds) / sizeof(*fds); k++) {
+			for(size_t k = 0; k < sizeof(fds) / sizeof(*fds); k++) {
 				int fl = fcntl(fds[k], F_GETFD);
 				int want = fds[k] == keep ? 0 : FD_CLOEXEC;
 
 				bad += (fl & FD_CLOEXEC) != want;
 			}
+
 			bad += fcntl(0, F_GETFD) & FD_CLOEXEC;
 			bad += fcntl(2, F_GETFD) & FD_CLOEXEC;
 			snprintf(what, sizeof(what), "%s, keep %d", pass ? "fallback loop" : "close_range",
@@ -433,14 +443,16 @@ static void test_cloexec(void)
 			ok(!bad, "%s: only the kept fd and 0..2 survive exec", what);
 		}
 	}
+
 	force_nosys = 0;
-	for (size_t k = 0; k < sizeof(fds) / sizeof(*fds); k++)
+	for(size_t k = 0; k < sizeof(fds) / sizeof(*fds); k++) {
 		close(fds[k]);
+	}
+
 	close(null);
 }
 
-static void test_oom(void)
-{
+static void test_oom(void) {
 	char path[] = "/tmp/ninit-t-fail-oom.XXXXXX", buf[32];
 	int fd = mkstemp(path);
 	ssize_t n;
@@ -459,11 +471,12 @@ static void test_oom(void)
 	unlink(path);
 }
 
-static void emerg_reset(void)
-{
+static void emerg_reset(void) {
 	emerg_bar_close();
-	if (child_bar >= 0)
+	if(child_bar >= 0) {
 		close(child_bar);
+	}
+
 	child_bar = -1;
 	emerg_pid = -1;
 	emerg_fast = emerg_fail = emerg_noexec = 0;
@@ -474,15 +487,13 @@ static void emerg_reset(void)
 	fake_vt = 0;
 }
 
-static void exec_ok(void)
-{
+static void exec_ok(void) {
 	close(child_bar);
 	child_bar = -1;
 	fail_emergency_report();
 }
 
-static void exec_fail(int e0, int e1, size_t len)
-{
+static void exec_fail(int e0, int e1, size_t len) {
 	int errs[2] = { e0, e1 };
 
 	(void)!write(child_bar, errs, len);
@@ -491,31 +502,34 @@ static void exec_fail(int e0, int e1, size_t len)
 	fail_emergency_report();
 }
 
-static int open_pty(int *master)
-{
+static int open_pty(int* master) {
 	int m = posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC), s;
 
-	if (m < 0 || grantpt(m) < 0 || unlockpt(m) < 0)
+	if(m < 0 || grantpt(m) < 0 || unlockpt(m) < 0) {
 		return -1;
+	}
+
 	s = open(ptsname(m), O_RDWR | O_NOCTTY | O_CLOEXEC);
-	if (s < 0) {
+	if(s < 0) {
 		close(m);
 		return -1;
 	}
+
 	*master = m;
+
 	return s;
 }
 
-static void test_emergency(void)
-{
+static void test_emergency(void) {
 	int master = -1, slave = open_pty(&master);
 	pid_t pid;
-	const char *t;
+	const char* t;
 
-	if (slave < 0) {
+	if(slave < 0) {
 		ok(1, "# SKIP no pty for the console");
 		return;
 	}
+
 	console_fd = slave;
 
 	emerg_reset();
@@ -551,16 +565,17 @@ static void test_emergency(void)
 	is_int(logcap_count("shell: started on the console"), 0, "the greeting is not repeated");
 
 	// five exits within a second of starting end the respawning
-	for (int k = 1; k <= 5; k++) {
+	for(int k = 1; k <= 5; k++) {
 		pid = emerg_pid;
 		fake_ms += 100;
 		logcap_begin();
 		fail_emergency_reaped(pid, 1 << 8);
-		if (k < 5) {
+		if(k < 5) {
 			ok(emerg_pid > 0 && emerg_pid != pid, "fast exit %d of 5 restarts it", k);
 			exec_ok();
 		}
 	}
+
 	t = logcap_text();
 	has_str(t, "FAIL > shell: exited immediately 5 times (exit 1), not restarting\n",
 		"the fifth fast exit gives up");
@@ -575,11 +590,12 @@ static void test_emergency(void)
 	emerg_reset();
 	fail_emergency_shell("x");
 	exec_ok();
-	for (int k = 0; k < 4; k++) {
+	for(int k = 0; k < 4; k++) {
 		fake_ms += 100;
 		fail_emergency_reaped(emerg_pid, 0);
 		exec_ok();
 	}
+
 	fake_ms += 1000;
 	fail_emergency_reaped(emerg_pid, 0);
 	exec_ok();
@@ -651,9 +667,10 @@ static void test_emergency(void)
 		snprintf(want, sizeof(want), "FAIL > shell: no console available: %s\n", strerror(EIO));
 		has_str(t, want, "a missing console is reported");
 	}
+
 	has_str(t, "FAIL > shell: not running, retrying in 2000 ms\n", "and retried");
 	is_int(fail_emergency_due(), EMERG_RETRY_MS, "the retry is due in 2 s");
-	for (int k = 2; k <= 5; k++) {
+	for(int k = 2; k <= 5; k++) {
 		fake_ms += EMERG_RETRY_MS - 1;
 		fail_emergency_tick();
 		is_int(emerg_fail, k - 1, "no retry before 2 s have passed");
@@ -661,6 +678,7 @@ static void test_emergency(void)
 		fail_emergency_tick();
 		is_int(emerg_fail, k, "the retry fails again");
 	}
+
 	has_str(logcap_text(), "FAIL > shell: giving up after 5 attempts\n", "the fifth failure gives up");
 	is_int(fail_emergency_due(), -1, "no retry is due after giving up");
 	console_fd = slave;
@@ -675,6 +693,7 @@ static void test_emergency(void)
 		snprintf(want, sizeof(want), "FAIL > shell: fork: %s\n", strerror(EAGAIN));
 		has_str(logcap_text(), want, "a fork failure is reported");
 	}
+
 	is_int(emerg_fail, 1, "and counted as a start failure");
 	fork_fail = 0;
 	fake_ms += EMERG_RETRY_MS;
@@ -734,7 +753,8 @@ static void test_emergency(void)
 #ifdef NINIT_SULOGIN
 	{
 		static const struct {
-			const char *shadow, *want;
+			const char* shadow;
+			const char* want;
 		} v[] = {
 			{ "root:$6$salt$hash:19000:0:::::\n", "the root password is required" },
 			{ "bin:*:1::::::\nroot:$y$j9T$x:1::::::\n", "the root password is required" },
@@ -750,11 +770,11 @@ static void test_emergency(void)
 		int fd = mkstemp(path);
 
 		close(fd);
-		for (size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
+		for(size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
 			char what[96], want[128];
-			FILE *f;
+			FILE* f;
 
-			if (v[k].shadow) {
+			if(v[k].shadow) {
 				f = fopen(path, "w");
 				fputs(v[k].shadow, f);
 				fclose(f);
@@ -762,6 +782,7 @@ static void test_emergency(void)
 			} else {
 				shadow_path = NULL;
 			}
+
 			emerg_reset();
 			logcap_begin();
 			fail_emergency_shell("x");
@@ -770,6 +791,7 @@ static void test_emergency(void)
 			snprintf(what, sizeof(what), "shadow case %zu: %s", k, v[k].want);
 			has_str(logcap_text(), want, what);
 		}
+
 		emerg_reset();
 		fail_emergency_shell("x");
 		exec_ok();
@@ -787,8 +809,7 @@ static void test_emergency(void)
 	close(master);
 }
 
-int main(void)
-{
+int main(void) {
 	int null;
 
 	// runs first, before the low fds are taken
@@ -804,5 +825,6 @@ int main(void)
 	test_summary();
 	test_oom();
 	test_emergency();
+
 	return tap_done();
 }

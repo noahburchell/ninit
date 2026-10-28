@@ -4,10 +4,10 @@
 #include <stddef.h>
 #include <assert.h>
 
-#define NG_MAGIC	0x4744494eu // 'NIDG'
-#define NG_VERSION	9u
+#define NG_MAGIC   0x4744494eu // 'NIDG'
+#define NG_VERSION 9u
 
-#define NG_TYPE_ONESHOT	0
+#define NG_TYPE_ONESHOT 0
 #define NG_TYPE_DAEMON	1
 #define NG_TYPE_TARGET	2
 
@@ -17,79 +17,79 @@
 #define NG_ONFAIL_MASK	0x03
 #define NG_ONFAIL_WARN	0
 #define NG_ONFAIL_STOP	1
-#define NG_ONFAIL_SHELL	2
+#define NG_ONFAIL_SHELL 2
 
-#define NG_FLAG_RESTART	0x04
+#define NG_FLAG_RESTART 0x04
 #define NG_FLAG_INTERP	0x08
 #define NG_FLAG_DIRECT	0x10
 #define NG_FLAG_MASK	(NG_ONFAIL_MASK | NG_FLAG_RESTART | NG_FLAG_INTERP | NG_FLAG_DIRECT)
 
 #define NG_PF_ORDER_ONLY 0x01
-#define NG_PF_MASK	0x01
+#define NG_PF_MASK	 0x01
 
-#define NG_NO_SCRIPT	UINT32_MAX
-#define NG_NO_EXEC	UINT32_MAX
+#define NG_NO_SCRIPT UINT32_MAX
+#define NG_NO_EXEC   UINT32_MAX
 
 // an interpreter argv is its path and at most NG_MAX_EXEC_ARGS strings around the script,
 // a direct argv is the command and its arguments, NG_MAX_EXEC_ARGS strings in all
-#define NG_MAX_INTERP	255u
-#define NG_MAX_EXEC_ARGS	16u
-#define NG_MAX_EXEC_ARG	4096u
+#define NG_MAX_INTERP	 255u
+#define NG_MAX_EXEC_ARGS 16u
+#define NG_MAX_EXEC_ARG	 4096u
 
-#define NG_NOTIFY_NONE	0
-#define NG_NOTIFY_MIN	3
-#define NG_NOTIFY_MAX	255
+#define NG_NOTIFY_NONE 0
+#define NG_NOTIFY_MIN  3
+#define NG_NOTIFY_MAX  255
 
 #ifndef NG_SHELL
-#define NG_SHELL	"/bin/bash"
-#define NG_SHELL_ARGV0	"bash"
+#define NG_SHELL       "/bin/bash"
+#define NG_SHELL_ARGV0 "bash"
 #endif
 #ifndef NG_SHELL_ARGV0
-#define NG_SHELL_ARGV0	NG_SHELL
+#define NG_SHELL_ARGV0 NG_SHELL
 #endif
 
 // kernel doesnt give path, bash does this for us but maybe better to hardcode
-#define NG_PATH	"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+#define NG_PATH "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 static_assert(__builtin_strncmp(NG_PATH, "PATH=", 5) == 0, "NG_PATH must be a putenv-style entry");
 
-#define NG_MAX_SCRIPT	131071u
+#define NG_MAX_SCRIPT 131071u
 
-#define NG_MAX_SRC	(NG_MAX_SCRIPT + 4096u)
+#define NG_MAX_SRC (NG_MAX_SCRIPT + 4096u)
 
-#define NG_MAX_SVC	8192u
+#define NG_MAX_SVC 8192u
 
-#define NG_MAX_NAME	255u
+#define NG_MAX_NAME 255u
 
-#define NG_DEF_START_MS	90000u
+#define NG_DEF_START_MS 90000u
 #define NG_DEF_STOP_MS	5000u
 
-#define NG_DEF_TRIES_ONESHOT	1u
-#define NG_DEF_TRIES_DAEMON	2u
+#define NG_DEF_TRIES_ONESHOT 1u
+#define NG_DEF_TRIES_DAEMON  2u
 
-#define NG_MAX_MS	86400000u
-#define NG_MAX_TRIES	250u
+#define NG_MAX_MS    86400000u
+#define NG_MAX_TRIES 250u
 
 static_assert(NG_MAX_SVC <= UINT16_MAX, "service counts must fit the 16-bit fields");
 
 // ninits control socket
-#define NINIT_CTL_DIR	"/run/ninit"
-#define NINIT_CTL_SOCK	NINIT_CTL_DIR "/control"
+#define NINIT_CTL_DIR  "/run/ninit"
+#define NINIT_CTL_SOCK NINIT_CTL_DIR "/control"
 
 #ifndef NG_DEFAULT_DIR
-#define NG_DEFAULT_DIR	"/etc/ninit.d"
+#define NG_DEFAULT_DIR "/etc/ninit.d"
 #endif
 #ifndef NG_DEFAULT_FILE
-#define NG_DEFAULT_FILE	"/etc/ninit.d/depgraph"
+#define NG_DEFAULT_FILE "/etc/ninit.d/depgraph"
 #endif
 
 // services get no login shell, so pid 1 has to carry the system locale
-#define NG_LOCALE_CONF	"/etc/locale.conf"
+#define NG_LOCALE_CONF	 "/etc/locale.conf"
 #define NG_FALLBACK_LANG "C.UTF-8"
 
-#define NG_LOCALE_MAX	14
-#define NG_LOCALE_LEN	128
-#define NG_LOCALE_FILE	8192u
+#define NG_LOCALE_MAX  14
+#define NG_LOCALE_LEN  128
+#define NG_LOCALE_FILE 8192u
 
 struct ng_hdr {
 	uint32_t magic;
@@ -113,15 +113,15 @@ struct ng_pol {
 	uint32_t start_ms;
 	uint32_t stop_ms;
 	uint16_t retry_ms;
-	uint8_t start_tries;
-	uint8_t pflags;
+	uint8_t  start_tries;
+	uint8_t  pflags;
 	uint32_t exec_off;
 };
 
 struct ng_svc {
 	uint16_t unmet;
-	uint8_t type;
-	uint8_t flags;
+	uint8_t  type;
+	uint8_t  flags;
 	uint16_t n_desc;
 	uint16_t notify_fd;
 	uint32_t script_off;
@@ -135,117 +135,102 @@ static_assert(sizeof(struct ng_pol) % 4 == 0, "policy table must not misalign th
 static_assert(sizeof(struct ng_hdr) % 8 == 0, "header must not misalign what follows");
 static_assert(sizeof(struct ng_svc) % 4 == 0, "service table must not misalign the rdep arrays");
 
-static inline const struct ng_svc *ng_svcs(const void *m)
-{
-	return (const void *)((const char *)m + ((const struct ng_hdr *)m)->off_svc);
+static inline const struct ng_svc* ng_svcs(const void* m) {
+	return (const void*)((const char*)m + ((const struct ng_hdr*)m)->off_svc);
 }
 
-static inline const uint32_t *ng_rdep_off(const void *m)
-{
-	return (const void *)((const char *)m + ((const struct ng_hdr *)m)->off_rdep_off);
+static inline const uint32_t* ng_rdep_off(const void* m) {
+	return (const void*)((const char*)m + ((const struct ng_hdr*)m)->off_rdep_off);
 }
 
-static inline const uint32_t *ng_rdep_idx(const void *m)
-{
-	return (const void *)((const char *)m + ((const struct ng_hdr *)m)->off_rdep_idx);
+static inline const uint32_t* ng_rdep_idx(const void* m) {
+	return (const void*)((const char*)m + ((const struct ng_hdr*)m)->off_rdep_idx);
 }
 
-static inline const char *ng_blob(const void *m)
-{
-	return (const char *)m + ((const struct ng_hdr *)m)->off_blob;
+static inline const char* ng_blob(const void* m) {
+	return (const char*)m + ((const struct ng_hdr*)m)->off_blob;
 }
 
-static inline const struct ng_pol *ng_pol(const void *m, uint32_t i)
-{
-	const void *p = (const char *)m + ((const struct ng_hdr *)m)->off_pol;
+static inline const struct ng_pol* ng_pol(const void* m, uint32_t i) {
+	const void* p = (const char*)m + ((const struct ng_hdr*)m)->off_pol;
 
-	return (const struct ng_pol *)p + i;
+	return (const struct ng_pol*)p + i;
 }
 
-static inline uint32_t ng_start_ms(const void *m, uint32_t i)
-{
+static inline uint32_t ng_start_ms(const void* m, uint32_t i) {
 	uint32_t v = ng_pol(m, i)->start_ms;
 
 	return v ? v : NG_DEF_START_MS;
 }
 
-static inline uint32_t ng_stop_ms(const void *m, uint32_t i)
-{
+static inline uint32_t ng_stop_ms(const void* m, uint32_t i) {
 	uint32_t v = ng_pol(m, i)->stop_ms;
 
 	return v ? v : NG_DEF_STOP_MS;
 }
 
-static inline unsigned ng_start_tries(const void *m, uint32_t i)
-{
+static inline unsigned ng_start_tries(const void* m, uint32_t i) {
 	unsigned v = ng_pol(m, i)->start_tries;
 
-	if (v)
+	if(v) {
 		return v;
+	}
+
 	return ng_svcs(m)[i].type == NG_TYPE_DAEMON ? NG_DEF_TRIES_DAEMON
 						    : NG_DEF_TRIES_ONESHOT;
 }
 
-static inline int ng_order_only(const void *m, uint32_t i)
-{
+static inline int ng_order_only(const void* m, uint32_t i) {
 	return ng_pol(m, i)->pflags & NG_PF_ORDER_ONLY;
 }
 
-static inline const char *ng_name(const void *m, uint32_t i)
-{
+static inline const char* ng_name(const void* m, uint32_t i) {
 	return ng_blob(m) + ng_svcs(m)[i].name_off;
 }
 
-static inline const char *ng_script(const void *m, uint32_t i)
-{
+static inline const char* ng_script(const void* m, uint32_t i) {
 	return ng_blob(m) + ng_svcs(m)[i].script_off;
 }
 
-static inline int ng_interp(const void *m, uint32_t i)
-{
+static inline int ng_interp(const void* m, uint32_t i) {
 	return ng_svcs(m)[i].flags & NG_FLAG_INTERP;
 }
 
-static inline int ng_direct(const void *m, uint32_t i)
-{
+static inline int ng_direct(const void* m, uint32_t i) {
 	return ng_svcs(m)[i].flags & NG_FLAG_DIRECT;
 }
 
 // with INTERP the strings before the script, an empty string, the strings after it, an empty
 // string, with DIRECT the command and its arguments, an empty string
-static inline const char *ng_exec(const void *m, uint32_t i)
-{
+static inline const char* ng_exec(const void* m, uint32_t i) {
 	return ng_blob(m) + ng_pol(m, i)->exec_off;
 }
 
-static inline uint16_t ng_notify(const void *m, uint32_t i)
-{
+static inline uint16_t ng_notify(const void* m, uint32_t i) {
 	return ng_svcs(m)[i].notify_fd;
 }
 
-static inline uint8_t ng_onfail(const void *m, uint32_t i)
-{
+static inline uint8_t ng_onfail(const void* m, uint32_t i) {
 	return ng_svcs(m)[i].flags & NG_ONFAIL_MASK;
 }
 
-static inline int ng_restart(const void *m, uint32_t i)
-{
+static inline int ng_restart(const void* m, uint32_t i) {
 	return ng_svcs(m)[i].flags & NG_FLAG_RESTART;
 }
 
-uint32_t ng_crc32c(const void *data, size_t len);
+uint32_t ng_crc32c(const void* data, size_t len);
 
-uint32_t ng_image_crc32c(const void *map, size_t len);
+uint32_t ng_image_crc32c(const void* map, size_t len);
 
-const char *ng_verify(const void *map, size_t len);
+const char* ng_verify(const void* map, size_t len);
 
-const char *ng_typename(uint8_t type);
+const char* ng_typename(uint8_t type);
 
-const char *ng_name_problem(const char *name);
-int ng_reserved_name(const char *name);
+const char* ng_name_problem(const char* name);
+int ng_reserved_name(const char* name);
 
-const char *ng_onfailname(uint8_t policy);
+const char* ng_onfailname(uint8_t policy);
 
-int ng_locale_env(char (*out)[NG_LOCALE_LEN], int max, const char **why);
+int ng_locale_env(char (*out)[NG_LOCALE_LEN], int max, const char** why);
 // the same for an open locale.conf, which it closes, a negative fd is a missing file
-int ng_locale_fd(int fd, char (*out)[NG_LOCALE_LEN], int max, const char **why);
+int ng_locale_fd(int fd, char (*out)[NG_LOCALE_LEN], int max, const char** why);

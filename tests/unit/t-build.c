@@ -17,38 +17,37 @@
 
 static jmp_buf die_jb;
 
-[[noreturn]] static void shim_exit(int code)
-{
+[[noreturn]] static void shim_exit(int code) {
 	longjmp(die_jb, 1000 + code);
 }
 
 // the syntax check with memfd_create, the staging write or waitpid failing
 static int memfd_fail, stage_fail, wait_fail;
 
-static int shim_memfd_create(const char *name, unsigned flags)
-{
-	if (memfd_fail) {
+static int shim_memfd_create(const char* name, unsigned flags) {
+	if(memfd_fail) {
 		errno = ENOSYS;
 		return -1;
 	}
+
 	return memfd_create(name, flags);
 }
 
-static ssize_t shim_write(int fd, const void *buf, size_t n)
-{
-	if (stage_fail) {
+static ssize_t shim_write(int fd, const void* buf, size_t n) {
+	if(stage_fail) {
 		errno = ENOSPC;
 		return n > 1 ? 1 : -1;
 	}
+
 	return write(fd, buf, n);
 }
 
-static pid_t shim_waitpid(pid_t pid, int *st, int flags)
-{
-	if (wait_fail) {
+static pid_t shim_waitpid(pid_t pid, int* st, int flags) {
+	if(wait_fail) {
 		errno = ECHILD;
 		return -1;
 	}
+
 	return waitpid(pid, st, flags);
 }
 
@@ -64,10 +63,10 @@ static pid_t shim_waitpid(pid_t pid, int *st, int flags)
 #include "../../ctl/output.c"
 #include "../../ctl/sources.c"
 #include "../../ctl/graph.c"
-#define CHECK_MS 1000
+#define CHECK_MS     1000
 #define memfd_create shim_memfd_create
-#define write shim_write
-#define waitpid shim_waitpid
+#define write	     shim_write
+#define waitpid	     shim_waitpid
 #include "../../ctl/check.c"
 #undef memfd_create
 #undef write
@@ -79,8 +78,7 @@ static pid_t shim_waitpid(pid_t pid, int *st, int flags)
 static char errtext[4096];
 
 // runs fn with stderr captured, returns 0 or 1000 + the status die() exited with
-static int capture(void (*fn)(void *), void *arg)
-{
+static int capture(void (*fn)(void*), void* arg) {
 	char path[] = "/tmp/ninit-t-build-err.XXXXXX";
 	int fd = mkstemp(path), saved;
 	volatile int rc;
@@ -90,8 +88,10 @@ static int capture(void (*fn)(void *), void *arg)
 	saved = dup(2);
 	dup2(fd, 2);
 	rc = setjmp(die_jb);
-	if (!rc)
+	if(!rc) {
 		fn(arg);
+	}
+
 	fflush(stderr);
 	dup2(saved, 2);
 	close(saved);
@@ -100,33 +100,42 @@ static int capture(void (*fn)(void *), void *arg)
 	errtext[n > 0 ? n : 0] = '\0';
 	close(fd);
 	unlink(path);
+
 	return rc;
 }
 
 struct ms_arg {
-	const char *val;
-	uint32_t got;
+	const char* val;
+	uint32_t    got;
 };
 
-static void call_ms(void *p)
-{
-	struct ms_arg *a = p;
+static void call_ms(void* p) {
+	struct ms_arg* a = p;
 
 	a->got = parse_ms(a->val, "svc", "start-timeout");
 }
 
-static void test_parse_ms(void)
-{
+static void test_parse_ms(void) {
 	static const struct {
-		const char *val;
+		const char* val;
 		uint32_t ms;
 	} good[] = {
-		{ "1", 1 }, { "1ms", 1 }, { "250ms", 250 }, { "1s", 1000 }, { "90s", 90000 },
-		{ "2m", 120000 }, { "1h", 3600000 }, { "24h", 86400000 }, { "1440m", 86400000 },
-		{ "86400s", 86400000 }, { "86400000", 86400000 }, { "007s", 7000 },
+		{ "1", 1 },
+		{ "1ms", 1 },
+		{ "250ms", 250 },
+		{ "1s", 1000 },
+		{ "90s", 90000 },
+		{ "2m", 120000 },
+		{ "1h", 3600000 },
+		{ "24h", 86400000 },
+		{ "1440m", 86400000 },
+		{ "86400s", 86400000 },
+		{ "86400000", 86400000 },
+		{ "007s", 7000 },
 	};
 	static const struct {
-		const char *val, *why;
+		const char* val;
+		const char* why;
 	} bad[] = {
 		{ "0", "start-timeout:0 must not be zero" },
 		{ "0s", "start-timeout:0s must not be zero" },
@@ -151,22 +160,24 @@ static void test_parse_ms(void)
 	};
 
 	g_dir = "/d";
-	for (size_t k = 0; k < sizeof(good) / sizeof(*good); k++) {
+	for(size_t k = 0; k < sizeof(good) / sizeof(*good); k++) {
 		struct ms_arg a = { good[k].val, 0 };
 		int rc = capture(call_ms, &a);
 
 		ok(!rc && a.got == good[k].ms, "duration %s is %u ms", good[k].val, good[k].ms);
-		if (rc || a.got != good[k].ms)
+		if(rc || a.got != good[k].ms) {
 			tap_diag("rc %d got %u: %s", rc, a.got, errtext);
+		}
 	}
-	for (size_t k = 0; k < sizeof(bad) / sizeof(*bad); k++) {
+
+	for(size_t k = 0; k < sizeof(bad) / sizeof(*bad); k++) {
 		struct ms_arg a = { bad[k].val, 0 };
 		char want[256];
 		int rc = capture(call_ms, &a);
 
 		snprintf(want, sizeof(want), "ninitctl: /d/svc: %s\n", bad[k].why);
 		ok(rc == 1001 && !strcmp(errtext, want), "duration '%s' is refused", bad[k].val);
-		if (rc != 1001 || strcmp(errtext, want)) {
+		if(rc != 1001 || strcmp(errtext, want)) {
 			tap_diag("rc %d", rc);
 			tap_diag_str("got:  ", errtext, strlen(errtext));
 			tap_diag_str("want: ", want, strlen(want));
@@ -174,18 +185,18 @@ static void test_parse_ms(void)
 	}
 }
 
-static void test_helpers(void)
-{
+static void test_helpers(void) {
 	{
 		char v[] = " a, b,c  d\t,e,, ,f ";
 		struct strv s = { 0 };
 
 		split_into(&s, v, 1);
-		ok(s.n == 6 && !strcmp(s.v[0], "a") && !strcmp(s.v[1], "b") && !strcmp(s.v[2], "c") &&
-		   !strcmp(s.v[3], "d") && !strcmp(s.v[4], "e") && !strcmp(s.v[5], "f"),
+		ok(s.n == 6 && !strcmp(s.v[0], "a") && !strcmp(s.v[1], "b") && !strcmp(s.v[2], "c")
+			   && !strcmp(s.v[3], "d") && !strcmp(s.v[4], "e") && !strcmp(s.v[5], "f"),
 		   "names split on commas, blanks and both");
 		free(s.v);
 	}
+
 	{
 		char v[] = ", ,,\t";
 		struct strv s = { 0 };
@@ -194,6 +205,7 @@ static void test_helpers(void)
 		is_int(s.n, 0, "separators alone give no names");
 		free(s.v);
 	}
+
 	{
 		char v[] = "a,b c";
 		struct strv s = { 0 };
@@ -202,11 +214,13 @@ static void test_helpers(void)
 		ok(s.n == 2 && !strcmp(s.v[0], "a,b"), "without the comma flag only blanks separate");
 		free(s.v);
 	}
+
 	{
 		char v[] = " \t a b \t\r";
 
 		is_str(trim(v), "a b", "trim removes blanks around a value and a final cr");
 	}
+
 	is_int(has_code(""), 0, "an empty file has no commands");
 	is_int(has_code("#!/bin/bash\n# c\n\n \t\n#%type: target\n"), 0, "comments and blanks are not commands");
 	is_int(has_code("\r\n\r\n"), 0, "cr line ends are blank");
@@ -224,123 +238,185 @@ static void test_helpers(void)
 	ok(!is_artifact("x", (str){ 0 }), "without an output in the directory nothing is an artifact");
 }
 
-static char *dup_n(const char *s, size_t n)
-{
-	char *p = malloc(n + 1);
+static char* dup_n(const char* s, size_t n) {
+	char* p = malloc(n + 1);
 
 	memcpy(p, s, n);
 	p[n] = '\0';
+
 	return p;
 }
 
-static size_t count_nl(const char *s, size_t n)
-{
+static size_t count_nl(const char* s, size_t n) {
 	size_t c = 0;
 
-	for (size_t k = 0; k < n; k++)
+	for(size_t k = 0; k < n; k++) {
 		c += s[k] == '\n';
+	}
+
 	return c;
 }
 
-static size_t do_compact(char *s, size_t n)
-{
+static size_t do_compact(char* s, size_t n) {
 	return compact(s, n, n, "fuzz");
 }
 
-static char **corpus;
-static size_t *corpus_len, n_corpus;
+static char** corpus;
+static size_t* corpus_len;
+static size_t n_corpus;
 
-static void load_corpus(void)
-{
-	const char *top = getenv("top_srcdir");
+static void load_corpus(void) {
+	const char* top = getenv("top_srcdir");
 	char dir[4096];
-	struct dirent **ents;
+	struct dirent** ents;
 	int ne;
 
-	if (!top)
+	if(!top) {
 		top = ".";
+	}
+
 	snprintf(dir, sizeof(dir), "%s/tests/compact", top);
 	ne = scandir(dir, &ents, NULL, alphasort);
-	if (ne < 0)
+	if(ne < 0) {
 		return;
+	}
+
 	corpus = calloc((size_t)ne, sizeof(*corpus));
 	corpus_len = calloc((size_t)ne, sizeof(*corpus_len));
-	for (int k = 0; k < ne; k++) {
+	for(int k = 0; k < ne; k++) {
 		char path[8192];
 		size_t len;
 
-		if (ents[k]->d_name[0] == '.' || strstr(ents[k]->d_name, ".want")) {
+		if(ents[k]->d_name[0] == '.' || strstr(ents[k]->d_name, ".want")) {
 			free(ents[k]);
 			continue;
 		}
+
 		snprintf(path, sizeof(path), "%s/%s", dir, ents[k]->d_name);
 		corpus[n_corpus] = slurp(path, &len);
 		corpus_len[n_corpus++] = len;
 		free(ents[k]);
 	}
+
 	free(ents);
 }
 
-static const char *const tokens[] = {
-	"#", " # c\n", "<<EOF\n", "\nEOF\n", "<<-X\n\tX\n", "<<'Q'\nq\nQ\n", "\\\n", "\\", "$(", ")", "(",
-	"'", "\"", "`", "${", "}", "{", "case x in", " in ", "esac", ";;", ";&", "[[", "]]", "=~",
-	"((", "))", "$((", "\n", " ", "\t", "a=(", "[", "]", "=", "@(", "!(", "time", "coproc",
-	"for", "do", "done", "<(", ">(", "<<<", "&", "|", ";", "$'", "#%x: y\n", "\r",
+static const char* const tokens[] = {
+	"#",
+	" # c\n",
+	"<<EOF\n",
+	"\nEOF\n",
+	"<<-X\n\tX\n",
+	"<<'Q'\nq\nQ\n",
+	"\\\n",
+	"\\",
+	"$(",
+	")",
+	"(",
+	"'",
+	"\"",
+	"`",
+	"${",
+	"}",
+	"{",
+	"case x in",
+	" in ",
+	"esac",
+	";;",
+	";&",
+	"[[",
+	"]]",
+	"=~",
+	"((",
+	"))",
+	"$((",
+	"\n",
+	" ",
+	"\t",
+	"a=(",
+	"[",
+	"]",
+	"=",
+	"@(",
+	"!(",
+	"time",
+	"coproc",
+	"for",
+	"do",
+	"done",
+	"<(",
+	">(",
+	"<<<",
+	"&",
+	"|",
+	";",
+	"$'",
+	"#%x: y\n",
+	"\r",
 };
 
-static size_t mutate(char *buf, size_t len, size_t cap)
-{
+static size_t mutate(char* buf, size_t len, size_t cap) {
 	unsigned ops = 1 + tap_below(3);
 
-	for (unsigned o = 0; o < ops; o++) {
+	for(unsigned o = 0; o < ops; o++) {
 		size_t at = len ? tap_below((uint32_t)len + 1) : 0;
 
-		switch (tap_below(4)) {
-		case 0: {
-			const char *t = tokens[tap_below(sizeof(tokens) / sizeof(*tokens))];
-			size_t tl = strlen(t);
+		switch(tap_below(4)) {
+			case 0: {
+				const char* t = tokens[tap_below(sizeof(tokens) / sizeof(*tokens))];
+				size_t tl = strlen(t);
 
-			if (len + tl >= cap)
+				if(len + tl >= cap) {
+					break;
+				}
+
+				memmove(buf + at + tl, buf + at, len - at);
+				memcpy(buf + at, t, tl);
+				len += tl;
 				break;
-			memmove(buf + at + tl, buf + at, len - at);
-			memcpy(buf + at, t, tl);
-			len += tl;
-			break;
-		}
-		case 1: {
-			size_t dl = 1 + tap_below(8);
-
-			if (at + dl > len)
-				dl = len - at;
-			memmove(buf + at, buf + at + dl, len - at - dl);
-			len -= dl;
-			break;
-		}
-		case 2:
-			if (at < len)
-				buf[at] = (char)(' ' + tap_below(95));
-			break;
-		default:
-			if (at < len) {
-				static const char meta[] = "#'\"`$(){}[]\\\n;|&<>";
-
-				buf[at] = meta[tap_below(sizeof(meta) - 1)];
 			}
-			break;
+
+			case 1: {
+				size_t dl = 1 + tap_below(8);
+
+				if(at + dl > len) {
+					dl = len - at;
+				}
+
+				memmove(buf + at, buf + at + dl, len - at - dl);
+				len -= dl;
+				break;
+			}
+
+			case 2:
+				if(at < len) {
+					buf[at] = (char)(' ' + tap_below(95));
+				}
+
+				break;
+			default:
+				if(at < len) {
+					static const char meta[] = "#'\"`$(){}[]\\\n;|&<>";
+
+					buf[at] = meta[tap_below(sizeof(meta) - 1)];
+				}
+
+				break;
 		}
 	}
+
 	buf[len] = '\0';
+
 	return len;
 }
 
-static void test_compact_corpus(void)
-{
+static void test_compact_corpus(void) {
 	load_corpus();
 	ok(n_corpus >= 10, "the stripper corpus is present (%zu files)", n_corpus);
-	for (size_t k = 0; k < n_corpus; k++) {
-		char *a = dup_n(corpus[k], corpus_len[k]);
+	for(size_t k = 0; k < n_corpus; k++) {
+		char* a = dup_n(corpus[k], corpus_len[k]);
 		size_t la = do_compact(a, corpus_len[k]);
-		char *b = dup_n(a, la);
+		char* b = dup_n(a, la);
 		size_t lb = do_compact(b, la);
 
 		ok(la == lb && !memcmp(a, b, la), "stripping corpus file %zu twice changes nothing", k);
@@ -349,74 +425,81 @@ static void test_compact_corpus(void)
 	}
 }
 
-static void test_compact_fuzz(void)
-{
+static void test_compact_fuzz(void) {
 	size_t cap = 1 << 16, bad = 0, iters = 200000;
-	char *buf = malloc(cap), *orig = malloc(cap);
+	char* buf = malloc(cap);
+	char* orig = malloc(cap);
 
-	if (!n_corpus) {
+	if(!n_corpus) {
 		ok(1, "# SKIP no corpus");
 		return;
 	}
-	for (size_t it = 0; it < iters; it++) {
+
+	for(size_t it = 0; it < iters; it++) {
 		size_t k = tap_below((uint32_t)n_corpus), len = corpus_len[k], out, nl_in;
 
-		if (len >= cap / 2)
+		if(len >= cap / 2) {
 			continue;
+		}
+
 		memcpy(buf, corpus[k], len);
 		len = mutate(buf, len, cap / 2);
 		memcpy(orig, buf, len + 1);
 		nl_in = count_nl(buf, len);
 		out = do_compact(buf, len);
-		if (out > len || count_nl(buf, out) > nl_in || memchr(buf, '\0', out)) {
-			if (bad++ < 3) {
+		if(out > len || count_nl(buf, out) > nl_in || memchr(buf, '\0', out)) {
+			if(bad++ < 3) {
 				tap_diag("iteration %zu: %zu bytes became %zu", it, len, out);
 				tap_diag_str("input: ", orig, len);
 			}
 		}
 	}
+
 	ok(!bad, "%zu mutated scripts never grow, gain lines or hold a nul once stripped", iters);
 	free(buf);
 	free(orig);
 }
 
-static int bash_n(const char *text, size_t len)
-{
+static int bash_n(const char* text, size_t len) {
 	char path[] = "/tmp/ninit-t-build-sh.XXXXXX";
 	int fd = mkstemp(path), st = -1, null;
 	pid_t pid;
 
-	if (fd < 0 || write(fd, text, len) != (ssize_t)len) {
+	if(fd < 0 || write(fd, text, len) != (ssize_t)len) {
 		close(fd);
 		unlink(path);
 		return -1;
 	}
+
 	close(fd);
 	pid = fork();
-	if (pid == 0) {
+	if(pid == 0) {
 		null = open("/dev/null", O_WRONLY);
 		dup2(null, 1);
 		dup2(null, 2);
-		execl(NG_SHELL, NG_SHELL_ARGV0, "-n", path, (char *)NULL);
+		execl(NG_SHELL, NG_SHELL_ARGV0, "-n", path, (char*)NULL);
 		_exit(127);
 	}
+
 	waitpid(pid, &st, 0);
 	unlink(path);
+
 	return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
 }
 
-static void test_compact_syntax(void)
-{
+static void test_compact_syntax(void) {
 	size_t cap = 1 << 16, tested = 0, broke = 0, fixed = 0, iters = 1000;
-	char *buf = malloc(cap), *orig = malloc(cap);
+	char* buf = malloc(cap);
+	char* orig = malloc(cap);
 
-	if (!n_corpus || access(NG_SHELL, X_OK)) {
+	if(!n_corpus || access(NG_SHELL, X_OK)) {
 		ok(1, "# SKIP %s", n_corpus ? NG_SHELL " is not executable" : "no corpus");
 		free(buf);
 		free(orig);
 		return;
 	}
-	for (size_t it = 0; it < iters; it++) {
+
+	for(size_t it = 0; it < iters; it++) {
 		size_t k = tap_below((uint32_t)n_corpus), len = corpus_len[k], out;
 		int ro, rs;
 
@@ -427,17 +510,19 @@ static void test_compact_syntax(void)
 		out = do_compact(buf, len);
 		rs = bash_n(buf, out);
 		tested += ro == 0;
-		if (ro == 0 && rs != 0 && broke++ < 3) {
+		if(ro == 0 && rs != 0 && broke++ < 3) {
 			tap_diag("stripping broke the syntax of a valid script");
 			tap_diag_str("input:    ", orig, len);
 			tap_diag_str("stripped: ", buf, out);
 		}
-		if (ro != 0 && rs == 0 && fixed++ < 3) {
+
+		if(ro != 0 && rs == 0 && fixed++ < 3) {
 			tap_diag("stripping made an invalid script valid");
 			tap_diag_str("input:    ", orig, len);
 			tap_diag_str("stripped: ", buf, out);
 		}
 	}
+
 	ok(!broke, "no valid mutated script fails bash -n once stripped (%zu of %zu were valid)",
 	   tested, iters);
 	ok(!fixed, "no invalid mutated script passes bash -n once stripped");
@@ -446,15 +531,14 @@ static void test_compact_syntax(void)
 }
 
 struct src_arg {
-	const char *text;
-	struct src s;
+	const char* text;
+	struct src  s;
 };
 
-static void call_parse(void *p)
-{
-	struct src_arg *a = p;
+static void call_parse(void* p) {
+	struct src_arg* a = p;
 	size_t len = strlen(a->text);
-	char *body = malloc(len + 1);
+	char* body = malloc(len + 1);
 
 	memcpy(body, a->text, len + 1);
 	memset(&a->s, 0, sizeof(a->s));
@@ -462,27 +546,28 @@ static void call_parse(void *p)
 }
 
 // LINE with tab and cr spelled out, for test names
-static const char *shown(const char *line)
-{
+static const char* shown(const char* line) {
 	static char buf[256];
 	size_t j = 0;
 
-	for (const char *p = line; *p && j + 3 < sizeof(buf); p++) {
-		if (*p == '\t' || *p == '\r') {
+	for(const char* p = line; *p && j + 3 < sizeof(buf); p++) {
+		if(*p == '\t' || *p == '\r') {
 			buf[j++] = '\\';
 			buf[j++] = *p == '\t' ? 't' : 'r';
 		} else {
 			buf[j++] = *p;
 		}
 	}
+
 	buf[j] = '\0';
+
 	return buf;
 }
 
-static void test_shebang(void)
-{
+static void test_shebang(void) {
 	static const struct {
-		const char *line, *want;
+		const char* line;
+		const char* want;
 	} cases[] = {
 		{ "#!/bin/bash", "bash" },
 		{ "#!bash", "bash" },
@@ -519,25 +604,28 @@ static void test_shebang(void)
 		{ "#!", NULL },
 		{ "#!  \t", NULL },
 	};
-	const char *zsh = "#!/usr/bin/zsh\n#%type: oneshot\n# note\nls (#i)readme   # case blind\n";
+	const char* zsh = "#!/usr/bin/zsh\n#%type: oneshot\n# note\nls (#i)readme   # case blind\n";
 	struct src_arg a;
 	char want[512];
 	int rc;
 
-	for (size_t k = 0; k < sizeof(cases) / sizeof(*cases); k++) {
+	for(size_t k = 0; k < sizeof(cases) / sizeof(*cases); k++) {
 		str w = shebang_interp(str_c(cases[k].line));
 
-		if (!cases[k].want)
+		if(!cases[k].want) {
 			ok(!w.n, "'%s' names no interpreter", shown(cases[k].line));
-		else
+		} else {
 			ok(str_eq(w, str_c(cases[k].want)), "'%s' names %s", shown(cases[k].line), cases[k].want);
+		}
 	}
 
-	ok(sh_lexed("sh") && sh_lexed("bash") && sh_lexed("/bin/dash") && sh_lexed("ash") &&
-	   sh_lexed("ksh") && sh_lexed("mksh") && sh_lexed("oksh") && sh_lexed("loksh") &&
-	   sh_lexed("yash") && sh_lexed("posh"), "sh, bash, dash, ash and the ksh family lex like sh");
-	ok(!sh_lexed("zsh") && !sh_lexed("/usr/bin/zsh") && !sh_lexed("fish") && !sh_lexed("bash5") &&
-	   !sh_lexed("lua") && !sh_lexed(""), "zsh, fish and other names do not");
+	ok(sh_lexed("sh") && sh_lexed("bash") && sh_lexed("/bin/dash") && sh_lexed("ash")
+		   && sh_lexed("ksh") && sh_lexed("mksh") && sh_lexed("oksh") && sh_lexed("loksh")
+		   && sh_lexed("yash") && sh_lexed("posh"),
+	   "sh, bash, dash, ash and the ksh family lex like sh");
+	ok(!sh_lexed("zsh") && !sh_lexed("/usr/bin/zsh") && !sh_lexed("fish") && !sh_lexed("bash5")
+		   && !sh_lexed("lua") && !sh_lexed(""),
+	   "zsh, fish and other names do not");
 
 	g_dir = "/d";
 	g_sh_lexed = 0;
@@ -552,12 +640,14 @@ static void test_shebang(void)
 	a.text = "#!/usr/bin/ruby\n:\n";
 	rc = capture(call_parse, &a);
 	snprintf(want, sizeof(want), "ninitctl: warning: /d/svc: '#!/usr/bin/ruby' is ignored, "
-		 "the script runs under %s\n", NG_SHELL);
+				     "the script runs under %s\n",
+		 NG_SHELL);
 	ok(!rc && !strcmp(errtext, want), "a #! line naming another interpreter is warned about");
 	a.text = "#!/usr/bin/env -S ninitctl stop foo  \r\n:\n";
 	rc = capture(call_parse, &a);
 	snprintf(want, sizeof(want), "ninitctl: warning: /d/svc: '#!/usr/bin/env -S ninitctl stop foo' "
-		 "is ignored, the script runs under %s\n", NG_SHELL);
+				     "is ignored, the script runs under %s\n",
+		 NG_SHELL);
 	ok(!rc && !strcmp(errtext, want), "the warning quotes the line without trailing blanks");
 	a.text = "#!" NG_SHELL "\n:\n";
 	rc = capture(call_parse, &a);
@@ -567,7 +657,7 @@ static void test_shebang(void)
 	ok(!rc && !*errtext, "a #! line after the first line is an ordinary comment");
 
 	a.text = "#!/bin/sh\n:\n";
-	if (is_name(STR("sh"), NG_SHELL) || is_name(STR("sh"), NG_SHELL_ARGV0)) {
+	if(is_name(STR("sh"), NG_SHELL) || is_name(STR("sh"), NG_SHELL_ARGV0)) {
 		ok(1, "# SKIP the configured shell is sh");
 		ok(1, "# SKIP the configured shell is sh");
 	} else {
@@ -581,33 +671,34 @@ static void test_shebang(void)
 }
 
 // an executable named NAME in DIR, standing in for an interpreter the host may lack
-static void fake_interp(const char *dir, const char *name)
-{
+static void fake_interp(const char* dir, const char* name) {
 	char path[512];
 	int fd;
 
 	snprintf(path, sizeof(path), "%s/%s", dir, name);
 	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
-	if (fd >= 0) {
+	if(fd >= 0) {
 		(void)!write(fd, "#!/bin/sh\nexit 0\n", 17);
 		close(fd);
 	}
 }
 
-static void test_languages(void)
-{
+static void test_languages(void) {
 	char dir[] = "/tmp/ninit-t-build-interp.XXXXXX", text[1024], want[512];
 	struct src_arg a;
 	struct shebang sb;
-	const char *line;
+	const char* line;
 	int rc;
 
-	ok(lang_python.claims(STR("python")) && lang_python.claims(STR("python3")) &&
-	   lang_python.claims(STR("python3.14")), "python, python3 and python3.14 are python");
-	ok(!lang_python.claims(STR("python3-config")) && !lang_python.claims(STR("pythonw")) &&
-	   !lang_python.claims(STR("pyth")), "python3-config, pythonw and pyth are not");
-	ok(lang_lua.claims(STR("lua")) && lang_lua.claims(STR("lua5.4")) && lang_lua.claims(STR("luajit")) &&
-	   lang_lua.claims(STR("luajit-2.1")), "lua, lua5.4, luajit and luajit-2.1 are lua");
+	ok(lang_python.claims(STR("python")) && lang_python.claims(STR("python3"))
+		   && lang_python.claims(STR("python3.14")),
+	   "python, python3 and python3.14 are python");
+	ok(!lang_python.claims(STR("python3-config")) && !lang_python.claims(STR("pythonw"))
+		   && !lang_python.claims(STR("pyth")),
+	   "python3-config, pythonw and pyth are not");
+	ok(lang_lua.claims(STR("lua")) && lang_lua.claims(STR("lua5.4")) && lang_lua.claims(STR("luajit"))
+		   && lang_lua.claims(STR("luajit-2.1")),
+	   "lua, lua5.4, luajit and luajit-2.1 are lua");
 	ok(!lang_lua.claims(STR("luac")) && !lang_lua.claims(STR("luarocks")), "luac and luarocks are not");
 	ok(lang_perl.claims(STR("perl")) && lang_perl.claims(STR("perl5.40.0")), "perl and perl5.40.0 are perl");
 	ok(!lang_perl.claims(STR("perldoc")) && !lang_perl.claims(STR("perl-x")), "perldoc and perl-x are not");
@@ -625,22 +716,24 @@ static void test_languages(void)
 		struct src s = { .name = name, .interp = "/usr/bin/lua" };
 
 		lang_lua.exec_args(&s);
-		ok(s.exec_pre.n == 4 && s.exec_suf.n == 0 && !strcmp(s.exec_pre.v[0], "/usr/bin/lua") &&
-		   !strcmp(s.exec_pre.v[1], "-e") && !strcmp(s.exec_pre.v[3], "-e"),
+		ok(s.exec_pre.n == 4 && s.exec_suf.n == 0 && !strcmp(s.exec_pre.v[0], "/usr/bin/lua")
+			   && !strcmp(s.exec_pre.v[1], "-e") && !strcmp(s.exec_pre.v[3], "-e"),
 		   "lua runs as INTERP -e CHUNK -e SCRIPT");
 		is_str(s.exec_pre.v[2], "io.stdout:setvbuf(\"line\") arg = { [0] = \"a\\\"b\\\\c\" }",
 		       "the lua chunk escapes the name");
 	}
+
 	{
 		static char name[] = "it's\\x";
 		struct src s = { .name = name, .interp = "/usr/bin/perl" };
 
 		lang_perl.exec_args(&s);
-		ok(s.exec_pre.n == 6 && s.exec_suf.n == 0 && !strcmp(s.exec_pre.v[3], "-e") &&
-		   !strcmp(s.exec_pre.v[4], "#line 1") && !strcmp(s.exec_pre.v[5], "-e"),
+		ok(s.exec_pre.n == 6 && s.exec_suf.n == 0 && !strcmp(s.exec_pre.v[3], "-e")
+			   && !strcmp(s.exec_pre.v[4], "#line 1") && !strcmp(s.exec_pre.v[5], "-e"),
 		   "perl runs as INTERP -e LINE -e '#line 1' -e SCRIPT");
 		is_str(s.exec_pre.v[2], "$| = 1; $0 = 'it\\'s\\\\x';", "the perl line escapes the name");
 	}
+
 	{
 		static char name[] = "svc";
 		struct src s = { .name = name, .interp = "/usr/bin/python3" };
@@ -648,9 +741,9 @@ static void test_languages(void)
 		strv_push(&s.iargs, "-X");
 		strv_push(&s.iargs, "dev");
 		lang_python.exec_args(&s);
-		ok(s.exec_pre.n == 7 && !strcmp(s.exec_pre.v[1], "-I") && !strcmp(s.exec_pre.v[2], "-B") &&
-		   !strcmp(s.exec_pre.v[3], "-u") && !strcmp(s.exec_pre.v[4], "-X") &&
-		   !strcmp(s.exec_pre.v[5], "dev") && !strcmp(s.exec_pre.v[6], "-c"),
+		ok(s.exec_pre.n == 7 && !strcmp(s.exec_pre.v[1], "-I") && !strcmp(s.exec_pre.v[2], "-B")
+			   && !strcmp(s.exec_pre.v[3], "-u") && !strcmp(s.exec_pre.v[4], "-X")
+			   && !strcmp(s.exec_pre.v[5], "dev") && !strcmp(s.exec_pre.v[6], "-c"),
 		   "python runs as INTERP -I -B -u #!-ARGS -c SCRIPT");
 		ok(s.exec_suf.n == 1 && !strcmp(s.exec_suf.v[0], "svc"), "with the name after the script");
 	}
@@ -660,7 +753,9 @@ static void test_languages(void)
 	ok(parse_shebang(str_c(line), &sb) && str_eq(sb.prog, STR("true")),
 	   "env -S names the program after its options");
 	{
-		char *p = resolve("svc", sb.prog), *slash = strrchr(p, '/'), *real;
+		char* p = resolve("svc", sb.prog);
+		char* slash = strrchr(p, '/');
+		char* real;
 
 		ok(p[0] == '/' && !strcmp(slash, "/true") && runnable(p), "env finds true in PATH");
 		*slash = '\0';
@@ -670,10 +765,11 @@ static void test_languages(void)
 		free(p);
 	}
 
-	if (!mkdtemp(dir)) {
+	if(!mkdtemp(dir)) {
 		ok(0, "mkdtemp: %s", strerror(errno));
 		return;
 	}
+
 	fake_interp(dir, "python3");
 	fake_interp(dir, "lua5.4");
 	fake_interp(dir, "perl");
@@ -681,9 +777,11 @@ static void test_languages(void)
 	snprintf(text, sizeof(text), "#!%s/python3 -X dev\n#%%type: oneshot\n# c\nprint(1)\n", dir);
 	a.text = text;
 	rc = capture(call_parse, &a);
-	if (!ok(!rc && a.s.lang == &lang_python && !strncmp(a.s.interp, dir, strlen(dir)),
-		"a #! line naming python selects python"))
+	if(!ok(!rc && a.s.lang == &lang_python && !strncmp(a.s.interp, dir, strlen(dir)),
+	       "a #! line naming python selects python")) {
 		tap_diag("%s", errtext);
+	}
+
 	is_str(a.s.script, "\n\n\nprint(1)\n", "its header is blanked");
 	ok(a.s.exec_pre.n == 7 && a.s.exec_suf.n == 1, "the #! arguments reach its argv");
 	ok(a.s.stripped, "its script is stripped");
@@ -698,29 +796,38 @@ static void test_languages(void)
 
 	snprintf(text, sizeof(text), "#!%s/python3 -b -d -E -i -O -P -q -R -s -S -v\nprint(1)\n", dir);
 	rc = capture(call_parse, &a);
-	if (!ok(rc == 1001 && !strcmp(errtext, "ninitctl: /d/svc: 17 interpreter arguments, the maximum is 16\n"),
-		"more than 16 interpreter arguments are refused"))
+	if(!ok(rc == 1001 && !strcmp(errtext, "ninitctl: /d/svc: 17 interpreter arguments, the maximum is 16\n"),
+	       "more than 16 interpreter arguments are refused")) {
 		tap_diag("%d %s", rc, errtext);
+	}
 
 	snprintf(text, sizeof(text), "#!%s/missing/python3\nprint(1)\n", dir);
 	rc = capture(call_parse, &a);
 	snprintf(want, sizeof(want), "ninitctl: /d/svc: %s/missing/python3: No such file or directory\n", dir);
-	if (!ok(rc == 1001 && !strcmp(errtext, want), "a missing interpreter fails the build"))
+	if(!ok(rc == 1001 && !strcmp(errtext, want), "a missing interpreter fails the build")) {
 		tap_diag("%d %s", rc, errtext);
+	}
+
 	a.text = "#!/usr/bin/env python9.99\nprint(1)\n";
 	rc = capture(call_parse, &a);
-	if (!ok(rc == 1001 && strstr(errtext, "ninitctl: /d/svc: 'python9.99' is not in /"),
-		"an interpreter env cannot find fails the build"))
+	if(!ok(rc == 1001 && strstr(errtext, "ninitctl: /d/svc: 'python9.99' is not in /"),
+	       "an interpreter env cannot find fails the build")) {
 		tap_diag("%d %s", rc, errtext);
+	}
+
 	a.text = "#!bin/python3\nprint(1)\n";
 	rc = capture(call_parse, &a);
-	if (!ok(rc == 1001 && !strcmp(errtext, "ninitctl: /d/svc: 'bin/python3' is not an absolute path\n"),
-		"a relative interpreter path fails the build"))
+	if(!ok(rc == 1001 && !strcmp(errtext, "ninitctl: /d/svc: 'bin/python3' is not an absolute path\n"),
+	       "a relative interpreter path fails the build")) {
 		tap_diag("%d %s", rc, errtext);
+	}
 
 	{
 		static const struct {
-			const char *interp, *args, *word, *why;
+			const char* interp;
+			const char* args;
+			const char* word;
+			const char* why;
 		} v[] = {
 			{ "python3", "foo.py", "foo.py", ARG_SCRIPT },
 			{ "python3", "-m http.server", "-m", ARG_SCRIPT },
@@ -749,16 +856,19 @@ static void test_languages(void)
 			{ "perl", "-wT -0777 -0xFF -l012 -CSDA -Mstrict -I /tmp -i.bak -d:Foo", NULL, NULL },
 		};
 
-		for (size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
+		for(size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
 			snprintf(text, sizeof(text), "#!%s/%s %s\n:\n", dir, v[k].interp, v[k].args);
 			a.text = text;
 			rc = capture(call_parse, &a);
-			if (v[k].why)
+			if(v[k].why) {
 				snprintf(want, sizeof(want), "ninitctl: /d/svc: #! argument '%s' %s\n",
 					 v[k].word, v[k].why);
-			if (!ok(v[k].why ? rc == 1001 && !strcmp(errtext, want) : !rc,
-				"%s %s is %s", v[k].interp, v[k].args, v[k].why ? "refused" : "accepted"))
+			}
+
+			if(!ok(v[k].why ? rc == 1001 && !strcmp(errtext, want) : !rc,
+			       "%s %s is %s", v[k].interp, v[k].args, v[k].why ? "refused" : "accepted")) {
 				tap_diag("%d %s", rc, errtext);
+			}
 		}
 	}
 
@@ -772,24 +882,28 @@ static void test_languages(void)
 }
 
 // the words of the direct argv joined by spaces, or an empty string
-static const char *direct_of(const struct src *s)
-{
+static const char* direct_of(const struct src* s) {
 	static char buf[8192];
 	size_t j = 0;
 
-	for (uint32_t k = 0; k < s->direct.n && j + strlen(s->direct.v[k]) + 2 < sizeof(buf); k++) {
-		if (k)
+	for(uint32_t k = 0; k < s->direct.n && j + strlen(s->direct.v[k]) + 2 < sizeof(buf); k++) {
+		if(k) {
 			buf[j++] = ' ';
+		}
+
 		j += (size_t)sprintf(buf + j, "%s", s->direct.v[k]);
 	}
+
 	buf[j] = '\0';
+
 	return buf;
 }
 
-static void test_direct(void)
-{
+static void test_direct(void) {
 	static const struct {
-		const char *text, *argv, *what;
+		const char* text;
+		const char* argv;
+		const char* what;
 	} v[] = {
 		{ "#!/bin/bash\n#%type: daemon\nexec agetty tty2 linux  # comment\n", "agetty tty2 linux",
 		  "an exec line under a header is direct" },
@@ -825,11 +939,13 @@ static void test_direct(void)
 
 	g_dir = "/d";
 	g_sh_lexed = 1;
-	for (size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
+	for(size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
 		a.text = v[k].text;
 		rc = capture(call_parse, &a);
-		if (!ok(!rc, "%s, the file parses", v[k].what))
+		if(!ok(!rc, "%s, the file parses", v[k].what)) {
 			tap_diag("%s", errtext);
+		}
+
 		is_str(direct_of(&a.s), v[k].argv, v[k].what);
 	}
 
@@ -873,27 +989,24 @@ static void test_direct(void)
 	g_sh_lexed = 1;
 }
 
-static void call_check(void *p)
-{
+static void call_check(void* p) {
 	check_syntax(p, 1, "/d");
 }
 
 // an interpreter at DIR/NAME running BODY under sh
-static void fake_script(char *path, size_t cap, const char *dir, const char *name, const char *body)
-{
+static void fake_script(char* path, size_t cap, const char* dir, const char* name, const char* body) {
 	int fd;
 
 	snprintf(path, cap, "%s/%s", dir, name);
 	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
-	if (fd >= 0) {
+	if(fd >= 0) {
 		(void)!write(fd, "#!/bin/sh\n", 10);
 		(void)!write(fd, body, strlen(body));
 		close(fd);
 	}
 }
 
-static void test_check(void)
-{
+static void test_check(void) {
 	char dir[] = "/tmp/ninit-t-build-check.XXXXXX", path[512], want[128];
 	static char name[] = "svc";
 	struct src s = { .name = name, .lang = &lang_perl, .script = "print 1;\n" };
@@ -901,10 +1014,11 @@ static void test_check(void)
 	long long t0;
 	int rc;
 
-	if (!mkdtemp(dir)) {
+	if(!mkdtemp(dir)) {
 		ok(0, "mkdtemp: %s", strerror(errno));
 		return;
 	}
+
 	sigemptyset(&chld);
 	sigaddset(&chld, SIGCHLD);
 
@@ -912,10 +1026,12 @@ static void test_check(void)
 	s.interp = path;
 	t0 = mono_ms();
 	rc = capture(call_check, &s);
-	if (!ok(rc == 1001 && !strcmp(errtext, "ninitctl: /d/svc: the syntax check did not finish in 1 s\n"
-				  "ninitctl: 1 service script could not be checked, use --no-check to skip\n"),
-		"a check still running at its deadline fails the build"))
+	if(!ok(rc == 1001 && !strcmp(errtext, "ninitctl: /d/svc: the syntax check did not finish in 1 s\n"
+					      "ninitctl: 1 service script could not be checked, use --no-check to skip\n"),
+	       "a check still running at its deadline fails the build")) {
 		tap_diag("%d %s", rc, errtext);
+	}
+
 	ok(mono_ms() - t0 < 5000, "it is killed at the deadline");
 	sigprocmask(SIG_UNBLOCK, &chld, NULL);
 	signal(SIGCHLD, SIG_DFL);
@@ -923,9 +1039,12 @@ static void test_check(void)
 	fake_script(path, sizeof(path), dir, "perl", "echo 'syntax error at - line 1' >&2\nexit 255\n");
 	signal(SIGCHLD, SIG_IGN);
 	rc = capture(call_check, &s);
-	if (!ok(rc == 1001 && strstr(errtext, "ninitctl: /d/svc: syntax error at - line 1\n") &&
-		strstr(errtext, "failed the "), "a failure is reported with SIGCHLD ignored by the caller"))
+	if(!ok(rc == 1001 && strstr(errtext, "ninitctl: /d/svc: syntax error at - line 1\n")
+		       && strstr(errtext, "failed the "),
+	       "a failure is reported with SIGCHLD ignored by the caller")) {
 		tap_diag("%d %s", rc, errtext);
+	}
+
 	sigprocmask(SIG_UNBLOCK, &chld, NULL);
 	signal(SIGCHLD, SIG_DFL);
 
@@ -941,41 +1060,43 @@ static void test_check(void)
 		sigprocmask(SIG_BLOCK, NULL, &now);
 		ok(sa.sa_handler == SIG_IGN && !sigismember(&now, SIGCHLD), "with its mask restored");
 	}
+
 	signal(SIGCHLD, SIG_DFL);
 
 	memfd_fail = 1;
 	rc = capture(call_check, &s);
 	memfd_fail = 0;
 	ok(rc == 1001 && !strcmp(errtext, "ninitctl: warning: memfd_create: Function not implemented, "
-				 "skipping the syntax check\n"
-				 "ninitctl: 1 service script could not be checked, use --no-check to skip\n"),
+					  "skipping the syntax check\n"
+					  "ninitctl: 1 service script could not be checked, use --no-check to skip\n"),
 	   "without memfd_create nothing can be checked");
 	stage_fail = 1;
 	rc = capture(call_check, &s);
 	stage_fail = 0;
 	ok(rc == 1001 && !strcmp(errtext, "ninitctl: warning: /d/svc: cannot stage the script for the syntax "
-				 "check: No space left on device\n"
-				 "ninitctl: 1 service script could not be checked, use --no-check to skip\n"),
+					  "check: No space left on device\n"
+					  "ninitctl: 1 service script could not be checked, use --no-check to skip\n"),
 	   "a script that cannot be staged is not checked");
 	wait_fail = 1;
 	rc = capture(call_check, &s);
 	wait_fail = 0;
 	snprintf(want, sizeof(want), "ninitctl: warning: wait: %s\n", strerror(ECHILD));
-	if (!ok(rc == 1001 && strstr(errtext, want) &&
-		strstr(errtext, "ninitctl: 1 service script could not be checked, use --no-check to skip\n"),
-		"a check that cannot be waited for is not checked"))
+	if(!ok(rc == 1001 && strstr(errtext, want)
+		       && strstr(errtext, "ninitctl: 1 service script could not be checked, use --no-check to skip\n"),
+	       "a check that cannot be waited for is not checked")) {
 		tap_diag("%d %s", rc, errtext);
+	}
+
 	sigprocmask(SIG_UNBLOCK, &chld, NULL);
 	signal(SIGCHLD, SIG_DFL);
-	while (waitpid(-1, NULL, WNOHANG) > 0)
+	while(waitpid(-1, NULL, WNOHANG) > 0)
 		;
 
 	unlink(path);
 	rmdir(dir);
 }
 
-int main(void)
-{
+int main(void) {
 	test_parse_ms();
 	test_check();
 	test_helpers();
@@ -985,5 +1106,6 @@ int main(void)
 	test_compact_corpus();
 	test_compact_fuzz();
 	test_compact_syntax();
+
 	return tap_done();
 }
