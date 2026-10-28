@@ -1,0 +1,85 @@
+# a bare exec line runs without the shell, README 3.2 and 3.8
+
+. "$top_srcdir/tests/lib.sh"
+. "$top_srcdir/tests/qemu/lib.sh"
+q_require
+
+q_new direct
+q_svc direct <<'EOF'
+#%type: daemon
+exec sleep 100000
+EOF
+q_svc shelled <<'EOF'
+#%type: daemon
+exec sleep 100000 2>&1
+EOF
+q_svc once <<'EOF'
+exec true
+EOF
+q_svc notify <<'EOF'
+#%type: daemon
+#%notify: 3
+exec /t/bin/notifier
+EOF
+q_file /t/bin/notifier 755 <<'EOF'
+#!/bin/sh
+echo >&3
+exec 3>&- sleep 100000
+EOF
+q_svc plain <<'EOF'
+exec plainx a b
+EOF
+q_file /bin/plainx 755 <<'EOF'
+echo "plain ran $0 $*"
+EOF
+q_svc missing <<'EOF'
+#%type: daemon
+#%start-tries: 1
+exec ninit-no-such-command
+EOF
+q_svc denied <<'EOF'
+exec /t/bin/denied
+EOF
+q_file /t/bin/denied 644 <<'EOF'
+#!/bin/sh
+echo denied ran
+EOF
+q_check <<'EOF'
+st_is direct up
+pid=$(pid_of direct)
+is "$(awk '/^PPid:/ { print $2 }' /proc/$pid/status)" 1 "a direct daemon is a child of pid 1"
+is "$(tr '\0' ' ' </proc/$pid/cmdline)" "sleep 100000 " "its command line is the exec line"
+env=$(tr '\0' '\n' </proc/$pid/environ)
+is "$env" "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+HOME=/
+TERM=linux
+LANG=C.UTF-8" "its environment is the one ninit passes, without what the shell adds"
+is "$(readlink /proc/$pid/fd/0)" /dev/null "stdin is /dev/null"
+like "$(readlink /proc/$pid/fd/1)" '^pipe:\[[0-9]+\]$' "stdout is the output pipe"
+is "$(readlink /proc/$pid/fd/2)" "$(readlink /proc/$pid/fd/1)" "stderr is the same pipe"
+is "$(ls /proc/$pid/fd | sort -n | tr '\n' ' ')" "0 1 2 " "nothing else is open"
+is "$(cat /proc/$pid/oom_score_adj)" 0 "oom_score_adj is 0"
+has "$(cat /proc/$pid/cgroup)" "/ninit.services/svc-$(idx_of direct)" "it is in its cgroup"
+st_is shelled up
+spid=$(pid_of shelled)
+has "$(tr '\0' '\n' </proc/$spid/environ)" "SHLVL=" "a line with a redirection still runs under the shell"
+st_is once up 10000 "a direct oneshot completes"
+st_is notify up 10000 "a direct daemon reports readiness on its notify fd"
+st_is plain up
+log_has "NOTE > plain: plain ran /bin/plainx a b" "a file without #! runs under the shell with its arguments"
+st_is missing failed
+log_has "FAIL > missing: failed 1 time (exit 127)" "a command not in PATH fails with 127"
+log_has "ninit: exec ninit-no-such-command: errno 2" "and is named"
+st_is denied failed
+log_has "FAIL > denied: failed 1 time (exit 126)" "a file that cannot be run fails with 126"
+log_has "ninit: exec /t/bin/denied: errno 13" "with its path"
+has "$(ninitctl show -v | grep -A2 ' direct ')" "execs sleep 100000" "show -v marks the direct service"
+out=$(ninitctl stop direct)
+is "$?:$out" "0:direct stopped" "a direct daemon stops"
+check "and its process is gone" wait_for 2000 test ! -e /proc/$pid
+EOF
+q_boot
+q_import
+q_poweroff_ok
+
+t_done

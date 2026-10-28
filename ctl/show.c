@@ -216,6 +216,13 @@ int cmd_show(int argc, char **argv)
 				for (a++; *a; a += strlen(a) + 1)
 					print_arg(a);
 				printf("%s\n", st->reset);
+			} else if (ng_direct(map, i)) {
+				const char *a = ng_exec(map, i);
+
+				printf("%s     %s execs", st->dim, st->vbar);
+				for (; *a; a += strlen(a) + 1)
+					print_arg(a);
+				printf("%s\n", st->reset);
 			}
 
 			if (sv[i].type == NG_TYPE_TARGET)

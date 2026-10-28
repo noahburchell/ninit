@@ -386,6 +386,32 @@ static const char *exec_problem(const char *blob, uint32_t blob_len, uint32_t of
 	return NULL;
 }
 
+// the argv of a direct exec, the command and its arguments ended by an empty string
+static const char *direct_problem(const char *blob, uint32_t blob_len, uint32_t off)
+{
+	uint32_t args = 1;
+
+	if (off >= blob_len)
+		return "exec offset out of range";
+	if (!blob[off])
+		return "direct argv is empty";
+	if (!str_fits(blob, blob_len, off, NG_MAX_INTERP))
+		return "command longer than the supported maximum";
+	if (blob[off] != '/' && strchr(blob + off, '/'))
+		return "command with a slash is not an absolute path";
+	for (;;) {
+		off += (uint32_t)strlen(blob + off) + 1;
+		if (off >= blob_len)
+			return "direct arguments run past the string table";
+		if (!blob[off])
+			return NULL;
+		if (++args > NG_MAX_EXEC_ARGS)
+			return "too many direct arguments";
+		if (!str_fits(blob, blob_len, off, NG_MAX_EXEC_ARG))
+			return "direct argument longer than the supported maximum";
+	}
+}
+
 static uint32_t name_hash(const char *s)
 {
 	uint32_t h = 2166136261u;
@@ -537,6 +563,8 @@ const char *ng_verify(const void *map, size_t len)
 				return "policy start_tries out of range";
 			if (p->pflags & ~NG_PF_MASK)
 				return "unknown policy flag bits are set";
+			if ((s->flags & (NG_FLAG_INTERP | NG_FLAG_DIRECT)) == (NG_FLAG_INTERP | NG_FLAG_DIRECT))
+				return "a service is both interpreted and direct";
 			if (s->flags & NG_FLAG_INTERP) {
 				const char *why;
 
@@ -545,8 +573,16 @@ const char *ng_verify(const void *map, size_t len)
 				why = exec_problem(blob, h->blob_len, p->exec_off);
 				if (why)
 					return why;
+			} else if (s->flags & NG_FLAG_DIRECT) {
+				const char *why;
+
+				if (s->type == NG_TYPE_TARGET)
+					return "a target has a direct argv";
+				why = direct_problem(blob, h->blob_len, p->exec_off);
+				if (why)
+					return why;
 			} else if (p->exec_off != NG_NO_EXEC) {
-				return "exec offset set without the interpreter flag";
+				return "exec offset set without the interpreter or direct flag";
 			}
 		}
 	}

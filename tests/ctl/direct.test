@@ -1,0 +1,67 @@
+# a bare exec line is stored as an argv ninit runs without the shell, README 3.2
+
+. "$top_srcdir/tests/lib.sh"
+
+[ -n "$t_strips" ] || t_skip_all "$NINIT_SHELL_NAME scripts are stored as written, nothing is detected"
+
+d=$T/d
+mkdir -p "$d"
+
+# builds the directory, show -v lands in $out
+build() {
+	run "$NINITCTL" init -d "$d" -o "$d.g" "$@"
+	init_rc=$rc init_err=$err
+	[ "$rc" = 0 ] && run "$NINITCTL" show -v "$d.g"
+}
+
+# the lines show -v prints for service NAME after its policy line
+svc_lines() {
+	awk -v n="$1" '$1 ~ /^[0-9]+$/ { on = ($2 == n); next } on && /^     \| / { sub(/^     \| /, ""); print }' <<<"$out" |
+		sed 1d
+}
+
+printf '#!/bin/bash\n#%%type: daemon\n#%%restart: always\nexec agetty --noclear tty1 linux  # the console\n' >"$d/getty"
+printf 'exec swapon -a\n' >"$d/swap"
+printf 'exec /bin/true\n' >"$d/abs"
+printf '#%%type: daemon\nexec sleep 100000 2>&1\n' >"$d/redir"
+printf '#%%type: daemon\nexec -a x sleep 100000\n' >"$d/opt"
+printf 'exec true $HOME\n' >"$d/param"
+printf "exec true 'a'\n" >"$d/quote"
+printf 'exec true; true\n' >"$d/two"
+printf 'exec true\ntrue\n' >"$d/lines"
+printf 'true\n' >"$d/noexec"
+printf '#%%depon: getty, swap, abs, redir, opt, param, quote, two, lines, noexec\n' >"$d/all"
+build
+t_is "$init_rc" 0 "the set builds and passes the syntax check" || t_diag "$init_err"
+t_is "$(svc_lines getty)" "execs agetty --noclear tty1 linux
+exec agetty --noclear tty1 linux" "a daemon that execs a command is marked and keeps its script"
+t_is "$(svc_lines swap)" "execs swapon -a
+exec swapon -a" "so is a oneshot"
+t_is "$(svc_lines abs)" "execs /bin/true
+exec /bin/true" "an absolute command is marked"
+for s in redir opt param quote two lines noexec; do
+	t_unlike "$(svc_lines "$s")" "^execs " "$s stays under the shell"
+done
+
+printf 'exec true\n' >"$d/bad"
+printf 'exec true $(\n' >"$d/broken"
+build
+t_is "$init_rc" 1 "a syntax error elsewhere still fails the build"
+t_has "$init_err" "ninitctl: $d/broken:" "and is reported"
+rm -f "$d/broken" "$d/bad"
+
+# a word count or length over the graph limits keeps the shell
+args=$(printf ' %s' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15)
+printf 'exec true%s\n' "$args" >"$d/w16"
+printf 'exec true%s 16\n' "$args" >"$d/w17"
+printf 'exec true %s\n' "$(head -c 4096 /dev/zero | tr '\0' a)" >"$d/a4096"
+printf 'exec true %s\n' "$(head -c 4097 /dev/zero | tr '\0' a)" >"$d/a4097"
+printf '#%%depon: w16, w17, a4096, a4097\n' >"$d/all"
+build --no-check
+t_is "$init_rc" 0 "the limit cases build" || t_diag "$init_err"
+t_like "$(svc_lines w16)" "^execs true 1 2" "16 words are direct"
+t_unlike "$(svc_lines w17)" "^execs " "17 words stay under the shell"
+t_like "$(svc_lines a4096)" "^execs true a" "a 4096 byte argument is direct"
+t_unlike "$(svc_lines a4097)" "^execs " "a 4097 byte argument stays under the shell"
+
+t_done

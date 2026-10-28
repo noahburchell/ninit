@@ -5,14 +5,15 @@
 #include <assert.h>
 
 #define NG_MAGIC	0x4744494eu // 'NIDG'
-#define NG_VERSION	8u
+#define NG_VERSION	9u
 
 #define NG_TYPE_ONESHOT	0
 #define NG_TYPE_DAEMON	1
 #define NG_TYPE_TARGET	2
 
 // flags bits 0 and 1 are the onfail policy, bit 2 restarts a completed daemon, bit 3 runs
-// the script with the argv in its policy record instead of the configured shell
+// the script with the argv in its policy record instead of the configured shell, bit 4 runs
+// that argv alone, the script is a bare exec line it was read from
 #define NG_ONFAIL_MASK	0x03
 #define NG_ONFAIL_WARN	0
 #define NG_ONFAIL_STOP	1
@@ -20,7 +21,8 @@
 
 #define NG_FLAG_RESTART	0x04
 #define NG_FLAG_INTERP	0x08
-#define NG_FLAG_MASK	(NG_ONFAIL_MASK | NG_FLAG_RESTART | NG_FLAG_INTERP)
+#define NG_FLAG_DIRECT	0x10
+#define NG_FLAG_MASK	(NG_ONFAIL_MASK | NG_FLAG_RESTART | NG_FLAG_INTERP | NG_FLAG_DIRECT)
 
 #define NG_PF_ORDER_ONLY 0x01
 #define NG_PF_MASK	0x01
@@ -28,7 +30,8 @@
 #define NG_NO_SCRIPT	UINT32_MAX
 #define NG_NO_EXEC	UINT32_MAX
 
-// an interpreter argv is its path and at most NG_MAX_EXEC_ARGS strings around the script
+// an interpreter argv is its path and at most NG_MAX_EXEC_ARGS strings around the script,
+// a direct argv is the command and its arguments, NG_MAX_EXEC_ARGS strings in all
 #define NG_MAX_INTERP	255u
 #define NG_MAX_EXEC_ARGS	16u
 #define NG_MAX_EXEC_ARG	4096u
@@ -203,7 +206,13 @@ static inline int ng_interp(const void *m, uint32_t i)
 	return ng_svcs(m)[i].flags & NG_FLAG_INTERP;
 }
 
-// the strings before the script, an empty string, the strings after it, an empty string
+static inline int ng_direct(const void *m, uint32_t i)
+{
+	return ng_svcs(m)[i].flags & NG_FLAG_DIRECT;
+}
+
+// with INTERP the strings before the script, an empty string, the strings after it, an empty
+// string, with DIRECT the command and its arguments, an empty string
 static inline const char *ng_exec(const void *m, uint32_t i)
 {
 	return ng_blob(m) + ng_pol(m, i)->exec_off;

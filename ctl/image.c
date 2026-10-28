@@ -117,6 +117,12 @@ void write_image(const struct build *b, const char *out, int dry, int srclock)
 			for (j = 0; j < s->exec_suf.n; j++)
 				blob_add(&blob, s->exec_suf.v[j]);
 			blob_add(&blob, "");
+		} else if (s->direct.n) {
+			sv[i].flags |= NG_FLAG_DIRECT;
+			pl[i].exec_off = blob_add(&blob, s->direct.v[0]);
+			for (j = 1; j < s->direct.n; j++)
+				blob_add(&blob, s->direct.v[j]);
+			blob_add(&blob, "");
 		}
 	}
 

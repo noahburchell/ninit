@@ -28,6 +28,8 @@ struct src {
 	int stripped;
 	struct strv exec_pre;
 	struct strv exec_suf;
+	// the argv of a bare exec line, empty when the script needs the shell
+	struct strv direct;
 };
 
 size_t compact(char *s, size_t n, size_t code_off, const char *fname);

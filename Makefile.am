@@ -190,6 +190,7 @@ ctl_tests = \
 	tests/ctl/files.test \
 	tests/ctl/interp.test \
 	tests/ctl/interpargs.test \
+	tests/ctl/direct.test \
 	tests/ctl/show.test \
 	tests/ctl/adddel.test \
 	tests/ctl/usage.test \
@@ -216,6 +217,7 @@ qemu_tests = \
 	tests/qemu/scale.test \
 	tests/qemu/console.test \
 	tests/qemu/interp.test \
+	tests/qemu/direct.test \
 	tests/qemu/fallback.test
 
 check_PROGRAMS = $(unit_tests) tests/helpers/czdump tests/helpers/nctl-raw tests/helpers/fakectl \

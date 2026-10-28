@@ -771,6 +771,108 @@ static void test_languages(void)
 	rmdir(dir);
 }
 
+// the words of the direct argv joined by spaces, or an empty string
+static const char *direct_of(const struct src *s)
+{
+	static char buf[8192];
+	size_t j = 0;
+
+	for (uint32_t k = 0; k < s->direct.n && j + strlen(s->direct.v[k]) + 2 < sizeof(buf); k++) {
+		if (k)
+			buf[j++] = ' ';
+		j += (size_t)sprintf(buf + j, "%s", s->direct.v[k]);
+	}
+	buf[j] = '\0';
+	return buf;
+}
+
+static void test_direct(void)
+{
+	static const struct {
+		const char *text, *argv, *what;
+	} v[] = {
+		{ "#!/bin/bash\n#%type: daemon\nexec agetty tty2 linux  # comment\n", "agetty tty2 linux",
+		  "an exec line under a header is direct" },
+		{ "exec /usr/bin/true\n", "/usr/bin/true", "an absolute command is direct" },
+		{ "exec\ttrue\n", "true", "a tab separates words as well" },
+		{ "\n# c\nexec true -- a=b x,y:z @% +1\n\n", "true -- a=b x,y:z @% +1",
+		  "comments, blank lines and plain punctuation are fine" },
+		{ "exec true", "true", "a last line without a newline is fine" },
+		{ "true\n", "", "a command without exec stays under the shell" },
+		{ "exec\n", "", "exec alone stays under the shell" },
+		{ "exec -a x true\n", "", "an exec option stays under the shell" },
+		{ "exec a/b\n", "", "a relative command with a slash stays under the shell" },
+		{ "exec true $X\n", "", "a parameter stays under the shell" },
+		{ "exec 'true'\n", "", "quotes stay under the shell" },
+		{ "exec true \"a\"\n", "", "double quotes stay under the shell" },
+		{ "exec true; true\n", "", "a second command stays under the shell" },
+		{ "exec true\ntrue\n", "", "a second line stays under the shell" },
+		{ "exec true >/dev/null\n", "", "a redirection stays under the shell" },
+		{ "exec 3>&- true\n", "", "a descriptor operation stays under the shell" },
+		{ "exec true &\n", "", "a background job stays under the shell" },
+		{ "exec true ~\n", "", "a tilde stays under the shell" },
+		{ "exec true *\n", "", "a glob stays under the shell" },
+		{ "exec true {a,b}\n", "", "a brace expansion stays under the shell" },
+		{ "exec true \\\n x\n", "", "a line continuation stays under the shell" },
+		{ "exec true a\\b\n", "", "a backslash stays under the shell" },
+		{ "exec true a!b\n", "", "history expansion characters stay under the shell" },
+		{ "X=1 exec true\n", "", "an assignment stays under the shell" },
+		{ "exec true # c\n#%depon: a\n", "true", "a late directive is a comment and the line is direct" },
+	};
+	struct src_arg a;
+	char text[NG_MAX_EXEC_ARG + 64];
+	int rc;
+
+	g_dir = "/d";
+	g_sh_lexed = 1;
+	for (size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
+		a.text = v[k].text;
+		rc = capture(call_parse, &a);
+		if (!ok(!rc, "%s, the file parses", v[k].what))
+			tap_diag("%s", errtext);
+		is_str(direct_of(&a.s), v[k].argv, v[k].what);
+	}
+
+	a.text = "exec true 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15\n";
+	rc = capture(call_parse, &a);
+	ok(!rc && a.s.direct.n == NG_MAX_EXEC_ARGS, "16 words are direct");
+	a.text = "exec true 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16\n";
+	rc = capture(call_parse, &a);
+	ok(!rc && !a.s.direct.n, "17 words stay under the shell");
+
+	memset(text, 'a', sizeof(text));
+	memcpy(text, "exec true ", 10);
+	text[10 + NG_MAX_EXEC_ARG] = '\n';
+	text[11 + NG_MAX_EXEC_ARG] = '\0';
+	a.text = text;
+	rc = capture(call_parse, &a);
+	ok(!rc && a.s.direct.n == 2, "a 4096 byte argument is direct");
+	text[11 + NG_MAX_EXEC_ARG] = 'a';
+	text[11 + NG_MAX_EXEC_ARG - 1] = 'a';
+	text[12 + NG_MAX_EXEC_ARG - 1] = '\n';
+	text[13 + NG_MAX_EXEC_ARG - 1] = '\0';
+	rc = capture(call_parse, &a);
+	ok(!rc && !a.s.direct.n, "a 4097 byte argument stays under the shell");
+
+	memset(text, 'c', sizeof(text));
+	memcpy(text, "exec ", 5);
+	text[5 + NG_MAX_INTERP] = '\n';
+	text[6 + NG_MAX_INTERP] = '\0';
+	rc = capture(call_parse, &a);
+	ok(!rc && a.s.direct.n == 1, "a 255 byte command is direct");
+	text[5 + NG_MAX_INTERP] = 'c';
+	text[6 + NG_MAX_INTERP] = '\n';
+	text[7 + NG_MAX_INTERP] = '\0';
+	rc = capture(call_parse, &a);
+	ok(!rc && !a.s.direct.n, "a 256 byte command stays under the shell");
+
+	g_sh_lexed = 0;
+	a.text = "exec true\n";
+	rc = capture(call_parse, &a);
+	ok(!rc && !a.s.direct.n, "a file stored as written stays under the shell");
+	g_sh_lexed = 1;
+}
+
 static void call_check(void *p)
 {
 	check_syntax(p, 1, "/d");
@@ -879,6 +981,7 @@ int main(void)
 	test_helpers();
 	test_shebang();
 	test_languages();
+	test_direct();
 	test_compact_corpus();
 	test_compact_fuzz();
 	test_compact_syntax();

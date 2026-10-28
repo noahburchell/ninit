@@ -63,6 +63,7 @@ depgraph  @T@/g/depgraph
      | fsck -a /
   1  udev                     daemon     1      4  stop      3  yes  -
      | start-timeout 10000 ms, stop-timeout 5000 ms, start-tries 2, start-delay 0 ms, deps uptime (set)
+     | execs udevd
      | exec udevd
   2  mounts                   oneshot    2      2  stop      -    -  fs
      | start-timeout 90000 ms, stop-timeout 5000 ms, start-tries 3, start-delay 500 ms, deps uptime (set)
@@ -71,12 +72,14 @@ depgraph  @T@/g/depgraph
      | start-timeout 90000 ms, stop-timeout 5000 ms, start-tries 1, start-delay 0 ms, deps uptime (default)
   4  dbus                     daemon     2      1  stop      -    -  udev
      | start-timeout 90000 ms, stop-timeout 5000 ms, start-tries 2, start-delay 0 ms, deps order (set)
+     | execs dbus-daemon --nofork
      | exec dbus-daemon --nofork
   5  after-dbus               oneshot    3      0  warn      -    -  dbus
      | start-timeout 90000 ms, stop-timeout 5000 ms, start-tries 1, start-delay 0 ms, deps uptime (default)
      | echo ready
   6  getty-console-long-name  daemon     4      0  warn      -  yes  basic
      | start-timeout 90000 ms, stop-timeout 1000 ms, start-tries 2, start-delay 0 ms, deps uptime (set)
+     | execs agetty tty1
      | exec agetty tty1
 
 deepest dependency chain (4 services)

@@ -283,7 +283,13 @@ otherwise, for a python, lua or perl service the command
 .B ninit
 runs with
 .B SCRIPT
-standing for the script, and then its script as stored, without comments
+standing for the script, for a bare
+.B exec
+line the argv
+.B ninit
+execs after
+.BR execs ,
+and then its script as stored, without comments
 .TP
 .BR \-e ", " \-\-error
 with

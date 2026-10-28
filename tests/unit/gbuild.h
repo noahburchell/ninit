@@ -19,9 +19,11 @@ struct gb_svc {
 	uint16_t notify;
 	const char *script;
 	struct ng_pol pol;
-	// the encoded interpreter argv, a string literal through GB_EXEC, NULL for the shell
+	// the encoded interpreter argv, a string literal through GB_EXEC, NULL for the shell,
+	// or the command line of a direct exec through GB_DIRECT
 	const char *exec;
 	size_t exec_len;
+	uint8_t direct;
 };
 
 struct gb_edge {
@@ -144,7 +146,7 @@ static inline struct gb_img gb_build(const struct gb_svc *sv, uint32_t n,
 		*p = sv[i].pol;
 		p->exec_off = NG_NO_EXEC;
 		if (sv[i].exec) {
-			s->flags |= NG_FLAG_INTERP;
+			s->flags |= sv[i].direct ? NG_FLAG_DIRECT : NG_FLAG_INTERP;
 			p->exec_off = (uint32_t)off;
 			memcpy(blob + off, sv[i].exec, sv[i].exec_len);
 			off += sv[i].exec_len;
@@ -210,5 +212,6 @@ static inline char *gb_blob(struct gb_img *g)
 #define GB_ONESHOT(n, sc)	{ .name = (n), .type = NG_TYPE_ONESHOT, .onfail = GB_DEFAULT, .script = (sc) }
 #define GB_DAEMON(n, sc)	{ .name = (n), .type = NG_TYPE_DAEMON, .onfail = GB_DEFAULT, .script = (sc) }
 #define GB_TARGET(n)		{ .name = (n), .type = NG_TYPE_TARGET, .onfail = GB_DEFAULT }
-// the trailing NUL of the literal ends the second list
+// the trailing NUL of the literal ends the second list, or the only list of a direct exec
 #define GB_EXEC(lit)		.exec = (lit), .exec_len = sizeof(lit)
+#define GB_DIRECT(lit)		.exec = (lit), .exec_len = sizeof(lit), .direct = 1

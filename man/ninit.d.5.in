@@ -111,6 +111,40 @@ or
 for any other interpreter, such as zsh, the file is stored as written.
 a file containing a NUL byte is rejected
 .PP
+a stored script that is one line of the form
+.B exec
+.IR command " [" argument "]..."
+is executed directly, without the shell, when every word consists of letters, digits and the characters
+.BR "_ . / : , = + % @ \-" ,
+.I command
+does not begin with
+.B \-
+and is an absolute path when it contains a slash, and the line has at most 16 words.
+the shell would execute such a line the same way, only its startup is saved.
+a
+.I command
+without a slash is looked up in the
+.B PATH
+of
+.B EXECUTION ENVIRONMENT
+when the service starts and is passed as written in
+.BR argv[0] .
+a file that is neither ELF nor
+.B #!\&
+runs under the configured interpreter, as the shell runs it.
+the process lacks the
+.B PWD
+and
+.B SHLVL
+variables the shell exports.
+a command that cannot be executed fails the service with status 127, or 126 when the file is found but may not be run, after printing
+.BI "ninit: exec " command ": errno " n
+on its output.
+.B ninitctl show \-v
+lists the argv of such a service after
+.BR execs .
+any other script keeps running under the shell
+.PP
 a
 .I duration
 is a decimal integer followed by
@@ -308,7 +342,11 @@ is the service name, available as
 .BR $0 .
 a python, lua or perl service is executed as in
 .B "PYTHON, LUA AND PERL"
-instead.
+instead, and a file whose stored script is one bare
+.B exec
+line, see
+.BR "FILE FORMAT" ,
+as that command directly.
 the process has:
 .IP \(bu 2
 a new session and no controlling terminal
@@ -531,7 +569,7 @@ is written by
 the previous graph is kept as
 .IR depgraph.old .
 .BR ninit (8)
-loads a graph only if its version equals the one it was built with, currently 8,
+loads a graph only if its version equals the one it was built with, currently 9,
 and loads
 .I depgraph.old
 when
@@ -565,7 +603,7 @@ lB lB lB lB
 l n l l.
 offset|size|field|content
 0x00|4|magic|0x4744494e, the bytes NIDG
-0x04|4|version|8
+0x04|4|version|9
 0x08|4|crc32|crc32c of the file with this field 0
 0x0c|4|total_len|file size
 0x10|4|n_svc|services, at most 8192
@@ -590,7 +628,7 @@ l n l l.
 offset|size|field|content
 0x0|2|unmet|number of prerequisites
 0x2|1|type|0 oneshot, 1 daemon, 2 target
-0x3|1|flags|bits 1:0 onfail, bit 2 restart, bit 3 interpreter
+0x3|1|flags|bits 1:0 onfail, bit 2 restart, bit 3 interpreter, bit 4 direct
 0x4|2|n_desc|number of transitive dependents
 0x6|2|notify_fd|0 or 3 to 255
 0x8|4|script_off|string offset, 0xffffffff for a target
@@ -609,7 +647,7 @@ offset|size|field|content
 0x8|2|retry_ms|start-delay
 0xa|1|start_tries|start-tries, 0 for the type default
 0xb|1|pflags|bit 0 deps: order
-0xc|4|exec_off|string offset of the interpreter argv, 0xffffffff without bit 3
+0xc|4|exec_off|string offset of the interpreter or direct argv, 0xffffffff without bit 3 or 4
 .TE
 .PP
 the onfail field is 0 for warn, 1 for stop and 2 for shell.
@@ -626,6 +664,9 @@ the string table holds NUL-terminated names and scripts.
 an interpreter argv is two lists of NUL-terminated strings, each ended by an empty string.
 the script is run by the first string of the first list, with the first list, the script and the second list as arguments.
 the first string is an absolute path of at most 255 bytes, the lists hold at most 16 strings and each string is at most 4096 bytes.
+a direct argv is one list of NUL-terminated strings ended by an empty string, the command and its arguments, which the service runs as its argv without the script.
+the command is at most 255 bytes and an absolute path when it contains a slash, the list holds at most 16 strings and each argument is at most 4096 bytes.
+bits 3 and 4 are never both set.
 unused bits and the reserved word are 0
 .SH LIMITS
 .TS
@@ -641,6 +682,8 @@ start-tries|250
 notify|3 to 255
 interpreter path|255 bytes
 interpreter arguments|16 of 4096 bytes
+direct exec command|255 bytes
+direct exec arguments|15 of 4096 bytes
 retained output|1024 bytes
 /etc/locale.conf|8191 bytes
 .TE

@@ -207,6 +207,8 @@ ninitctl init stores the script without its comments, indentation or trailing bl
 
 the stripper follows sh lexing. it runs when ``--with-shell-name`` is sh, bash, dash, ash, ksh, mksh, oksh, loksh, yash or posh, the shells that lex like sh. for any other shell the file is stored as written. zsh, for one, reads ``(#i)`` as a glob flag where the stripper sees a comment
 
+a stored script that is one line of the form ``exec COMMAND [ARGUMENT]...`` is executed directly, without the shell, when every word consists of letters, digits and ``_ . / : , = + % @ -``, COMMAND does not begin with ``-`` and is an absolute path when it contains a slash, and the line has at most 16 words. the shell would execute such a line the same way, only its startup, about 300 us of cpu, is saved. a COMMAND without a slash is looked up in the PATH of `3.8`_ when the service starts and is passed as written in argv[0]. a file that is neither ELF nor #! runs under the configured shell, as the shell runs it. the process lacks the PWD and SHLVL variables the shell exports. a command that cannot be executed fails the service with status 127, or 126 when the file is found but may not be run, after printing ``ninit: exec COMMAND: errno N`` on its output. ``ninitctl show -v`` lists the argv of such a service after ``execs``. any other script keeps running under the shell. of the set in docs/ninit.d, the gettys, chronyd, cronie, cupsd, sddm, sysklogd and swap qualify
+
 a #% line after the header is not a directive. ninitctl init warns about it and treats it as a comment. lines inside a quoted string or a here-document are exempt from the warning, and so is a file stored as written
 
 a file containing a NUL byte is rejected
@@ -344,7 +346,7 @@ when a daemon without restart exits after being ready, the console shows ``NAME:
 3.8 execution environment
 -------------------------
 
-each start runs ``/bin/bash -c SCRIPT NAME``, where SCRIPT is the file as stored by ninitctl init, see `3.2`_, so ``$0`` is the service name. a python, lua or perl service runs as in `3.12`_ instead, with the same process attributes. the process has:
+each start runs ``/bin/bash -c SCRIPT NAME``, where SCRIPT is the file as stored by ninitctl init, see `3.2`_, so ``$0`` is the service name. a python, lua or perl service runs as in `3.12`_ instead, and a file whose stored script is one bare exec line runs as that command directly, see `3.2`_, with the same process attributes. the process has:
 
 - a new session and no controlling terminal
 - the cgroup /sys/fs/cgroup/ninit.services/svc-N, where N is the service's index in the graph, the # column of ninitctl show
@@ -568,7 +570,7 @@ the running ninit does not read the new graph. it takes effect at the next boot
 
    $ ninitctl show
    depgraph  /etc/ninit.d/depgraph
-   31 services, 33 edges, 8 roots, 5 levels, 4663 bytes, crc 937574ad
+   31 services, 33 edges, 8 roots, 5 levels, 4848 bytes, crc e21e3564
 
      #  service         type     lvl  kills  onfail  rdy  rst  depends on
      ─────────────────────────────────────────────────────────────────────────
@@ -660,7 +662,7 @@ this applies to every ninitctl command
 
    init=/usr/sbin/ninit
 
-the path is wherever ninit was installed. pid 1 must be started through a path whose last component is ninit, not through a link named init. ninit-shutdown identifies ninit by /proc/1/comm
+the path is wherever ninit was installed. pid 1 must be started through a path whose last component is ninit. ninit-shutdown identifies ninit by /proc/1/comm
 
 a systemd-boot entry::
 
@@ -785,7 +787,7 @@ skipped   will not start because a prerequisite failed or went down
 6.3 semantics
 -------------
 
-- an operation belongs to the service, not to the connection. closing the client does not cancel it
+- an operation belongs to the service. closing the client does not cancel it
 - a service accepts one operation at a time. a second is refused with ``NAME is busy``
 - ``start`` is refused if the service is running or its previous instance has not exited
 - ``start`` is refused with ``waiting on a prerequisite`` if a prerequisite is not up. the service is left pending and starts when its prerequisites are up. a service that was up goes down
@@ -924,7 +926,7 @@ when the shell exits it is started again. ninit stops restarting it after 5 cons
 9 depgraph format
 =================
 
-a graph is loaded only if its version equals the NG_VERSION ninit was built with, defined in src/ngraph.h, currently 8. after upgrading ninit, run ``ninitctl init`` before rebooting. an older graph is refused. ninit then loads depgraph.old, which after an upgrade is as old unless ninitctl init ran twice, and the boot ends in the emergency shell when that is refused too
+a graph is loaded only if its version equals the NG_VERSION ninit was built with, defined in src/ngraph.h, currently 9. after upgrading ninit, run ``ninitctl init`` before rebooting. an older graph is refused. ninit then loads depgraph.old, which after an upgrade is as old unless ninitctl init ran twice, and the boot ends in the emergency shell when that is refused too
 
 ninit reads the whole graph into private read-only memory and verifies it before use. every offset and length is bounds checked, sections must not overlap, the checksum must match, every edge must point to a higher index, stored counts must agree with the edge list, names must be valid and unique, and every field must be in range. a graph that fails any check is not used. ninitctl show applies the same checks
 
@@ -970,7 +972,7 @@ offset  size  field       description
 ======  ====  ==========  ========================================
 0x0     2     unmet       number of prerequisites. 0 for roots and only for roots
 0x2     1     type        0 oneshot, 1 daemon, 2 target
-0x3     1     flags       bits 1:0 onfail, 0 warn, 1 stop, 2 shell. bit 2 restart. bit 3 interpreter, the script runs with the argv at exec_off instead of the configured shell. other bits 0
+0x3     1     flags       bits 1:0 onfail, 0 warn, 1 stop, 2 shell. bit 2 restart. bit 3 interpreter, the script runs with the argv at exec_off instead of the configured shell. bit 4 direct, the argv at exec_off runs by itself and the script is the exec line it was read from. bits 3 and 4 are never both set. other bits 0
 0x4     2     n_desc      number of dependents, direct or not
 0x6     2     notify_fd   0 for none, otherwise 3 to 255. daemons only
 0x8     4     script_off  string table offset of the script. 0xffffffff for a target
@@ -987,12 +989,14 @@ offset  size  field        description
 0x8     2     retry_ms     start-delay
 0xa     1     start_tries  start-tries. 0 means 1 for a oneshot and 2 for a daemon
 0xb     1     pflags       bit 0 deps: order. other bits 0
-0xc     4     exec_off     string table offset of the interpreter argv when flags bit 3 is set, otherwise 0xffffffff
+0xc     4     exec_off     string table offset of the interpreter argv when flags bit 3 is set, of the direct argv when bit 4 is set, otherwise 0xffffffff
 ======  ====  ===========  ========================================
 
 services are stored in topological order, roots first at indices 0 to n_roots - 1. the dependents of service i are entries ``rdep_off[i]`` up to but not including ``rdep_off[i + 1]`` of the dependent indices, sorted ascending, each greater than i. the string table holds the NUL-terminated names and scripts and ends in a NUL
 
 an interpreter argv is two lists of NUL-terminated strings, each ended by an empty string. ninit runs the first string of the first list with the first list, the script and the second list as its arguments. the first string is an absolute path of at most 255 bytes, the lists hold at most 16 strings together and each string is at most 4096 bytes
+
+a direct argv is one list of NUL-terminated strings ended by an empty string, the command and its arguments. ninit runs it as the argv of the service, looking a command without a slash up in PATH. the command is at most 255 bytes and an absolute path when it contains a slash, the list holds at most 16 strings and each argument is at most 4096 bytes
 
 10 limits
 =========
@@ -1010,6 +1014,8 @@ start-tries                                       1 to 250
 notify                                            fd 3 to 255
 interpreter path from a #! line                   255 bytes
 interpreter arguments, those ninit adds included  16, of 4096 bytes each
+direct exec command                               255 bytes
+direct exec arguments                             15, of 4096 bytes each
 output kept per service                           1024 bytes
 syntax check messages kept per script             4095 bytes
 service output line                               256 bytes, longer lines are split

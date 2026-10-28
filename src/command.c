@@ -70,6 +70,8 @@ static void svc_op_start(uint32_t i)
 	}
 	r->attempt = 0;
 	r->burst = 0;
+	// a start during a restart backoff supersedes it, or it fires again under the new instance
+	r->restart_at = 0;
 	r->op_restart = 0;
 	svc_mark_pending(i);
 	if (!live_has(i))

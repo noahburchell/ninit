@@ -251,7 +251,7 @@ line,
 in place of the lines it lost.
 at most 4 connections watch at once
 .PP
-an operation belongs to the service, not to the connection.
+an operation belongs to the service.
 a client that disconnects before the final line is dropped and its operation continues.
 at most 8 connections are served at once.
 the socket is not served once shutdown has begun

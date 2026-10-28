@@ -7,6 +7,7 @@
 #include "ninit.h"
 #include "pidmap.h"
 #include "reap.h"
+#include "../help/str.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -33,7 +34,10 @@ static_assert(sizeof(struct ninit_clone_args) == 88, "clone_args v2 is 88 bytes"
 
 static int clone3_ok = 1;
 
-static_assert(sizeof(NG_SHELL) <= NG_MAX_INTERP + 1, "the exec failure message holds the shell path");
+// a direct command is at most NG_MAX_INTERP bytes below a directory of NG_PATH
+#define EXEC_PATH_MAX	(sizeof(NG_PATH) + NG_MAX_INTERP)
+
+static_assert(sizeof(NG_SHELL) <= EXEC_PATH_MAX + 1, "the exec failure message holds the shell path");
 
 static void child_exec(uint32_t i, int out_w, int ntf_w, const char *cg) __attribute__((noreturn));
 
@@ -57,6 +61,53 @@ static size_t put_num(char *dst, size_t at, unsigned v)
 	return at;
 }
 
+// execs argv[1] as bash execs a bare command, a word without a slash is looked up in NG_PATH,
+// a file that is neither ELF nor #! runs under the shell, the path tried is left in path
+static int exec_direct(char **argv, char *const *envp, char *arg_shell, char *path, const char **prog)
+{
+	const char *cmd = argv[1];
+	size_t cl = strlen(cmd);
+	str dirs = str_c(&NG_PATH[5]), hit = { 0 };
+	int err = ENOENT;
+
+	if (strchr(cmd, '/')) {
+		memcpy(path, cmd, cl + 1);
+		execve(path, argv + 1, envp);
+		err = errno;
+	} else {
+		// a file that may not be run does not end the search, as in bash, but is the one reported
+		while (dirs.n) {
+			str d = str_cut(&dirs, ':');
+
+			memcpy(path, d.p, d.n);
+			path[d.n] = '/';
+			memcpy(path + d.n + 1, cmd, cl + 1);
+			execve(path, argv + 1, envp);
+			if (errno == ENOENT || errno == ENOTDIR)
+				continue;
+			err = errno;
+			hit = d;
+			if (err != EACCES)
+				break;
+		}
+		if (!hit.n) {
+			*prog = cmd;
+			return err;
+		}
+		memcpy(path, hit.p, hit.n);
+		path[hit.n] = '/';
+		memcpy(path + hit.n + 1, cmd, cl + 1);
+	}
+	*prog = path;
+	if (err != ENOEXEC)
+		return err;
+	argv[0] = arg_shell;
+	argv[1] = path;
+	*prog = NG_SHELL;
+	execve(NG_SHELL, argv, envp);
+	return errno;
+}
+
 static void child_exec(uint32_t i, int out_w, int ntf_w, const char *cg)
 {
 	static char env_path[] = NG_PATH, env_home[] = "HOME=/", env_term[] = "TERM=linux";
@@ -65,7 +116,7 @@ static void child_exec(uint32_t i, int out_w, int ntf_w, const char *cg)
 	char *argv[NG_MAX_EXEC_ARGS + 2];
 	const char *prog = NG_SHELL;
 	int e = 0;
-	char msg[NG_MAX_INTERP + 64];
+	char msg[EXEC_PATH_MAX + 64], path[EXEC_PATH_MAX + 1];
 	struct sigaction dfl = { .sa_handler = SIG_DFL };
 	sigset_t none;
 	int sig, nfd = ng_notify(map, i), err;
@@ -135,15 +186,25 @@ static void child_exec(uint32_t i, int out_w, int ntf_w, const char *cg)
 			argv[k++] = (char *)(uintptr_t)p;
 		argv[k] = NULL;
 		prog = argv[0];
+		execve(prog, argv, envp);
+		err = errno;
+	} else if (ng_direct(map, i)) {
+		const char *p = ng_exec(map, i);
+		size_t k = 1;
+
+		for (; *p; p += strlen(p) + 1)
+			argv[k++] = (char *)(uintptr_t)p;
+		argv[k] = NULL;
+		err = exec_direct(argv, envp, arg_shell, path, &prog);
 	} else {
 		argv[0] = arg_shell;
 		argv[1] = arg_c;
 		argv[2] = (char *)(uintptr_t)ng_script(map, i);
 		argv[3] = (char *)(uintptr_t)ng_name(map, i);
 		argv[4] = NULL;
+		execve(prog, argv, envp);
+		err = errno;
 	}
-	execve(prog, argv, envp);
-	err = errno;
 
 	at = put_str(msg, 0, "ninit: exec ");
 	at = put_str(msg, at, prog);
@@ -153,7 +214,8 @@ static void child_exec(uint32_t i, int out_w, int ntf_w, const char *cg)
 	(void)!write(2, msg, at);
 	if (ntf_w >= 0 && !nfd)
 		(void)!write(ntf_w, "x", 1);
-	_exit(127);
+	// 126 is what a shell exits with when the file is found but cannot be run
+	_exit(err == EACCES ? 126 : 127);
 }
 
 static pid_t spawn_into_cgroup(uint32_t i, int have_cg)
