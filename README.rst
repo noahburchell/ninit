@@ -8,7 +8,7 @@ small init for any linux distro
 
 get it: `gentoo <2.1_>`__ | `source <2.2_>`__
 
-ninit is an init system for linux. each service is a shell script in its own file, with its dependencies and policy declared in comment directives. ninitctl init compiles the service directory into one binary dependency graph. at boot ninit loads that graph once, verifies it, and starts each service as soon as its prerequisites are ready, independent services in parallel. every service runs in its own cgroup. a unix socket exposes the running state to ninitctl
+ninit is an init system for linux. each service is a shell script in its own file, with its dependencies and policy declared in comment directives. ninitctl init compiles the service directory into one binary dependency graph. parsing, validation and dependency resolution all happen there, ahead of boot, so pid 1 does none of it. that keeps ninit itself small and fast: at boot it loads the graph once, verifies it, and starts each service as soon as its prerequisites are ready, independent services in parallel. every service runs in its own cgroup. a unix socket exposes the running state to ninitctl
 
 .. contents:: contents
    :depth: 1
@@ -100,9 +100,9 @@ download and unpack the release archive:
 
 .. code:: sh
 
-   curl -LO https://github.com/noahburchell/ninit/releases/download/v1.0.4/ninit-1.0.4.tar.xz
-   tar xf ninit-1.0.4.tar.xz
-   cd ninit-1.0.4
+   curl -LO https://github.com/noahburchell/ninit/releases/download/v1.0.5/ninit-1.0.5.tar.xz
+   tar xf ninit-1.0.5.tar.xz
+   cd ninit-1.0.5
 
 the "source code" archives github generates for each tag contain no configure script. a git checkout needs ``./autogen.sh`` first, which requires autoconf 2.69 and automake 1.16 or later
 

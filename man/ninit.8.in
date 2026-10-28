@@ -17,6 +17,9 @@ starts each service when its prerequisites are ready, supervises the services, s
 .PP
 services and the graph are described in
 .BR ninit.d (5).
+parsing, checking and ordering the services is the work of
+.BR ninitctl ,
+ahead of boot, so ninit itself does none of it.
 the graph is read once, at boot.
 a graph rebuilt while the system runs takes effect at the next boot
 .PP

@@ -53,6 +53,10 @@ into the graph that
 loads at boot, prints that graph, moves services in and out of use, and sends commands to the running
 .BR ninit .
 .PP
+parsing, checking and ordering the services all happens here, ahead of boot.
+.B ninit
+reads the finished graph and does none of that work itself.
+.PP
 .BR init ,
 .BR show ,
 .B add
