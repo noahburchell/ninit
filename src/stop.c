@@ -1,6 +1,7 @@
 #include "stop.h"
 #include "control.h"
 #include "drain.h"
+#include "fail.h"
 #include "logging.h"
 #include "ngraph.h"
 #include "ninit.h"
@@ -256,6 +257,7 @@ out:
 void shutdown_system(int how, const char *what)
 {
 	shutting_down = 1;
+	console_front(0);
 	stop_ordered();
 	log_note("%s: sending SIGTERM to all processes", what);
 	kill(-1, SIGTERM);
@@ -265,6 +267,7 @@ void shutdown_system(int how, const char *what)
 		kill(-1, SIGKILL);
 		wait_children(KILL_GRACE_MS);
 	}
+	console_front(1);
 	log_note("%s: saving the clock and disabling swap", what);
 	save_hwclock();
 	stop_swap();

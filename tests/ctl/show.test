@@ -29,19 +29,26 @@ same() {
 	fi
 }
 
+# the expected tables name bash in the via column and direct services, which only a stripping build has
+if [ -n "$t_strips" ] && [ "$NINIT_SHELL_NAME" = bash ]; then
+	same_table() { same "$@"; }
+else
+	same_table() { t_skip "$3, the expected table is for a stripping bash build, not $NINIT_SHELL_NAME"; }
+fi
+
 want=$(cat <<'EOF'
 depgraph  @T@/g/depgraph
 7 services, 6 edges, 2 roots, 4 levels, @SIZE@ bytes, crc @CRC@
 
-  #  service                  type     lvl  kills  onfail  rdy  rst  depends on
-  ----------------------------------------------------------------------------------
-  0  fs                       oneshot    1      3  shell     -    -  -
-  1  udev                     daemon     1      4  stop      3  yes  -
-  2  mounts                   oneshot    2      2  stop      -    -  fs
-  3  basic                    target     3      1  stop      -    -  udev mounts
-  4  dbus                     daemon     2      1  stop      -    -  udev
-  5  after-dbus               oneshot    3      0  warn      -    -  dbus
-  6  getty-console-long-name  daemon     4      0  warn      -  yes  basic
+  #  service                  type     via     lvl  kills  onfail  rdy  rst  depends on
+  ------------------------------------------------------------------------------------------
+  0  fs                       oneshot  bash      1      3  shell     -    -  -
+  1  udev                     daemon   direct    1      4  stop      3  yes  -
+  2  mounts                   oneshot  bash      2      2  stop      -    -  fs
+  3  basic                    target   -         3      1  stop      -    -  udev mounts
+  4  dbus                     daemon   direct    2      1  stop      -    -  udev
+  5  after-dbus               oneshot  bash      3      0  warn      -    -  dbus
+  6  getty-console-long-name  daemon   direct    4      0  warn      -  yes  basic
 
 deepest dependency chain (4 services)
   fs -> mounts -> basic -> getty-console-long-name
@@ -49,35 +56,35 @@ EOF
 )
 run "$NINITCTL" show "$g"
 t_is "$rc" 0 "show succeeds"
-same "$(mask <<<"$out")" "$want" "show prints the table as documented"
+same_table "$(mask <<<"$out")" "$want" "show prints the table as documented"
 t_is "$err" "" "show prints nothing on stderr"
 
 want_v=$(cat <<'EOF'
 depgraph  @T@/g/depgraph
 7 services, 6 edges, 2 roots, 4 levels, @SIZE@ bytes, crc @CRC@
 
-  #  service                  type     lvl  kills  onfail  rdy  rst  depends on
-  ----------------------------------------------------------------------------------
-  0  fs                       oneshot    1      3  shell     -    -  -
+  #  service                  type     via     lvl  kills  onfail  rdy  rst  depends on
+  ------------------------------------------------------------------------------------------
+  0  fs                       oneshot  bash      1      3  shell     -    -  -
      | start-timeout 90000 ms, stop-timeout 5000 ms, start-tries 1, start-delay 0 ms, deps uptime (default)
      | fsck -a /
-  1  udev                     daemon     1      4  stop      3  yes  -
+  1  udev                     daemon   direct    1      4  stop      3  yes  -
      | start-timeout 10000 ms, stop-timeout 5000 ms, start-tries 2, start-delay 0 ms, deps uptime (set)
      | execs udevd
      | exec udevd
-  2  mounts                   oneshot    2      2  stop      -    -  fs
+  2  mounts                   oneshot  bash      2      2  stop      -    -  fs
      | start-timeout 90000 ms, stop-timeout 5000 ms, start-tries 3, start-delay 500 ms, deps uptime (set)
      | mount -a
-  3  basic                    target     3      1  stop      -    -  udev mounts
+  3  basic                    target   -         3      1  stop      -    -  udev mounts
      | start-timeout 90000 ms, stop-timeout 5000 ms, start-tries 1, start-delay 0 ms, deps uptime (default)
-  4  dbus                     daemon     2      1  stop      -    -  udev
+  4  dbus                     daemon   direct    2      1  stop      -    -  udev
      | start-timeout 90000 ms, stop-timeout 5000 ms, start-tries 2, start-delay 0 ms, deps order (set)
      | execs dbus-daemon --nofork
      | exec dbus-daemon --nofork
-  5  after-dbus               oneshot    3      0  warn      -    -  dbus
+  5  after-dbus               oneshot  bash      3      0  warn      -    -  dbus
      | start-timeout 90000 ms, stop-timeout 5000 ms, start-tries 1, start-delay 0 ms, deps uptime (default)
      | echo ready
-  6  getty-console-long-name  daemon     4      0  warn      -  yes  basic
+  6  getty-console-long-name  daemon   direct    4      0  warn      -  yes  basic
      | start-timeout 90000 ms, stop-timeout 1000 ms, start-tries 2, start-delay 0 ms, deps uptime (set)
      | execs agetty tty1
      | exec agetty tty1
@@ -86,20 +93,14 @@ deepest dependency chain (4 services)
   fs -> mounts -> basic -> getty-console-long-name
 EOF
 )
-if [ -n "$t_strips" ]; then
-	run "$NINITCTL" show -v "$g"
-	same "$(mask <<<"$out")" "$want_v" "show -v adds the effective policy and the stored script"
-	run "$NINITCTL" show --verbose "$g"
-	same "$(mask <<<"$out")" "$want_v" "--verbose is -v"
-	run "$NINITCTL" show -f "$g" -v
-	same "$(mask <<<"$out")" "$want_v" "-f FILE names the graph"
-else
-	for w in "show -v adds the effective policy and the stored script" "--verbose is -v" "-f FILE names the graph"; do
-		t_skip "$w, the expected scripts are stripped and $NINIT_SHELL_NAME scripts are stored as written"
-	done
-fi
+run "$NINITCTL" show -v "$g"
+same_table "$(mask <<<"$out")" "$want_v" "show -v adds the effective policy and the stored script"
+run "$NINITCTL" show --verbose "$g"
+same_table "$(mask <<<"$out")" "$want_v" "--verbose is -v"
+run "$NINITCTL" show -f "$g" -v
+same_table "$(mask <<<"$out")" "$want_v" "-f FILE names the graph"
 run "$NINITCTL" show --file "$g"
-same "$(mask <<<"$out")" "$want" "--file FILE names the graph"
+same_table "$(mask <<<"$out")" "$want" "--file FILE names the graph"
 
 size=$(stat -c %s "$g")
 crc=$(od -An -tx4 -j8 -N4 "$g" | tr -d ' ')

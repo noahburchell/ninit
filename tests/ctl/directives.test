@@ -50,7 +50,7 @@ t_has "$pol" "start-tries 2" "a daemon defaults to 2 start tries"
 accept "every policy directive" $'#%type: daemon\n#%start-timeout: 2m\n#%stop-timeout: 3s\n#%start-tries: 7\n#%start-delay: 250ms\n#%deps: order\n#%notify: 9\n#%restart: always\n#%onfail: shell\nexec sleep 1\n'
 t_has "$pol" "start-timeout 120000 ms, stop-timeout 3000 ms, start-tries 7, start-delay 250 ms, deps order (set)" \
 	"set policies are stored and marked (set)"
-t_like "$row" 'daemon +1 +0 +shell +9 +yes ' "onfail, notify and restart are stored"
+t_like "$row" "daemon +$t_direct +1 +0 +shell +9 +yes " "onfail, notify and restart are stored"
 
 accept "one policy directive" $'#%start-delay: 1\n:\n'
 t_has "$pol" "start-delay 1 ms, deps uptime (set)" "a single policy marks the service (set)"

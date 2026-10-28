@@ -10,6 +10,9 @@ case ${NINIT_SHELL_NAME##*/} in
 sh | bash | dash | ash | ksh | mksh | oksh | loksh | yash | posh) t_strips=1 ;;
 *) t_strips= ;;
 esac
+# what show prints in the via column for a bare exec line, README 3.2
+t_direct=${t_strips:+direct}
+t_direct=${t_direct:-$NINIT_SHELL_NAME}
 
 NINITCTL=$top_builddir/ninitctl
 NINIT=$top_builddir/ninit

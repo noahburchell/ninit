@@ -35,6 +35,7 @@ uint32_t fail_poison_deps(const void *map, uint32_t i, uint8_t *state, const uin
 			  uint32_t *undone);
 
 void ninit_cloexec_except(int keep);
+void console_front(int text);
 
 void ninit_oom_score_adj(str v);
 

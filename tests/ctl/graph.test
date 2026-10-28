@@ -109,12 +109,12 @@ put "$d" basic '#%depon: mounts udev\n'
 put "$d" getty '#%depon: basic\n#%type: daemon\n#%restart: always\nexec sleep 1\n'
 put "$d" lone ':\n'
 build "$d"
-t_like "$(row "$d" fs)" '^fs +oneshot +1 +3 +stop ' "fs: level 1, 3 services depend on it, onfail stop"
-t_like "$(row "$d" mounts)" '^mounts +oneshot +2 +2 +stop .* fs$' "mounts: level 2, kills 2"
-t_like "$(row "$d" udev)" '^udev +oneshot +1 +2 +stop ' "udev: level 1, kills 2"
-t_like "$(row "$d" basic)" '^basic +target +3 +1 +stop .* udev mounts$' "basic: level 3, kills 1, prerequisites in index order"
-t_like "$(row "$d" getty)" '^getty +daemon +4 +0 +warn +- +yes +basic$' "getty: level 4, nothing depends on it, onfail warn"
-t_like "$(row "$d" lone)" '^lone +oneshot +1 +0 +warn ' "a root with no dependents defaults to onfail warn"
+t_like "$(row "$d" fs)" "^fs +oneshot +$NINIT_SHELL_NAME +1 +3 +stop " "fs: level 1, 3 services depend on it, onfail stop"
+t_like "$(row "$d" mounts)" "^mounts +oneshot +$NINIT_SHELL_NAME +2 +2 +stop .* fs\$" "mounts: level 2, kills 2"
+t_like "$(row "$d" udev)" "^udev +oneshot +$NINIT_SHELL_NAME +1 +2 +stop " "udev: level 1, kills 2"
+t_like "$(row "$d" basic)" '^basic +target +- +3 +1 +stop .* udev mounts$' "basic: level 3, kills 1, prerequisites in index order"
+t_like "$(row "$d" getty)" "^getty +daemon +$t_direct +4 +0 +warn +- +yes +basic\$" "getty: level 4, nothing depends on it, onfail warn"
+t_like "$(row "$d" lone)" "^lone +oneshot +$NINIT_SHELL_NAME +1 +0 +warn " "a root with no dependents defaults to onfail warn"
 run "$NINITCTL" show "$d/depgraph"
 t_has "$out" "6 services, 4 edges, 3 roots, 4 levels," "the summary counts levels"
 t_has "$out" $'deepest dependency chain (4 services)\n  fs -> mounts -> basic -> getty' "the deepest chain is printed"
@@ -162,6 +162,6 @@ put "$d" t ''
 put "$d" a '#%depon: t\n:\n'
 build "$d"
 t_is "$rc" 0 "an empty file is a target"
-t_like "$(row "$d" t)" '^t +target +1 +1 +stop ' "a target may be a root"
+t_like "$(row "$d" t)" '^t +target +- +1 +1 +stop ' "a target may be a root"
 
 t_done

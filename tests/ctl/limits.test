@@ -23,7 +23,7 @@ t_is "$rc" 0 "a chain of 8192 services builds"
 t_has "$out" ": 8192 services, 8191 edges, 1 roots," "with 8191 edges"
 run "$NINITCTL" show "$d/depgraph"
 t_has "$out" "8192 levels" "8192 levels deep"
-t_like "$(grep -m1 '  c0 ' <<<"$out")" ' c0 +oneshot +1 +8191 +stop ' "the head of the chain kills 8191"
+t_like "$(grep -m1 '  c0 ' <<<"$out")" " c0 +oneshot +$NINIT_SHELL_NAME +1 +8191 +stop " "the head of the chain kills 8191"
 t_has "$out" "deepest dependency chain (8192 services)" "the deepest chain covers all of it"
 
 d=$T/fan

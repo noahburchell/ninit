@@ -1,4 +1,5 @@
 #include "show.h"
+#include "../help/str.h"
 #include "../src/ngraph.h"
 
 #include <errno.h>
@@ -48,6 +49,16 @@ static void print_arg(const char *a)
 	putchar('\'');
 }
 
+// what runs the script, the shell by its argv[0], an interpreter by its basename, or direct
+static const char *via_of(const void *map, uint32_t i)
+{
+	if (ng_direct(map, i))
+		return "direct";
+	if (ng_interp(map, i))
+		return path_base(ng_exec(map, i));
+	return NG_SHELL_ARGV0;
+}
+
 int cmd_show(int argc, char **argv)
 {
 	const char *path = NG_DEFAULT_FILE, *why;
@@ -56,7 +67,7 @@ int cmd_show(int argc, char **argv)
 	const struct ng_svc *sv;
 	const uint32_t *roff, *ridx;
 	uint32_t *doff = NULL, *didx = NULL, *fill = NULL, *level = NULL, *chain = NULL;
-	uint32_t n, m, i, j, wname = 7, maxlvl = 0, deepest = 0;
+	uint32_t n, m, i, j, wname = 7, wvia = 3, maxlvl = 0, deepest = 0;
 	struct stat sb;
 	size_t maplen = 0;
 	void *map = MAP_FAILED;
@@ -142,17 +153,19 @@ int cmd_show(int argc, char **argv)
 		}
 		if (strlen(ng_name(map, i)) > wname)
 			wname = (uint32_t)strlen(ng_name(map, i));
+		if (sv[i].type != NG_TYPE_TARGET && strlen(via_of(map, i)) > wvia)
+			wvia = (uint32_t)strlen(via_of(map, i));
 	}
 
 	printf("%s%sdepgraph%s  %s\n", st->bold, st->cyan, st->reset, path);
 	printf("%s%u services, %u edges, %u roots, %u levels, %lu bytes, crc %08x%s\n\n",
 	       st->dim, n, m, h->n_roots, maxlvl, (unsigned long)sb.st_size, h->crc32, st->reset);
 
-	printf("%s  #  %-*s  %-7s  lvl  kills  onfail  rdy  rst  depends on%s\n",
-	       st->dim, (int)wname, "service", "type", st->reset);
+	printf("%s  #  %-*s  %-7s  %-*s  lvl  kills  onfail  rdy  rst  depends on%s\n",
+	       st->dim, (int)wname, "service", "type", (int)wvia, "via", st->reset);
 	fputs(st->dim, stdout);
 	fputs("  ", stdout);
-	for (i = 0; i < wname + 59; i++)
+	for (i = 0; i < wname + wvia + 61; i++)
 		fputs(st->bar, stdout);
 	printf("%s\n", st->reset);
 
@@ -165,6 +178,8 @@ int cmd_show(int argc, char **argv)
 
 		// a width in printf counts bytes
 		char rdy[8], rst[8];
+		const char *via = sv[i].type == NG_TYPE_TARGET ? st->none : via_of(map, i);
+		int vpad = (int)wvia - (sv[i].type == NG_TYPE_TARGET ? 1 : (int)strlen(via));
 
 		if (sv[i].notify_fd)
 			snprintf(rdy, sizeof(rdy), "%3u", sv[i].notify_fd);
@@ -176,10 +191,11 @@ int cmd_show(int argc, char **argv)
 		else
 			snprintf(rst, sizeof(rst), "  %s", st->none);
 
-		printf("%s%3u%s  %s%-*s%s  %s%-7s%s  %3u  %5u  %s%-6s%s  %s%s%s  %s%s%s  ",
+		printf("%s%3u%s  %s%-*s%s  %s%-7s%s  %s%s%*s%s  %3u  %5u  %s%-6s%s  %s%s%s  %s%s%s  ",
 		       st->dim, i, st->reset,
 		       col, (int)wname, ng_name(map, i), cend,
 		       st->dim, ng_typename(sv[i].type), st->reset,
+		       st->dim, via, vpad, "", st->reset,
 		       level[i], sv[i].n_desc,
 		       pcol, ng_onfailname(pol), st->reset,
 		       sv[i].notify_fd ? st->green : st->dim, rdy, st->reset,

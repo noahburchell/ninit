@@ -27,6 +27,7 @@
 #define NG_KD_TEXT	0x00
 #define NG_K_XLATE	0x01
 #define NG_K_UNICODE	0x03
+#define NG_VT_ACTIVATE	0x5606
 
 static const char *plural_s(unsigned n)
 {
@@ -275,24 +276,51 @@ static int emerg_console(void)
 	return fd;
 }
 
+// a compositor that died leaves its vt in graphics mode and the keyboard raw, 1 for a vt
+static int console_text(int con)
+{
+	char kbtype;
+	int mode;
+
+	if (ioctl(con, NG_KDGKBTYPE, &kbtype) < 0)
+		return 0;
+	if (ioctl(con, NG_KDGETMODE, &mode) == 0 && mode != NG_KD_TEXT) {
+		log_warn("console: in graphics mode, restoring text");
+		ioctl(con, NG_KDSETMODE, NG_KD_TEXT);
+	}
+	if (ioctl(con, NG_KDGKBMODE, &mode) == 0 && mode != NG_K_XLATE && mode != NG_K_UNICODE) {
+		log_warn("console: keyboard in raw mode, restoring");
+		ioctl(con, NG_KDSKBMODE, NG_K_UNICODE);
+	}
+	return 1;
+}
+
+// the messages of a shutdown are read on tty1, so it becomes the active vt. a compositor
+// holding the vt releases it on request or when it dies, so the switch is asked for twice,
+// the second time with tty1 put back in text mode
+void console_front(int text)
+{
+	int fd = open("/dev/tty0", O_RDWR | O_NOCTTY | O_CLOEXEC);
+
+	if (fd < 0)
+		return;
+	if (ioctl(fd, NG_VT_ACTIVATE, 1) < 0)
+		log_warn("console: cannot switch to tty1: %s", strerror(errno));
+	close(fd);
+	if (!text)
+		return;
+	fd = open("/dev/tty1", O_RDWR | O_NOCTTY | O_CLOEXEC);
+	if (fd < 0)
+		return;
+	console_text(fd);
+	close(fd);
+}
+
 // whatever died may have left the console unusable
 static int emerg_console_reset(int con)
 {
 	struct termios t;
-	char kbtype;
-	int mode, vt = ioctl(con, NG_KDGKBTYPE, &kbtype) == 0;
-
-	if (vt) {
-		if (ioctl(con, NG_KDGETMODE, &mode) == 0 && mode != NG_KD_TEXT) {
-			log_warn("console: in graphics mode, restoring text");
-			ioctl(con, NG_KDSETMODE, NG_KD_TEXT);
-		}
-		if (ioctl(con, NG_KDGKBMODE, &mode) == 0 && mode != NG_K_XLATE &&
-		    mode != NG_K_UNICODE) {
-			log_warn("console: keyboard in raw mode, restoring");
-			ioctl(con, NG_KDSKBMODE, NG_K_UNICODE);
-		}
-	}
+	int vt = console_text(con);
 
 	if (tcgetattr(con, &t) == 0) {
 		const tcflag_t sane = ISIG | ICANON | ECHO;

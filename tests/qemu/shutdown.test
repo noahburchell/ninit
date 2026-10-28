@@ -98,6 +98,32 @@ else
 	t_skip "shutdown: independent branches stop in parallel, not on a quiet console"
 fi
 
+# the active vt moves to tty1 as soon as the shutdown begins, README 7.2
+# the checker ignores SIGTERM so it outlives the ordered stop long enough to watch the switch
+q_new shutdown-vt
+q_svc check <<'EOF'
+#%type: daemon
+#%onfail: warn
+#%start-tries: 1
+#%stop-timeout: 3s
+. /t/lib.sh
+vt_active() {
+	[ "$(cat /sys/class/tty/tty0/active 2>/dev/null)" = "$1" ]
+}
+if [ -e /sys/class/tty/tty0/active ] && chvt 3 2>/dev/null && wait_for 2000 vt_active tty3; then
+	trap '' TERM
+	kill -USR2 1
+	check "a poweroff switches the active vt to tty1 before stopping anything" wait_for 3000 vt_active tty1
+	T_END=none
+else
+	skip "a poweroff switches the active vt to tty1 before stopping anything, the guest has no virtual terminals"
+fi
+t_end
+EOF
+q_boot
+q_import
+q_poweroff_ok
+
 # the ordered stop ends 30 s after it began, whatever stop-timeout says
 q_new shutdown-deadline
 Q_TIMEOUT=90

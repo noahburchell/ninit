@@ -572,39 +572,39 @@ the running ninit does not read the new graph. it takes effect at the next boot
    depgraph  /etc/ninit.d/depgraph
    31 services, 33 edges, 8 roots, 5 levels, 4848 bytes, crc e21e3564
 
-     #  service         type     lvl  kills  onfail  rdy  rst  depends on
-     ─────────────────────────────────────────────────────────────────────────
-     0  fs              oneshot    1     20  shell     —    —  —
-     1  tmpfiles-dev    oneshot    1     14  stop      —    —  —
-     2  modules-load    oneshot    1     10  stop      —    —  —
-     3  console         oneshot    1      9  stop      —    —  —
-     4  hostname        oneshot    1      9  stop      —    —  —
-     5  loopback        oneshot    1      1  stop      —    —  —
-     6  binfmt          oneshot    1      0  warn      —    —  —
-     7  hwclock         oneshot    1      0  warn      —    —  —
-     8  mounts          oneshot    2     19  shell     —    —  fs
-     9  udev            daemon     2     13  stop      3  yes  tmpfiles-dev
-    10  dbus            daemon     3      4  stop      3  yes  mounts
-    11  sysctl          oneshot    2      9  stop      —    —  modules-load
-    12  tmpfiles        oneshot    3      9  stop      —    —  mounts
-    13  udev-trigger    oneshot    3      9  stop      —    —  udev
-    14  basic           target     4      8  stop      —    —  console hostname mounts sysctl tmpfiles udev-trigger
-    15  elogind         daemon     4      1  stop      3  yes  udev dbus
-    16  NetworkManager  daemon     4      0  warn      3  yes  loopback udev dbus
-    17  bluetooth       daemon     4      0  warn      —  yes  udev dbus
-    18  chronyd         daemon     3      0  warn      —  yes  mounts
-    19  cronie          daemon     3      0  warn      —  yes  mounts
-    20  cupsd           daemon     3      0  warn      —  yes  mounts
-    21  getty1          daemon     5      0  warn      —  yes  basic
-    22  getty2          daemon     5      0  warn      —  yes  basic
-    23  getty3          daemon     5      0  warn      —  yes  basic
-    24  getty4          daemon     5      0  warn      —  yes  basic
-    25  getty5          daemon     5      0  warn      —  yes  basic
-    26  getty6          daemon     5      0  warn      —  yes  basic
-    27  sddm            daemon     5      0  warn      —  yes  basic elogind
-    28  sshd            daemon     5      0  warn      —  yes  basic
-    29  swap            oneshot    3      0  warn      —    —  mounts
-    30  sysklogd        daemon     3      0  warn      —  yes  mounts
+     #  service         type     via     lvl  kills  onfail  rdy  rst  depends on
+     ─────────────────────────────────────────────────────────────────────────────────
+     0  fs              oneshot  bash      1     20  shell     —    —  —
+     1  tmpfiles-dev    oneshot  bash      1     14  stop      —    —  —
+     2  modules-load    oneshot  bash      1     10  stop      —    —  —
+     3  console         oneshot  bash      1      9  stop      —    —  —
+     4  hostname        oneshot  bash      1      9  stop      —    —  —
+     5  loopback        oneshot  bash      1      1  stop      —    —  —
+     6  binfmt          oneshot  bash      1      0  warn      —    —  —
+     7  hwclock         oneshot  bash      1      0  warn      —    —  —
+     8  mounts          oneshot  bash      2     19  shell     —    —  fs
+     9  udev            daemon   bash      2     13  stop      3  yes  tmpfiles-dev
+    10  dbus            daemon   bash      3      4  stop      3  yes  mounts
+    11  sysctl          oneshot  bash      2      9  stop      —    —  modules-load
+    12  tmpfiles        oneshot  bash      3      9  stop      —    —  mounts
+    13  udev-trigger    oneshot  bash      3      9  stop      —    —  udev
+    14  basic           target   —         4      8  stop      —    —  console hostname mounts sysctl tmpfiles udev-trigger
+    15  elogind         daemon   bash      4      1  stop      3  yes  udev dbus
+    16  NetworkManager  daemon   bash      4      0  warn      3  yes  loopback udev dbus
+    17  bluetooth       daemon   bash      4      0  warn      —  yes  udev dbus
+    18  chronyd         daemon   direct    3      0  warn      —  yes  mounts
+    19  cronie          daemon   direct    3      0  warn      —  yes  mounts
+    20  cupsd           daemon   direct    3      0  warn      —  yes  mounts
+    21  getty1          daemon   direct    5      0  warn      —  yes  basic
+    22  getty2          daemon   direct    5      0  warn      —  yes  basic
+    23  getty3          daemon   direct    5      0  warn      —  yes  basic
+    24  getty4          daemon   direct    5      0  warn      —  yes  basic
+    25  getty5          daemon   direct    5      0  warn      —  yes  basic
+    26  getty6          daemon   direct    5      0  warn      —  yes  basic
+    27  sddm            daemon   direct    5      0  warn      —  yes  basic elogind
+    28  sshd            daemon   bash      5      0  warn      —  yes  basic
+    29  swap            oneshot  direct    3      0  warn      —    —  mounts
+    30  sysklogd        daemon   direct    3      0  warn      —  yes  mounts
 
    deepest dependency chain (5 services)
      fs → mounts → tmpfiles → basic → getty1
@@ -615,6 +615,7 @@ column      meaning
 ``#``       index in the graph. the service's cgroup is svc-#
 service     name. roots are shown in green on a terminal
 type        oneshot, daemon or target
+via         what runs the script: the configured shell by its argv[0], a python, lua or perl interpreter by its basename, or direct for a bare exec line run without the shell, see `3.2`_
 lvl         number of services in the longest prerequisite chain ending at this one, itself included
 kills       number of services that depend on it, directly or not. these are skipped if it fails
 onfail      effective failure policy
@@ -838,16 +839,17 @@ SIGUSR2          power off
 7.2 sequence
 ------------
 
-1. stop the services in reverse dependency order across the whole graph. a service is sent SIGTERM once every service that depends on it has stopped, and SIGKILL after its stop-timeout. independent branches stop in parallel. this step ends after 30 s regardless
-2. send SIGTERM to every process and wait up to 5 s for all of them to exit
-3. send SIGKILL to what remains and wait up to 2 s
-4. run ``hwclock --systohc --utc``, or ``hwclock --systohc --localtime`` if the third line of /etc/adjtime is LOCAL, killing it after 5 s. it runs with no signal blocked, default signal dispositions, oom_score_adj 0 and umask 022
-5. swapoff every active swap area
-6. remove the control socket
-7. sync, then remount every filesystem read-only, most recently mounted first, in up to 3 passes. a filesystem that stays writable is unmounted. if that fails, it is synced and remounted or unmounted once more, and otherwise detached. ``/`` is remounted read-only last
-8. sync and call reboot(2) with the requested action
+1. switch the active virtual terminal to tty1, so the console output of the shutdown is in view. a compositor that holds its terminal gets the release request, and the switch is repeated after step 3, when it is gone, with tty1 put back in text mode. without virtual terminals nothing happens
+2. stop the services in reverse dependency order across the whole graph. a service is sent SIGTERM once every service that depends on it has stopped, and SIGKILL after its stop-timeout. independent branches stop in parallel. this step ends after 30 s regardless
+3. send SIGTERM to every process and wait up to 5 s for all of them to exit
+4. send SIGKILL to what remains and wait up to 2 s
+5. run ``hwclock --systohc --utc``, or ``hwclock --systohc --localtime`` if the third line of /etc/adjtime is LOCAL, killing it after 5 s. it runs with no signal blocked, default signal dispositions, oom_score_adj 0 and umask 022
+6. swapoff every active swap area
+7. remove the control socket
+8. sync, then remount every filesystem read-only, most recently mounted first, in up to 3 passes. a filesystem that stays writable is unmounted. if that fails, it is synced and remounted or unmounted once more, and otherwise detached. ``/`` is remounted read-only last
+9. sync and call reboot(2) with the requested action
 
-step 1 follows every dependency, including those with deps: order. during shutdown services are not restarted, the emergency shell is not respawned, and further shutdown signals are ignored
+step 2 follows every dependency, including those with deps: order. during shutdown services are not restarted, the emergency shell is not respawned, and further shutdown signals are ignored
 
 **note** on a machine whose hardware clock keeps local time, set the third line of /etc/adjtime to LOCAL
 

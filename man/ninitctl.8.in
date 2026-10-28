@@ -340,6 +340,15 @@ service name
 or
 .B target
 .TP
+.B via
+what runs the script: the configured shell by its
+.BR argv[0] ,
+a python, lua or perl interpreter by its basename, or
+.B direct
+for a bare
+.B exec
+line run without the shell
+.TP
 .B lvl
 number of services in the longest prerequisite chain ending at the service, the service included
 .TP

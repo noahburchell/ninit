@@ -276,6 +276,14 @@ reap children
 once shutdown has begun, further shutdown signals are ignored
 .SH SHUTDOWN
 .IP 1. 4
+the active virtual terminal is switched to
+.IR tty1 ,
+so the console output of the shutdown is in view.
+a compositor holding its terminal gets the release request, and the switch is repeated after step 3, when it is gone, with
+.I tty1
+put back in text mode.
+without virtual terminals nothing happens
+.IP 2. 4
 the services are stopped in reverse dependency order.
 a service is sent
 .B SIGTERM
@@ -286,17 +294,17 @@ when its
 expires.
 independent services stop in parallel.
 this step ends after 30 s
-.IP 2. 4
+.IP 3. 4
 every process is sent
 .BR SIGTERM .
 .B ninit
 waits up to 5 s for all of them to exit
-.IP 3. 4
+.IP 4. 4
 the remaining processes are sent
 .BR SIGKILL .
 .B ninit
 waits up to 2 s
-.IP 4. 4
+.IP 5. 4
 .B hwclock \-\-systohc \-\-utc
 is run, with
 .B \-\-localtime
@@ -307,18 +315,18 @@ if the third line of
 is
 .BR LOCAL ,
 and killed after 5 s
-.IP 5. 4
+.IP 6. 4
 every swap area in
 .I /proc/swaps
 is disabled
-.IP 6. 4
-the control socket is removed
 .IP 7. 4
+the control socket is removed
+.IP 8. 4
 the filesystems are synced and remounted read-only, most recently mounted first, in up to 3 passes.
 a filesystem that remains writable is unmounted, and failing that, detached.
 .I /
 is remounted read-only last
-.IP 8. 4
+.IP 9. 4
 .BR reboot (2)
 is called with the requested action
 .PP
