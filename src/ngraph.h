@@ -11,9 +11,8 @@
 #define NG_TYPE_DAEMON	1
 #define NG_TYPE_TARGET	2
 
-// flags bits 0 and 1 are the onfail policy, bit 2 restarts a completed daemon, bit 3 runs
-// the script with the argv in its policy record instead of the configured shell, bit 4 runs
-// that argv alone, the script is a bare exec line it was read from
+// bits 1:0 the onfail policy, bit 2 restart after readiness, bit 3 run the script with the argv
+// of the policy record instead of the shell, bit 4 run that argv alone, the script is its exec line
 #define NG_ONFAIL_MASK	0x03
 #define NG_ONFAIL_WARN	0
 #define NG_ONFAIL_STOP	1
@@ -48,7 +47,7 @@
 #define NG_SHELL_ARGV0 NG_SHELL
 #endif
 
-// kernel doesnt give path, bash does this for us but maybe better to hardcode
+// a service inherits no environment, this is the PATH it is given and the one ninit searches
 #define NG_PATH "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 static_assert(__builtin_strncmp(NG_PATH, "PATH=", 5) == 0, "NG_PATH must be a putenv-style entry");
@@ -72,7 +71,6 @@ static_assert(__builtin_strncmp(NG_PATH, "PATH=", 5) == 0, "NG_PATH must be a pu
 
 static_assert(NG_MAX_SVC <= UINT16_MAX, "service counts must fit the 16-bit fields");
 
-// ninits control socket
 #define NINIT_CTL_DIR  "/run/ninit"
 #define NINIT_CTL_SOCK NINIT_CTL_DIR "/control"
 

@@ -217,8 +217,7 @@ static void stop_ordered(void) {
 
 	left = n_svc;
 
-	log_note("shutdown: stopping %u service%s in dependency order", live_svc,
-		 live_svc == 1 ? "" : "s");
+	log_note("shutdown: stopping %u service%s in dependency order", live_svc, plural(live_svc));
 
 	deadline = now_ms() + STOP_TOTAL_MS;
 	for(;;) {
@@ -232,8 +231,9 @@ static void stop_ordered(void) {
 			}
 
 			if(!st[i]) {
+				// settled below
 				if(svc_gone(i)) {
-					continue; // settles below
+					continue;
 				}
 
 				signal_group(i, SIGTERM);
@@ -285,8 +285,7 @@ static void stop_ordered(void) {
 				stuck += !svc_gone(i);
 			}
 
-			log_warn("shutdown: %u service%s did not stop in order", stuck,
-				 stuck == 1 ? "" : "s");
+			log_warn("shutdown: %u service%s did not stop in order", stuck, plural(stuck));
 			break;
 		}
 

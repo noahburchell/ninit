@@ -29,10 +29,6 @@
 #define NG_K_UNICODE   0x03
 #define NG_VT_ACTIVATE 0x5606
 
-static const char* plural_s(unsigned n) {
-	return n == 1 ? "" : "s";
-}
-
 static const char* verb_s(unsigned n) {
 	return n == 1 ? "s" : "";
 }
@@ -73,7 +69,7 @@ static const char* const signame[] = {
 #endif
 };
 
-static void describe(int status, char* buf, size_t cap) {
+void fail_describe(int status, char* buf, size_t cap) {
 	if(status == FAIL_ST_NOTIFY_HUP) {
 		snprintf(buf, cap, "closed its notify fd before reporting ready");
 	} else if(status == FAIL_ST_TIMEOUT) {
@@ -95,24 +91,20 @@ static void describe(int status, char* buf, size_t cap) {
 	}
 }
 
-void fail_describe(int status, char* buf, size_t cap) {
-	describe(status, buf, cap);
-}
-
 enum fail_act fail_service(const void* map, uint32_t i, int status, unsigned attempt,
 			   unsigned tries, str tail) {
 	const struct ng_svc* s = &ng_svcs(map)[i];
 	const char* name = ng_name(map, i);
 	char how[64];
 
-	describe(status, how, sizeof(how));
+	fail_describe(status, how, sizeof(how));
 
 	if(attempt < tries) {
 		log_warn("%s: failed (%s), retrying (%u of %u)", name, how, attempt, tries);
 		return FAIL_RETRY;
 	}
 
-	log_err("%s: failed %u time%s (%s)", name, attempt, plural_s(attempt), how);
+	log_err("%s: failed %u time%s (%s)", name, attempt, plural(attempt), how);
 	if(tail.n) {
 		log_raw(LOG_FAIL, tail);
 	}
@@ -132,7 +124,7 @@ enum fail_act fail_service(const void* map, uint32_t i, int status, unsigned att
 			return FAIL_SHELL;
 		default:
 			log_err("%s: %u service%s depend%s on it, stopping", name, s->n_desc,
-				plural_s(s->n_desc), verb_s(s->n_desc));
+				plural(s->n_desc), verb_s(s->n_desc));
 			return FAIL_STOP;
 	}
 }
@@ -343,9 +335,8 @@ static int console_text(int con) {
 	return 1;
 }
 
-// the messages of a shutdown are read on tty1, so it becomes the active vt. a compositor
-// holding the vt releases it on request or when it dies, so the switch is asked for twice,
-// the second time with tty1 put back in text mode
+// shutdown messages are read on tty1. a compositor holding the vt releases it on request or
+// when it dies, so the switch is asked for twice, the second time with tty1 put back in text mode
 void console_front(int text) {
 	int fd = open("/dev/tty0", O_RDWR | O_NOCTTY | O_CLOEXEC);
 
@@ -444,10 +435,9 @@ static pid_t emerg_spawn(int con, int vt, int barrier, int auth) {
 	static char* const env_vt[] = { path, term_vt, home, NULL };
 	static char* const env_serial[] = { path, term_serial, home, NULL };
 	char* const* envp = vt ? env_vt : env_serial;
-	struct sigaction dfl = { .sa_handler = SIG_DFL };
 	sigset_t none;
 	pid_t pid;
-	int sig, fd, errs[2] = { 0, 0 };
+	int fd, errs[2] = { 0, 0 };
 
 	pid = fork();
 	if(pid != 0) {
@@ -457,10 +447,6 @@ static pid_t emerg_spawn(int con, int vt, int barrier, int auth) {
 	// only async-signal-safe calls from here to execve
 	sigemptyset(&none);
 	sigprocmask(SIG_SETMASK, &none, NULL);
-	for(sig = 1; sig < NSIG; sig++) {
-		sigaction(sig, &dfl, NULL);
-	}
-
 	setsid();
 	ioctl(con, TIOCSCTTY, 1);
 	dup2(con, 0);
@@ -705,7 +691,7 @@ int fail_emergency_reaped(pid_t pid, int status) {
 	fail_emergency_report();
 	emerg_bar_close();
 	ms = mono_ms_since(&emerg_at);
-	describe(status, how, sizeof(how));
+	fail_describe(status, how, sizeof(how));
 
 	if(ms >= EMERG_FAST_MS) {
 		emerg_fast = 0;
@@ -744,7 +730,7 @@ void fail_summary(const void* map, const uint8_t* state) {
 	}
 
 	ninit_log(failed ? LOG_FAIL : LOG_WARN, "boot: %u service%s failed, %u never started",
-		  failed, plural_s(failed), skipped);
+		  failed, plural(failed), skipped);
 	for(i = 0; i < n; i++) {
 		if(state[i] == NG_ST_FAILED) {
 			log_err("boot: %s failed", ng_name(map, i));

@@ -8,7 +8,6 @@
 #include "pidmap.h"
 #include "spawn.h"
 #include "state.h"
-#include "../help/time.h"
 
 #include <errno.h>
 #include <signal.h>
@@ -32,10 +31,19 @@ static str tail_of(const struct run* r) {
 	return (str){ r->tail, r->tail_len };
 }
 
+static void fail_apply(uint32_t i, enum fail_act act) {
+	char why[160];
+
+	poison(i);
+	if(act == FAIL_SHELL) {
+		snprintf(why, sizeof(why), "boot: cannot continue without %s", ng_name(map, i));
+		fail_emergency_shell(why);
+	}
+}
+
 void service_failed(uint32_t i, int status) {
 	struct run* r = &runs[i];
 	enum fail_act act;
-	char why[160];
 
 	kill_group(i);
 	drain_out(i, DRAIN_FINAL_CHUNKS, 0);
@@ -56,42 +64,23 @@ void service_failed(uint32_t i, int status) {
 	}
 
 	act = fail_service(map, i, status, r->attempt, ng_start_tries(map, i), tail_of(r));
-
-	switch(act) {
-		case FAIL_RETRY:
-			if(!live_has(i)) {
-				live_add(i);
-			}
-
-			r->stale_hold = r->stale_pid != 0;
-			r->restart_at = now_ms() + (r->stale_pid ? KILL_GRACE_MS : retry_delay_ms(i));
-			return;
-		case FAIL_SHELL:
-			poison(i);
-			snprintf(why, sizeof(why), "boot: cannot continue without %s", ng_name(map, i));
-			fail_emergency_shell(why);
-			return;
-		case FAIL_WARN:
-		case FAIL_STOP:
-		default:
-			poison(i);
-			return;
-	}
-}
-
-static void give_up(uint32_t i, int status) {
-	struct run* r = &runs[i];
-	unsigned tries = ng_start_tries(map, i);
-	char why[160];
-
-	if(fail_service(map, i, status, tries, tries, tail_of(r)) == FAIL_SHELL) {
-		poison(i);
-		snprintf(why, sizeof(why), "boot: cannot continue without %s", ng_name(map, i));
-		fail_emergency_shell(why);
+	if(act != FAIL_RETRY) {
+		fail_apply(i, act);
 		return;
 	}
 
-	poison(i);
+	if(!live_has(i)) {
+		live_add(i);
+	}
+
+	r->stale_hold = r->stale_pid != 0;
+	r->restart_at = now_ms() + (r->stale_pid ? KILL_GRACE_MS : retry_delay_ms(i));
+}
+
+static void give_up(uint32_t i, int status) {
+	unsigned tries = ng_start_tries(map, i);
+
+	fail_apply(i, fail_service(map, i, status, tries, tries, tail_of(&runs[i])));
 }
 
 // an instance that never became ready was not up, so it neither resets the delay nor counts as up
@@ -215,36 +204,6 @@ void fire_restarts(void) {
 			k++;
 		}
 	}
-}
-
-long long restarts_due(void) {
-	long long best = -1, now = now_ms();
-	uint32_t k;
-
-	for(k = 0; k < n_live; k++) {
-		struct run* r = &runs[live[k]];
-
-		if(r->restart_at) {
-			best = ms_sooner(best, ms_until(r->restart_at, now));
-		}
-	}
-
-	return best;
-}
-
-long long starts_due(void) {
-	long long best = -1, now = now_ms();
-	uint32_t k;
-
-	for(k = 0; k < n_live; k++) {
-		struct run* r = &runs[live[k]];
-
-		if(r->starting && !r->timedout) {
-			best = ms_sooner(best, ms_until(r->started + ng_start_ms(map, live[k]), now));
-		}
-	}
-
-	return best;
 }
 
 // only the sigkill drain_notify() sent says less than the hup itself

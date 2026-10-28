@@ -35,4 +35,3 @@ void ctl_feed(void);
 void ctl_pump(struct ctl* c);
 void ctl_read(struct ctl* c);
 void ctl_accept(void);
-long long ctl_due(void);

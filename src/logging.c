@@ -9,7 +9,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/utsname.h>
-#include <time.h>
 #include <unistd.h>
 
 #define LOG_WRITE_MS 100
@@ -21,7 +20,7 @@
 
 static int log_fd = 2;
 static int log_color;
-static struct timespec log_start;
+static long long log_start;
 static unsigned long log_dropped;
 static int log_stalled;
 static long long log_wait_until;
@@ -166,7 +165,7 @@ void log_batch_begin(void) {
 }
 
 void log_init(void) {
-	clock_gettime(CLOCK_MONOTONIC, &log_start);
+	log_start = mono_ms();
 	log_color = isatty(log_fd);
 	log_set_nonblock();
 	log_batch_begin();
@@ -313,8 +312,9 @@ static int fitted(int ret, int at, size_t cap) {
 	return at + ret;
 }
 
+// the same truncation as every deadline, so two stamps differ by exactly the ms between them
 static long long log_elapsed_ms(void) {
-	long long ms = mono_ms_since(&log_start);
+	long long ms = mono_ms() - log_start;
 
 	return ms < 0 ? 0 : ms;
 }
@@ -360,8 +360,7 @@ static int log_report_dropped(unsigned long lost) {
 	int n, ret;
 
 	n = prefix(buf, sizeof(buf), tags[LOG_WARN], log_elapsed_ms());
-	ret = snprintf(buf + n, sizeof(buf) - n, "console: dropped %lu message%s",
-		       lost, lost == 1 ? "" : "s");
+	ret = snprintf(buf + n, sizeof(buf) - n, "console: dropped %lu message%s", lost, plural(lost));
 	n = fitted(ret, n, sizeof(buf));
 	if(n > (int)sizeof(buf) - 2) {
 		n = (int)sizeof(buf) - 2;

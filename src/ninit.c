@@ -27,6 +27,17 @@
 #define DEGRADED_POLL_MS 200
 #define SIGNAL_POLL_MS	 200
 
+// what a polled descriptor after the signalfd belongs to
+enum pf_kind {
+	PF_OUT,
+	PF_NOTIFY,
+	PF_EXEC,
+	PF_SHELL,
+	PF_LISTEN,
+	PF_CTL,
+	PF_CONSOLE,
+};
+
 const void* map;
 uint32_t n_svc;
 uint8_t* state;
@@ -51,6 +62,30 @@ long long now_ms(void) {
 	return mono_ms();
 }
 
+// the soonest restart delay, start timeout or control deadline among the live services, -1 for none
+static long long live_due(long long now) {
+	long long best = -1;
+	uint32_t k;
+
+	for(k = 0; k < n_live; k++) {
+		const struct run* r = &runs[live[k]];
+
+		if(r->restart_at) {
+			best = ms_sooner(best, ms_until(r->restart_at, now));
+		}
+
+		if(r->starting && !r->timedout) {
+			best = ms_sooner(best, ms_until(r->started + ng_start_ms(map, live[k]), now));
+		}
+
+		if(r->op != SVC_OP_NONE) {
+			best = ms_sooner(best, ms_until(r->op_at, now));
+		}
+	}
+
+	return best;
+}
+
 static void check_boot_done(void) {
 	uint32_t k;
 
@@ -67,7 +102,7 @@ static void check_boot_done(void) {
 	boot_ms = now_ms() - boot_t0;
 	fail_summary(map, state);
 	if(n_pending) {
-		log_warn("boot: %u service%s never started", n_pending, n_pending == 1 ? "" : "s");
+		log_warn("boot: %u service%s never started", n_pending, plural(n_pending));
 	}
 
 	log_note("boot: %u of %u services up in %lld ms", n_done, n_svc, boot_ms);
@@ -238,7 +273,7 @@ int main(int argc, char** argv) {
 		long long wait;
 		nfds_t nfds = 1, k;
 		uint32_t start;
-		int rc;
+		int rc, shell_fd, con_fd;
 
 		log_batch_begin();
 		drain_left = DRAIN_BUDGET;
@@ -260,9 +295,11 @@ int main(int argc, char** argv) {
 			poll_signals();
 		}
 
+		shell_fd = fail_emergency_fd();
+		con_fd = log_pending_fd();
 		if(degraded) {
 			drain_all();
-			if(fail_emergency_fd() >= 0) {
+			if(shell_fd >= 0) {
 				fail_emergency_report();
 			}
 		}
@@ -283,29 +320,29 @@ int main(int argc, char** argv) {
 				pfds[nfds].fd = runs[i].out_fd;
 				pfds[nfds].events = POLLIN;
 				pf_idx[nfds] = i;
-				pf_kind[nfds++] = 0;
+				pf_kind[nfds++] = PF_OUT;
 			}
 
 			if(runs[i].ntf_fd >= 0) {
 				pfds[nfds].fd = runs[i].ntf_fd;
 				pfds[nfds].events = POLLIN;
 				pf_idx[nfds] = i;
-				pf_kind[nfds++] = runs[i].ntf_exec ? 2 : 1;
+				pf_kind[nfds++] = runs[i].ntf_exec ? PF_EXEC : PF_NOTIFY;
 			}
 		}
 
-		if(!degraded && fail_emergency_fd() >= 0) {
-			pfds[nfds].fd = fail_emergency_fd();
+		if(!degraded && shell_fd >= 0) {
+			pfds[nfds].fd = shell_fd;
 			pfds[nfds].events = POLLIN;
 			pf_idx[nfds] = 0;
-			pf_kind[nfds++] = 3;
+			pf_kind[nfds++] = PF_SHELL;
 		}
 
 		if(!degraded && ctl_lfd >= 0) {
 			pfds[nfds].fd = ctl_lfd;
 			pfds[nfds].events = POLLIN;
 			pf_idx[nfds] = 0;
-			pf_kind[nfds++] = 4;
+			pf_kind[nfds++] = PF_LISTEN;
 			for(int c = 0; c < n_ctl; c++) {
 				struct ctl* cc = &ctl_conn[c];
 
@@ -318,22 +355,20 @@ int main(int argc, char** argv) {
 				}
 
 				pf_idx[nfds] = (uint32_t)c;
-				pf_kind[nfds++] = 5;
+				pf_kind[nfds++] = PF_CTL;
 			}
 		}
 
-		if(!degraded && log_pending_fd() >= 0) {
-			pfds[nfds].fd = log_pending_fd();
+		if(!degraded && con_fd >= 0) {
+			pfds[nfds].fd = con_fd;
 			pfds[nfds].events = POLLOUT;
 			pf_idx[nfds] = 0;
-			pf_kind[nfds++] = 6;
+			pf_kind[nfds++] = PF_CONSOLE;
 		}
 
 		wait = n_active && !shutting_down ? STALL_MS : -1;
-		wait = ms_sooner(wait, restarts_due());
-		wait = ms_sooner(wait, starts_due());
+		wait = ms_sooner(wait, live_due(now_ms()));
 		wait = ms_sooner(wait, fail_emergency_due());
-		wait = ms_sooner(wait, ctl_due());
 		wait = ms_sooner(wait, log_due());
 		if(degraded) {
 			wait = ms_sooner(wait, DEGRADED_POLL_MS);
@@ -377,22 +412,22 @@ int main(int argc, char** argv) {
 				continue;
 			}
 
-			if(pf_kind[k] == 3) {
+			if(pf_kind[k] == PF_SHELL) {
 				fail_emergency_report();
 				continue;
 			}
 
-			if(pf_kind[k] == 4) {
+			if(pf_kind[k] == PF_LISTEN) {
 				ctl_accept();
 				continue;
 			}
 
-			if(pf_kind[k] == 6) {
+			if(pf_kind[k] == PF_CONSOLE) {
 				log_flush();
 				continue;
 			}
 
-			if(pf_kind[k] == 5) {
+			if(pf_kind[k] == PF_CTL) {
 				// a reply may have closed and reshuffled the slots
 				if(i >= (uint32_t)n_ctl || ctl_conn[i].fd != pfds[k].fd) {
 					continue;
@@ -410,9 +445,9 @@ int main(int argc, char** argv) {
 				continue;
 			}
 
-			if(pf_kind[k] == 2) {
+			if(pf_kind[k] == PF_EXEC) {
 				drain_exec(i);
-			} else if(pf_kind[k]) {
+			} else if(pf_kind[k] == PF_NOTIFY) {
 				drain_notify(i, DRAIN_POLL_CHUNKS);
 			} else {
 				drain_out(i, DRAIN_POLL_CHUNKS, 1);

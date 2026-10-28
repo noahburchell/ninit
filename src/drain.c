@@ -68,17 +68,32 @@ static void absorb(uint32_t i, const char* buf, size_t len) {
 		r->tail_len += (uint16_t)len;
 	}
 
-	for(size_t k = 0; k < len; k++) {
-		if(buf[k] == '\n') {
-			flush_line(i);
-			continue;
+	for(size_t k = 0; k < len;) {
+		const char* nl = memchr(buf + k, '\n', len - k);
+		size_t seg = (nl ? (size_t)(nl - buf) : len) - k;
+
+		while(seg) {
+			size_t take = LINE_CAP - r->line_len;
+
+			if(!take) {
+				flush_line(i);
+				take = LINE_CAP;
+			}
+
+			if(take > seg) {
+				take = seg;
+			}
+
+			memcpy(r->line + r->line_len, buf + k, take);
+			r->line_len += (uint16_t)take;
+			k += take;
+			seg -= take;
 		}
 
-		if(r->line_len == LINE_CAP) {
+		if(nl) {
 			flush_line(i);
+			k++;
 		}
-
-		r->line[r->line_len++] = buf[k];
 	}
 }
 
@@ -194,10 +209,8 @@ void drain_exec(uint32_t i) {
 			return;
 		}
 
-		long long ms = now_ms() - r->started;
-
 		r->starting = 0;
-		log_done("%s (%lld ms)", ng_name(map, i), ms);
+		log_done("%s (%lld ms)", ng_name(map, i), now_ms() - r->started);
 		if(state[i] == NG_ST_RUNNING || state[i] == NG_ST_DONE) {
 			complete(i);
 		}

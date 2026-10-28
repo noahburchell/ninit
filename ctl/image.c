@@ -89,8 +89,7 @@ void write_image(const struct build* b, const char* out, int dry, int srclock) {
 		if(s->have_onfail) {
 			if(s->onfail == NG_ONFAIL_WARN && nd) {
 				die("%s/%s: onfail:warn but %u service%s depend%s on it",
-				    g_dir, s->name, nd, nd == 1 ? "" : "s",
-				    nd == 1 ? "s" : "");
+				    g_dir, s->name, nd, plural(nd), nd == 1 ? "s" : "");
 			}
 
 			pol = s->onfail;
@@ -202,7 +201,7 @@ void write_image(const struct build* b, const char* out, int dry, int srclock) {
 		fprintf(stderr,
 			"ninitctl: warning: %u daemon%s with dependents %s no notify:, "
 			"their dependents start on exec, not on readiness\n",
-			vague, vague == 1 ? "" : "s", vague == 1 ? "has" : "have");
+			vague, plural(vague), vague == 1 ? "has" : "have");
 		for(i = 0; i < n; i++) {
 			const struct src* s = &srcs[order[i]];
 

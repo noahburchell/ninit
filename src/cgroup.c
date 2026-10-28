@@ -100,7 +100,7 @@ int cgroup_populated(uint32_t i) {
 		return -1;
 	}
 
-	p += 9; // p o p u l a t e d
+	p += sizeof("populated") - 1;
 	while(*p == ' ' || *p == '\t') {
 		p++;
 	}

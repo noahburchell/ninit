@@ -237,6 +237,15 @@ void complete(uint32_t i) {
 	svc_release(i);
 }
 
+static void skipped_note(uint32_t i, uint32_t skipped, uint32_t undone) {
+	n_pending -= skipped;
+	n_done -= undone;
+	if(skipped) {
+		log_warn("%s: %u dependent service%s will not start", ng_name(map, i),
+			 skipped, plural(skipped));
+	}
+}
+
 void poison(uint32_t i) {
 	uint32_t skipped, undone;
 
@@ -248,12 +257,7 @@ void poison(uint32_t i) {
 
 	go_down(i);
 	skipped = fail_poison(map, i, state, up, &undone);
-	n_pending -= skipped;
-	n_done -= undone;
-	if(skipped) {
-		log_warn("%s: %u dependent service%s will not start", ng_name(map, i),
-			 skipped, skipped == 1 ? "" : "s");
-	}
+	skipped_note(i, skipped, undone);
 }
 
 // a service that had completed is gone for good
@@ -265,11 +269,5 @@ void poison_deps(uint32_t i) {
 	}
 
 	skipped = fail_poison_deps(map, i, state, up, &undone);
-
-	n_pending -= skipped;
-	n_done -= undone;
-	if(skipped) {
-		log_warn("%s: %u dependent service%s will not start", ng_name(map, i),
-			 skipped, skipped == 1 ? "" : "s");
-	}
+	skipped_note(i, skipped, undone);
 }

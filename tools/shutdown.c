@@ -33,29 +33,17 @@ static const char* const act_name[] = {
 	[ACT_HALT] = "halt",
 };
 
-static int act_signal(enum act a) {
-	switch(a) {
-		case ACT_POWEROFF:
-			return SIGUSR2;
-		case ACT_HALT:
-			return SIGUSR1;
-		case ACT_REBOOT:
-		default:
-			return SIGTERM;
-	}
-}
+static const int act_signal[] = {
+	[ACT_REBOOT] = SIGTERM,
+	[ACT_POWEROFF] = SIGUSR2,
+	[ACT_HALT] = SIGUSR1,
+};
 
-static int act_rb(enum act a) {
-	switch(a) {
-		case ACT_POWEROFF:
-			return RB_POWER_OFF;
-		case ACT_HALT:
-			return RB_HALT_SYSTEM;
-		case ACT_REBOOT:
-		default:
-			return RB_AUTOBOOT;
-	}
-}
+static const unsigned act_rb[] = {
+	[ACT_REBOOT] = RB_AUTOBOOT,
+	[ACT_POWEROFF] = RB_POWER_OFF,
+	[ACT_HALT] = RB_HALT_SYSTEM,
+};
 
 static void usage(const char* me, FILE* f) {
 	fprintf(f,
@@ -289,10 +277,10 @@ static void warn_console(const char* me, enum act a, long secs) {
 
 	if(secs >= 60) {
 		n = snprintf(msg, sizeof(msg), "\r\n%s: %s in %ld minute%s\r\n",
-			     me, act_name[a], secs / 60, secs / 60 == 1 ? "" : "s");
+			     me, act_name[a], secs / 60, plural((unsigned long)(secs / 60)));
 	} else {
 		n = snprintf(msg, sizeof(msg), "\r\n%s: %s in %ld second%s\r\n",
-			     me, act_name[a], secs, secs == 1 ? "" : "s");
+			     me, act_name[a], secs, plural((unsigned long)secs));
 	}
 
 	if(n > 0) {
@@ -393,7 +381,7 @@ int main(int argc, char** argv) {
 
 	if(force) {
 		sync();
-		reboot(act_rb(act));
+		reboot((int)act_rb[act]);
 		fprintf(stderr, "%s: reboot: %s\n", me, strerror(errno));
 		return 1;
 	}
@@ -424,7 +412,7 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	if(kill(1, act_signal(act)) < 0) {
+	if(kill(1, act_signal[act]) < 0) {
 		fprintf(stderr, "%s: cannot signal pid 1: %s\n", me, strerror(errno));
 		return 1;
 	}

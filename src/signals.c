@@ -22,7 +22,14 @@ int sfd = -1;
 static sigset_t sig_want;
 
 void setup_signals(void) {
+	struct sigaction dfl = { .sa_handler = SIG_DFL };
 	sigset_t all;
+	int sig;
+
+	// an ignored signal survives execve, so whatever started pid 1 would pass it on to every service
+	for(sig = 1; sig < NSIG; sig++) {
+		sigaction(sig, &dfl, NULL);
+	}
 
 	sigfillset(&all);
 
@@ -116,29 +123,28 @@ void check_timeouts(void) {
 			continue;
 		}
 
+		// a readiness report that arrived in time is read before the deadline applies
 		if(r->ntf_fd >= 0) {
-			uint32_t before = n_live;
-
 			if(r->ntf_exec) {
 				drain_exec(i);
 			} else {
 				drain_notify(i, DRAIN_FINAL_CHUNKS);
 			}
+		}
 
-			if(!r->starting || r->timedout || n_live != before) {
-				k = 0;
-				continue;
+		if(r->starting && !r->timedout) {
+			log_err("%s: start timed out after %u ms", ng_name(map, i), ng_start_ms(map, i));
+			r->timedout = 1;
+			if(state[i] == NG_ST_RUNNING) {
+				service_failed(i, FAIL_ST_TIMEOUT);
+			} else {
+				start_failed(i, FAIL_ST_TIMEOUT);
 			}
 		}
 
-		log_err("%s: start timed out after %u ms", ng_name(map, i), ng_start_ms(map, i));
-		r->timedout = 1;
-		if(state[i] == NG_ST_RUNNING) {
-			service_failed(i, FAIL_ST_TIMEOUT);
-		} else {
-			start_failed(i, FAIL_ST_TIMEOUT);
+		// dropping a service swaps another one into this slot
+		if(k < n_live && live[k] == i) {
+			k++;
 		}
-
-		k = 0;
 	}
 }

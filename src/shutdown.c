@@ -86,7 +86,7 @@ void remount_ro(void) {
 	char* buf = read_proc("/proc/self/mounts", "the mount table");
 	char* p;
 	char** mps = NULL;
-	size_t n = 0, mcap = 0;
+	size_t n = 0, mcap = 0, stuck = 0;
 
 	if(buf) {
 		for(p = buf; *p;) {
@@ -145,8 +145,6 @@ void remount_ro(void) {
 			break;
 		}
 	}
-
-	size_t stuck = 0;
 
 	for(size_t k = n; k--;) {
 		if(!mps[k] || !strcmp(mps[k], "/")) {
@@ -301,16 +299,11 @@ void save_hwclock(void) {
 	}
 
 	if(pid == 0) {
-		struct sigaction dfl = { .sa_handler = SIG_DFL };
 		sigset_t none;
 
 		// hwclock runs as a service would, without the signal mask and oom exemption of pid 1
 		sigemptyset(&none);
 		sigprocmask(SIG_SETMASK, &none, NULL);
-		for(int sig = 1; sig < NSIG; sig++) {
-			sigaction(sig, &dfl, NULL);
-		}
-
 		ninit_oom_score_adj(STR("0\n"));
 		umask(022);
 		ninit_cloexec_except(-1);

@@ -126,9 +126,8 @@ static void child_exec(uint32_t i, int out_w, int ntf_w, const char* cg) {
 	const char* prog = NG_SHELL;
 	int e = 0;
 	char msg[EXEC_PATH_MAX + 64], path[EXEC_PATH_MAX + 1];
-	struct sigaction dfl = { .sa_handler = SIG_DFL };
 	sigset_t none;
-	int sig, nfd = ng_notify(map, i), err;
+	int nfd = ng_notify(map, i), err;
 	size_t at;
 
 	envp[e++] = env_path;
@@ -142,10 +141,6 @@ static void child_exec(uint32_t i, int out_w, int ntf_w, const char* cg) {
 
 	sigemptyset(&none);
 	sigprocmask(SIG_SETMASK, &none, NULL);
-	for(sig = 1; sig < NSIG; sig++) {
-		sigaction(sig, &dfl, NULL);
-	}
-
 	setsid();
 	if(*cg) {
 		int cf = open(cg, O_WRONLY | O_CLOEXEC);

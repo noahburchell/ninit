@@ -49,3 +49,7 @@ static inline const char* path_base(const char* path) {
 
 	return b ? b + 1 : path;
 }
+
+static inline const char* plural(unsigned long n) {
+	return n == 1 ? "" : "s";
+}

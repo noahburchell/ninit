@@ -5,7 +5,6 @@
 #include "nctl.h"
 #include "ngraph.h"
 #include "ninit.h"
-#include "../help/time.h"
 
 #include <errno.h>
 #include <stdarg.h>
@@ -293,24 +292,4 @@ void ctl_accept(void) {
 		c->fd = fd;
 		c->svc = UINT32_MAX;
 	}
-}
-
-long long ctl_due(void) {
-	long long best = -1, now;
-	uint32_t k;
-
-	if(!n_ops) {
-		return -1;
-	}
-
-	now = now_ms();
-	for(k = 0; k < n_live; k++) {
-		const struct run* r = &runs[live[k]];
-
-		if(r->op != SVC_OP_NONE) {
-			best = ms_sooner(best, ms_until(r->op_at, now));
-		}
-	}
-
-	return best;
 }

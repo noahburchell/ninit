@@ -256,13 +256,13 @@ static void report(struct checks* c, struct src* srcs, uint32_t n, const char* d
 	free(c->late);
 	free(c->slot);
 	if(c->bad) {
-		die("%u service script%s failed the %s%ssyntax check", c->bad, c->bad == 1 ? "" : "s",
+		die("%u service script%s failed the %s%ssyntax check", c->bad, plural(c->bad),
 		    what && *what ? what : "", what && *what ? " " : "");
 	}
 
 	if(c->unchecked) {
 		die("%u service script%s could not be checked, use --no-check to skip", c->unchecked,
-		    c->unchecked == 1 ? "" : "s");
+		    plural(c->unchecked));
 	}
 }
 

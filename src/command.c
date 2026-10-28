@@ -236,10 +236,8 @@ static void ctl_resume(struct ctl* c) {
 		started += (uint32_t)svc_try_start(i);
 	}
 
-	log_note("control: resuming %u service%s, %u started", reset,
-		 reset == 1 ? "" : "s", started);
-	ctl_end(c, 1, "resuming %u service%s, %u started", reset,
-		reset == 1 ? "" : "s", started);
+	log_note("control: resuming %u service%s, %u started", reset, plural(reset), started);
+	ctl_end(c, 1, "resuming %u service%s, %u started", reset, plural(reset), started);
 }
 
 void ctl_cmd(struct ctl* c, char* line) {

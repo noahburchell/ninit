@@ -8,7 +8,7 @@ small init for any linux distro
 
 get it: `gentoo <2.1_>`__ | `source <2.2_>`__
 
-ninit is an init system for linux. each service is a shell script in its own file, with its dependencies and policy declared in comment directives. ninitctl init compiles the service directory into one binary dependency graph. parsing, validation and dependency resolution all happen there, ahead of time. that keeps ninit itself small and fast. at boot it loads the graph once, verifies it, and starts each service as soon as its prerequisites are ready, independent services in parallel. every service runs in its own cgroup. a unix socket exposes the running state to ninitctl
+ninit is an init system for linux. each service is a shell script in its own file, with its dependencies and policy declared in comment directives. ninitctl init compiles the service directory into one binary dependency graph so parsing, validation and dependency resolution all happen ahead of time. at boot it loads the graph once, verifies it, and starts each service as soon as its prerequisites are ready, independent services in parallel. every service runs in its own cgroup. a unix socket exposes the running state to ninitctl
 
 .. contents:: contents
    :depth: 1
