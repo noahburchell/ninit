@@ -6,13 +6,16 @@
 /ninitctl
 /ninit-shutdown
 /tests/unit/t-ngraph
+/tests/unit/t-verify
 /tests/unit/t-logging
 /tests/unit/t-logging-quiet
 /tests/unit/t-fail
 /tests/unit/t-fail-sulogin
 /tests/unit/t-ninit-shutdown
 /tests/unit/t-build
+/tests/unit/t-compact
 /tests/unit/t-ninit
+/tests/unit/t-ninit-fuzz
 /tests/unit/t-shutdown
 /tests/unit/t-boot
 /tests/unit/t-ctlfs

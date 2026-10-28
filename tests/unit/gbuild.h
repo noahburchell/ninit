@@ -226,3 +226,25 @@ static inline char* gb_blob(struct gb_img* g) {
 // the trailing NUL of the literal ends the second list, or the only list of a direct exec
 #define GB_EXEC(lit)   .exec = (lit), .exec_len = sizeof(lit)
 #define GB_DIRECT(lit) .exec = (lit), .exec_len = sizeof(lit), .direct = 1
+
+// the graph t-ngraph and t-verify share, six services with an interpreter argv and a direct exec
+static inline struct gb_img gb_sample(void) {
+	static const struct gb_svc sv[] = {
+		GB_ONESHOT("fs", "fsck /"),
+		GB_ONESHOT("udev", "exec udevd"),
+		GB_ONESHOT("mounts", "mount -a"),
+		{ .name = "dbus", .type = NG_TYPE_DAEMON, .onfail = GB_DEFAULT, .script = "run()", GB_EXEC("/usr/bin/lua\0-e\0x()\0-e\0\0") },
+		GB_TARGET("basic"),
+		{ .name = "getty", .type = NG_TYPE_DAEMON, .onfail = GB_DEFAULT, .script = "exec agetty tty1", GB_DIRECT("agetty\0tty1\0") },
+	};
+	static const struct gb_edge e[] = {
+		{ 0, 2 },
+		{ 1, 3 },
+		{ 2, 3 },
+		{ 2, 4 },
+		{ 3, 4 },
+		{ 4, 5 },
+	};
+
+	return gb_build(sv, 6, e, 6);
+}

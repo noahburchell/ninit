@@ -169,13 +169,16 @@ EXTRA_DIST = \
 
 unit_tests = \
 	tests/unit/t-ngraph \
+	tests/unit/t-verify \
 	tests/unit/t-logging \
 	tests/unit/t-logging-quiet \
 	tests/unit/t-fail \
 	tests/unit/t-fail-sulogin \
 	tests/unit/t-ninit-shutdown \
 	tests/unit/t-build \
+	tests/unit/t-compact \
 	tests/unit/t-ninit \
+	tests/unit/t-ninit-fuzz \
 	tests/unit/t-shutdown \
 	tests/unit/t-boot \
 	tests/unit/t-ctlfs \
@@ -226,6 +229,7 @@ check_PROGRAMS = $(unit_tests) tests/helpers/czdump tests/helpers/nctl-raw tests
 unit_headers = tests/unit/tap.h tests/unit/gbuild.h tests/unit/logcap.h
 
 tests_unit_t_ngraph_SOURCES = tests/unit/t-ngraph.c $(unit_headers)
+tests_unit_t_verify_SOURCES = tests/unit/t-verify.c $(unit_headers)
 tests_unit_t_logging_SOURCES = tests/unit/t-logging.c $(unit_headers)
 tests_unit_t_logging_quiet_SOURCES = $(tests_unit_t_logging_SOURCES)
 tests_unit_t_logging_quiet_CPPFLAGS = $(AM_CPPFLAGS) -DNINIT_QUIET=1
@@ -235,7 +239,9 @@ tests_unit_t_fail_sulogin_CPPFLAGS = $(AM_CPPFLAGS) -DNINIT_SULOGIN=1 \
 	-DNINIT_BUSYBOX='"/bin/busybox"'
 tests_unit_t_ninit_shutdown_SOURCES = tests/unit/t-ninit-shutdown.c $(unit_headers)
 tests_unit_t_build_SOURCES = tests/unit/t-build.c src/ngraph.c $(unit_headers)
-tests_unit_t_ninit_SOURCES = tests/unit/t-ninit.c src/logging.c src/ngraph.c $(unit_headers)
+tests_unit_t_compact_SOURCES = tests/unit/t-compact.c $(ninitctl_parser) src/ngraph.c $(unit_headers)
+tests_unit_t_ninit_SOURCES = tests/unit/t-ninit.c tests/unit/sim.h src/logging.c src/ngraph.c $(unit_headers)
+tests_unit_t_ninit_fuzz_SOURCES = tests/unit/t-ninit-fuzz.c tests/unit/sim.h src/logging.c src/ngraph.c $(unit_headers)
 tests_unit_t_shutdown_SOURCES = tests/unit/t-shutdown.c src/logging.c $(unit_headers)
 tests_unit_t_boot_SOURCES = tests/unit/t-boot.c src/logging.c src/ngraph.c $(unit_headers)
 tests_unit_t_ctlfs_SOURCES = tests/unit/t-ctlfs.c src/ngraph.c $(unit_headers)
