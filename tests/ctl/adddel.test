@@ -100,6 +100,14 @@ ln -s inner "$d/unused/viainner"
 t_is "$(readlink "$d/viainner")" "unused/inner" "a link to a file inside unused/ is rewritten on add"
 t_is "$(readlink -f "$d/viainner")" "$(readlink -f "$d/unused/inner")" "and resolves to the same file"
 
+long=$(printf 'l%.0s' {1..255})
+ln -s real "$d/$long"
+run "$NINITCTL" del -d "$d" "$long"
+t_is "$rc" 0 "a link with a 255 byte name is moved"
+t_is "$(readlink "$d/unused/$long")" "../real" "and rewritten"
+"$NINITCTL" add -d "$d" "$long" >/dev/null
+t_is "$(readlink "$d/$long")" "real" "and back"
+
 ln -s "$T/nowhere" "$d/dangling"
 run "$NINITCTL" del -d "$d" dangling
 t_is "$err" "ninitctl: dangling: not in $d" "a dangling link is not moved"

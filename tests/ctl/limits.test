@@ -42,5 +42,8 @@ run "$NINITCTL" init -d "$d" --no-check
 t_is "$rc" 0 "a 255 byte name builds"
 run "$NINITCTL" show "$d/depgraph"
 t_has "$out" "$long" "and is shown whole"
+run "$NINITCTL" init -d "$d"
+t_is "$rc" 0 "and passes the syntax check"
+t_unlike "$err" "memfd_create" "the memfd takes the name"
 
 t_done

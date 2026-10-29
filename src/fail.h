@@ -13,6 +13,8 @@
 #define NG_ST_FAILED  3
 #define NG_ST_SKIPPED 4
 
+struct run;
+
 enum fail_act {
 	FAIL_RETRY,
 	FAIL_WARN,
@@ -29,10 +31,10 @@ enum fail_act fail_service(const void* map, uint32_t i, int status, unsigned att
 			   unsigned tries, str tail);
 
 uint32_t fail_poison(const void* map, uint32_t i, uint8_t* state, const uint8_t* up,
-		     uint32_t* undone);
+		     const struct run* rs, uint32_t* undone, uint32_t* waiting);
 
 uint32_t fail_poison_deps(const void* map, uint32_t i, uint8_t* state, const uint8_t* up,
-			  uint32_t* undone);
+			  const struct run* rs, uint32_t* undone, uint32_t* waiting);
 
 void ninit_cloexec_except(int keep);
 void console_front(int text);

@@ -283,6 +283,10 @@ static void warn_console(const char* me, enum act a, long secs) {
 			     me, act_name[a], secs, plural((unsigned long)secs));
 	}
 
+	if(n >= (int)sizeof(msg)) {
+		n = sizeof(msg) - 1;
+	}
+
 	if(n > 0) {
 		(void)!write(fd, msg, (size_t)n);
 	}

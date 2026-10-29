@@ -48,6 +48,8 @@ static void print_rebuild_hint(const char* dir, int custom) {
 
 static int relink(const char* path, const char* target, int enable) {
 	char fixed[4200], tmp[4200];
+	const char* slash = strrchr(path, '/');
+	int dl = slash ? (int)(slash - path + 1) : 0;
 	int n;
 
 	if(enable) {
@@ -64,8 +66,9 @@ static int relink(const char* path, const char* target, int enable) {
 		return 0;
 	}
 
+	// a temporary name made from the service name could pass NAME_MAX
 	for(unsigned t = 0;; t++) {
-		n = snprintf(tmp, sizeof(tmp), "%s.ninitctl.%d.%u.tmp", path,
+		n = snprintf(tmp, sizeof(tmp), "%.*s.ninitctl.%d.%u.tmp", dl, path,
 			     (int)getpid(), t);
 		if(n < 0 || (size_t)n >= sizeof(tmp)) {
 			return 0;

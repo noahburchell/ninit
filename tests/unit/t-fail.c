@@ -241,14 +241,14 @@ static struct gb_img poison_graph(void) {
 static void test_poison(void) {
 	struct gb_img g = poison_graph();
 	uint8_t st[6], up[6];
-	uint32_t n, undone;
+	uint32_t n, undone, waiting;
 
 	is_str(ng_verify(g.map, g.len), NULL, "poison graph verifies");
 
 	memset(st, NG_ST_PENDING, sizeof(st));
 	memset(up, 0, sizeof(up));
 	st[0] = NG_ST_RUNNING;
-	n = fail_poison(g.map, 0, st, up, &undone);
+	n = fail_poison(g.map, 0, st, up, NULL, &undone, &waiting);
 	is_int(n, 4, "a failed root skips its four pending dependents");
 	is_int(undone, 0, "none of them had completed");
 	is_int(st[0], NG_ST_FAILED, "the service itself is failed");
@@ -261,7 +261,7 @@ static void test_poison(void) {
 	memset(up, 0, sizeof(up));
 	st[5] = NG_ST_RUNNING;
 	st[3] = NG_ST_DONE;
-	n = fail_poison(g.map, 0, st, up, &undone);
+	n = fail_poison(g.map, 0, st, up, NULL, &undone, &waiting);
 	is_int(n, 2, "pending b and d are skipped");
 	is_int(undone, 1, "a completed target that is down is undone");
 	is_int(st[3], NG_ST_SKIPPED, "the down target is skipped");
@@ -273,7 +273,7 @@ static void test_poison(void) {
 	up[2] = 1;
 	st[3] = NG_ST_DONE;
 	up[3] = 1;
-	n = fail_poison(g.map, 0, st, up, &undone);
+	n = fail_poison(g.map, 0, st, up, NULL, &undone, &waiting);
 	is_int(n, 1, "only e is pending behind a");
 	is_int(undone, 0, "an up target is not undone");
 	is_int(st[3], NG_ST_DONE, "an up target stays done");
@@ -282,19 +282,19 @@ static void test_poison(void) {
 	memset(st, NG_ST_PENDING, sizeof(st));
 	memset(up, 0, sizeof(up));
 	st[0] = NG_ST_DONE;
-	n = fail_poison_deps(g.map, 0, st, up, &undone);
+	n = fail_poison_deps(g.map, 0, st, up, NULL, &undone, &waiting);
 	is_int(n, 4, "a completed service that exits without restart skips its pending dependents");
 	is_int(st[0], NG_ST_DONE, "it stays done itself");
 
 	memset(st, NG_ST_DONE, sizeof(st));
 	memset(up, 1, sizeof(up));
-	n = fail_poison_deps(g.map, 0, st, up, &undone);
+	n = fail_poison_deps(g.map, 0, st, up, NULL, &undone, &waiting);
 	is_int(n, 0, "nothing is skipped when every dependent has started");
 	is_int(undone, 0, "and nothing is undone");
 
 	memset(st, NG_ST_PENDING, sizeof(st));
 	memset(up, 0, sizeof(up));
-	n = fail_poison_deps(g.map, 4, st, up, &undone);
+	n = fail_poison_deps(g.map, 4, st, up, NULL, &undone, &waiting);
 	is_int(n, 0, "a service without dependents skips nothing");
 
 	// a skipped service already counted is not counted again
@@ -302,8 +302,30 @@ static void test_poison(void) {
 	memset(up, 0, sizeof(up));
 	st[1] = NG_ST_FAILED;
 	st[5] = NG_ST_SKIPPED;
-	n = fail_poison(g.map, 0, st, up, &undone);
+	n = fail_poison(g.map, 0, st, up, NULL, &undone, &waiting);
 	is_int(n, 3, "a dependent skipped before is not counted again");
+
+	// a start between attempts has no process, it is skipped with the pending ones
+	{
+		struct run rs[6] = {};
+
+		memset(st, NG_ST_PENDING, sizeof(st));
+		memset(up, 0, sizeof(up));
+		st[5] = NG_ST_RUNNING;
+		rs[5].restart_at = 1;
+		n = fail_poison(g.map, 0, st, up, rs, &undone, &waiting);
+		is_int(n, 4, "a start waiting to retry is skipped with the pending dependents");
+		is_int(st[5], NG_ST_SKIPPED, "and marked skipped");
+		is_int(waiting, 1, "and counted as waiting");
+
+		memset(st, NG_ST_PENDING, sizeof(st));
+		st[5] = NG_ST_RUNNING;
+		rs[5].pid = 7;
+		n = fail_poison(g.map, 0, st, up, rs, &undone, &waiting);
+		is_int(st[5], NG_ST_RUNNING, "one with a process of its own is not");
+		is_int(waiting, 0, "and not counted");
+	}
+
 	free(g.map);
 }
 

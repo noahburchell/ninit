@@ -17,6 +17,9 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+// the longest status line, a name of NG_MAX_NAME bytes with the widest state, want and pid
+#define CTL_STATUS_LINE (NCTL_TAG_LEN + NG_MAX_NAME + sizeof(" starting stopped pid 2147483647\n"))
+
 int ctl_lfd = -1;
 uint32_t n_ops;
 struct ctl ctl_conn[CTL_MAX];
@@ -122,7 +125,7 @@ static void ctl_drop(struct ctl* c) {
 }
 
 static void ctl_fill(struct ctl* c) {
-	while(c->listing && c->out_len < CTL_OUT - 256) {
+	while(c->listing && c->out_len + CTL_STATUS_LINE <= CTL_OUT) {
 		uint32_t i = c->list_at;
 
 		if(c->listing == 2) {

@@ -47,6 +47,7 @@ ninit_headers = \
 	src/nctl.h \
 	src/ngraph.h \
 	src/ninit.h \
+	src/run.h \
 	src/pidmap.h \
 	src/reap.h \
 	src/signals.h \

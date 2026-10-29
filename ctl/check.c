@@ -170,13 +170,21 @@ static void collect_one(struct checks* c) {
 static void start_one(struct checks* c, struct src* s, uint32_t i, const char* dir) {
 	static char path[] = NG_PATH;
 	static char* const envp[] = { path, NULL };
-	size_t len = strlen(s->script);
+	size_t len = strlen(s->script), nl = strlen(s->name);
+	char mname[250];
 	char* argv[16];
 	const char* prog;
 	int sfd, efd;
 	pid_t pid;
 
-	sfd = memfd_create(s->name, MFD_CLOEXEC);
+	// memfd_create takes 249 bytes of name, a service name has up to 255
+	if(nl >= sizeof(mname)) {
+		nl = sizeof(mname) - 1;
+	}
+
+	memcpy(mname, s->name, nl);
+	mname[nl] = '\0';
+	sfd = memfd_create(mname, MFD_CLOEXEC);
 	efd = memfd_create("stderr", MFD_CLOEXEC);
 	if(sfd < 0 || efd < 0) {
 		if(sfd >= 0) {

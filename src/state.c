@@ -1,5 +1,6 @@
 #include "state.h"
 #include "cgroup.h"
+#include "drain.h"
 #include "fail.h"
 #include "logging.h"
 #include "ngraph.h"
@@ -15,7 +16,11 @@ static uint32_t q_head, q_tail;
 static int draining;
 
 void signal_group(uint32_t i, int sig) {
-	cgroup_signal(i, sig);
+	// a process in both would get the signal twice, a daemon may take a second SIGTERM as a force quit
+	if(cgroup_signal(i, sig) > 0) {
+		return;
+	}
+
 	if(runs[i].pgid > 0) {
 		kill(-runs[i].pgid, sig);
 	}
@@ -237,8 +242,27 @@ void complete(uint32_t i) {
 	svc_release(i);
 }
 
-static void skipped_note(uint32_t i, uint32_t skipped, uint32_t undone) {
-	n_pending -= skipped;
+static void skipped_note(uint32_t i, uint32_t skipped, uint32_t undone, uint32_t waiting) {
+	uint32_t k;
+
+	// a skipped service has no retry to wait for
+	for(k = 0; k < n_live;) {
+		uint32_t d = live[k];
+
+		if(state[d] == NG_ST_SKIPPED && runs[d].restart_at) {
+			runs[d].restart_at = 0;
+			runs[d].stale_hold = 0;
+			maybe_free(d);
+		}
+
+		// freeing a service swaps another one into this slot
+		if(k < n_live && live[k] == d) {
+			k++;
+		}
+	}
+
+	n_pending -= skipped - waiting;
+	n_active -= waiting;
 	n_done -= undone;
 	if(skipped) {
 		log_warn("%s: %u dependent service%s will not start", ng_name(map, i),
@@ -247,7 +271,7 @@ static void skipped_note(uint32_t i, uint32_t skipped, uint32_t undone) {
 }
 
 void poison(uint32_t i) {
-	uint32_t skipped, undone;
+	uint32_t skipped, undone, waiting;
 
 	if(state[i] == NG_ST_RUNNING) {
 		n_active--;
@@ -256,18 +280,18 @@ void poison(uint32_t i) {
 	}
 
 	go_down(i);
-	skipped = fail_poison(map, i, state, up, &undone);
-	skipped_note(i, skipped, undone);
+	skipped = fail_poison(map, i, state, up, runs, &undone, &waiting);
+	skipped_note(i, skipped, undone, waiting);
 }
 
 // a service that had completed is gone for good
 void poison_deps(uint32_t i) {
-	uint32_t skipped, undone;
+	uint32_t skipped, undone, waiting;
 
 	if(ng_order_only(map, i)) {
 		return;
 	}
 
-	skipped = fail_poison_deps(map, i, state, up, &undone);
-	skipped_note(i, skipped, undone);
+	skipped = fail_poison_deps(map, i, state, up, runs, &undone, &waiting);
+	skipped_note(i, skipped, undone, waiting);
 }

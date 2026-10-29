@@ -363,7 +363,7 @@ each start runs ``/bin/bash -c SCRIPT NAME``, where SCRIPT is the file as stored
 
 on linux 5.7 and later the process is created inside its cgroup by clone3() with CLONE_INTO_CGROUP. on older kernels it is forked and joins the cgroup before exec. if it cannot join, it prints ``ninit: could not join its cgroup`` on its own output and is contained by its process group only. if /sys/fs/cgroup is not cgroup2, or ninit.services cannot be created in it, every service is contained by process group only and ninit logs this at boot
 
-a signal sent to a service reaches every process in its cgroup and its process group. once the main process is reaped, a service in a cgroup is signalled through the cgroup alone, since its process group can be empty by then and its number given to another process. SIGKILL is delivered through cgroup.kill. on kernels without cgroup.kill, before 5.14, SIGKILL is sent to each process in cgroup.procs as other signals are
+a signal sent to a service reaches every process in its cgroup. its process group is signalled only when the cgroup holds no process, so a daemon does not receive the same SIGTERM twice. once the main process is reaped, a service in a cgroup is signalled through the cgroup alone, since its process group can be empty by then and its number given to another process. SIGKILL is delivered through cgroup.kill and to the process group. on kernels without cgroup.kill, before 5.14, SIGKILL is sent to each process in cgroup.procs as other signals are
 
 a service is stopped when its main process has been reaped and its cgroup is empty. without cgroups it is stopped when its main process has been reaped
 

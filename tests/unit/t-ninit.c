@@ -359,6 +359,66 @@ static void test_sim_refused(void) {
 	is_str(st_of("t"), "down", "a target over a pending prerequisite is down");
 }
 
+// a start between attempts cannot go on once its prerequisite is gone for good
+static void test_sim_retry_prereq(void) {
+	static const struct gb_svc sv[] = {
+		{ .name = "a", .type = NG_TYPE_DAEMON, .onfail = GB_DEFAULT, .notify = 3, .script = "x" },
+		{ .name = "b", .type = NG_TYPE_DAEMON, .onfail = GB_DEFAULT, .notify = 3, .script = "x", .pol = { .start_tries = 3, .retry_ms = 500 } },
+	};
+	static const struct gb_edge e[] = { { 0, 1 } };
+	uint32_t a, b;
+
+	sim_load(sv, 2, e, 1);
+	a = svc_by("a");
+	b = svc_by("b");
+	sim_ready(a);
+	sim_exit_svc(b, 1 << 8);
+	is_str(st_of("b"), "starting", "b failed once and waits to retry");
+	logcap_begin();
+	sim_exit_svc(a, 1 << 8);
+	is_str(st_of("b"), "skipped", "b is skipped once a is gone for good");
+	has_str(logcap_text(), "WARN > a: 1 dependent service will not start\n", "and counted against a");
+	is_int(runs[b].restart_at, 0, "its retry is off");
+	sim_advance(3000);
+	ok(boot_ms >= 0, "the boot is done");
+	ok(inv_ok("retry prereq"), "the counters agree");
+}
+
+// the reply buffer never splits a status line, whatever the length of the name
+static void test_sim_status_long(void) {
+	enum {
+		N = 100
+	};
+	static char names[N][NG_MAX_NAME + 1];
+	static struct gb_svc sv[N];
+	const char* r;
+	int nl = 0, pids = 0;
+
+	for(uint32_t i = 0; i < N; i++) {
+		size_t len = 200 + i * 45 % 56;
+
+		memset(names[i], 'n', len);
+		names[i][0] = (char)('a' + i / 26);
+		names[i][1] = (char)('a' + i % 26);
+		names[i][len] = '\0';
+		sv[i] = (struct gb_svc){ .name = names[i], .type = NG_TYPE_ONESHOT, .onfail = GB_DEFAULT, .script = "x" };
+	}
+
+	sim_load(sv, N, NULL, 0);
+	r = sim_ctl("status");
+	for(const char* p = r; (p = strchr(p, '\n')) != NULL; p++) {
+		nl++;
+	}
+
+	for(const char* p = r; (p = strstr(p, " pid ")) != NULL; p++) {
+		pids++;
+	}
+
+	is_int(nl, N + 1, "every status line ends in a newline");
+	is_int(pids, N, "and none is cut short");
+	has_str(r, "+ 100 services, 0 up\n", "the count closes the reply");
+}
+
 int main(void) {
 	logcap_quiet();
 	test_put();
@@ -369,6 +429,8 @@ int main(void) {
 	test_sim_restart_backoff();
 	test_sim_ctl();
 	test_sim_refused();
+	test_sim_retry_prereq();
+	test_sim_status_long();
 	sim_reset();
 
 	return tap_done();

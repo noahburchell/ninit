@@ -1,6 +1,7 @@
 #include "fail.h"
 #include "logging.h"
 #include "ngraph.h"
+#include "run.h"
 #include "../help/time.h"
 
 #include <errno.h>
@@ -129,16 +130,21 @@ enum fail_act fail_service(const void* map, uint32_t i, int status, unsigned att
 	}
 }
 
-static int poison_take(const uint8_t* state, const uint8_t* up, const void* map, uint32_t d) {
+static int poison_take(const uint8_t* state, const uint8_t* up, const void* map, const struct run* rs, uint32_t d) {
 	if(state[d] == NG_ST_PENDING) {
 		return 1;
+	}
+
+	// a start between attempts has no process and cannot go on without the prerequisite
+	if(state[d] == NG_ST_RUNNING) {
+		return rs && rs[d].restart_at && rs[d].pid <= 0;
 	}
 
 	return ng_svcs(map)[d].type == NG_TYPE_TARGET && state[d] == NG_ST_DONE && !up[d];
 }
 
 static uint32_t poison_spread(const void* map, uint8_t* state, const uint8_t* up,
-			      uint32_t from, uint32_t* undone) {
+			      const struct run* rs, uint32_t from, uint32_t* undone, uint32_t* waiting) {
 	const uint32_t* roff = ng_rdep_off(map);
 	const uint32_t* ridx = ng_rdep_idx(map);
 	uint32_t n = ((const struct ng_hdr*)map)->n_svc;
@@ -152,7 +158,7 @@ static uint32_t poison_spread(const void* map, uint8_t* state, const uint8_t* up
 		for(k = roff[j]; k < roff[j + 1]; k++) {
 			uint32_t d = ridx[k];
 
-			if(!poison_take(state, up, map, d)) {
+			if(!poison_take(state, up, map, rs, d)) {
 				continue;
 			}
 
@@ -160,6 +166,7 @@ static uint32_t poison_spread(const void* map, uint8_t* state, const uint8_t* up
 				(*undone)++;
 			} else {
 				count++;
+				*waiting += state[d] == NG_ST_RUNNING;
 			}
 
 			state[d] = NG_ST_SKIPPED;
@@ -169,25 +176,28 @@ static uint32_t poison_spread(const void* map, uint8_t* state, const uint8_t* up
 	return count;
 }
 
+// waiting counts the skipped services that were between start attempts
 uint32_t fail_poison(const void* map, uint32_t i, uint8_t* state, const uint8_t* up,
-		     uint32_t* undone) {
+		     const struct run* rs, uint32_t* undone, uint32_t* waiting) {
 	*undone = 0;
+	*waiting = 0;
 	state[i] = NG_ST_FAILED;
 
-	return poison_spread(map, state, up, i, undone);
+	return poison_spread(map, state, up, rs, i, undone, waiting);
 }
 
 uint32_t fail_poison_deps(const void* map, uint32_t i, uint8_t* state, const uint8_t* up,
-			  uint32_t* undone) {
+			  const struct run* rs, uint32_t* undone, uint32_t* waiting) {
 	const uint32_t* roff = ng_rdep_off(map);
 	const uint32_t* ridx = ng_rdep_idx(map);
 	uint32_t k, count = 0;
 
 	*undone = 0;
+	*waiting = 0;
 	for(k = roff[i]; k < roff[i + 1]; k++) {
 		uint32_t d = ridx[k];
 
-		if(!poison_take(state, up, map, d)) {
+		if(!poison_take(state, up, map, rs, d)) {
 			continue;
 		}
 
@@ -195,6 +205,7 @@ uint32_t fail_poison_deps(const void* map, uint32_t i, uint8_t* state, const uin
 			(*undone)++;
 		} else {
 			count++;
+			*waiting += state[d] == NG_ST_RUNNING;
 		}
 
 		state[d] = NG_ST_SKIPPED;
@@ -204,7 +215,7 @@ uint32_t fail_poison_deps(const void* map, uint32_t i, uint8_t* state, const uin
 		return 0;
 	}
 
-	return count + poison_spread(map, state, up, i + 1, undone);
+	return count + poison_spread(map, state, up, rs, i + 1, undone, waiting);
 }
 
 #define EMERG_FAST_MS	 1000

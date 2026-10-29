@@ -246,10 +246,10 @@ static void stop_ordered(void) {
 					 ng_name(map, i), ng_stop_ms(map, i));
 				signal_group(i, SIGKILL);
 				st[i] = 3;
-				stop_at[i] = now + KILL_GRACE_MS;
 			}
 
-			if(st[i] && stop_at[i] < next) {
+			// a killed service has no deadline, the drain interval polls for it
+			if(st[i] == 1 && stop_at[i] < next) {
 				next = stop_at[i];
 			}
 		}

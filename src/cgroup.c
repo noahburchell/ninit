@@ -148,11 +148,12 @@ static int cg_kill(uint32_t i) {
 	return ok;
 }
 
+// the number of processes signalled one by one, cgroup.kill does not count, -1 without a cgroup
 int cgroup_signal(uint32_t i, int sig) {
 	char path[CG_PATH_MAX], buf[4096];
 	size_t held = 0;
 	ssize_t k;
-	int fd;
+	int fd, n = 0;
 
 	if(!cg_ok) {
 		return -1;
@@ -184,6 +185,7 @@ int cgroup_signal(uint32_t i, int sig) {
 			pid = strtol(p, NULL, 10);
 			if(pid > 1) {
 				kill((pid_t)pid, sig);
+				n++;
 			}
 
 			p = nl + 1;
@@ -199,5 +201,5 @@ int cgroup_signal(uint32_t i, int sig) {
 
 	close(fd);
 
-	return 0;
+	return n;
 }

@@ -127,14 +127,14 @@ static void test_signal(void) {
 	rm("svc-0/cgroup.kill");
 	runs[0].cg_killed = 0;
 	n_killed = 0;
-	ok(cgroup_signal(0, SIGKILL) == 0, "without cgroup.kill SIGKILL still succeeds");
+	ok(cgroup_signal(0, SIGKILL) == 2, "without cgroup.kill SIGKILL counts what it reached");
 	ok(n_killed == 2 && killed[0] == 3000001 && killed[1] == 3000002
 		   && killed_sig[0] == SIGKILL && killed_sig[1] == SIGKILL,
 	   "and reaches every process listed in cgroup.procs, as before linux 5.14");
 	ok(!runs[0].cg_killed, "the cgroup is not marked killed");
 
 	n_killed = 0;
-	ok(cgroup_signal(0, SIGTERM) == 0 && n_killed == 2 && killed_sig[0] == SIGTERM,
+	ok(cgroup_signal(0, SIGTERM) == 2 && n_killed == 2 && killed_sig[0] == SIGTERM,
 	   "any other signal reaches each listed process");
 
 	n_killed = 0;

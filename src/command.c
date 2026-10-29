@@ -66,6 +66,8 @@ static void svc_op_start(uint32_t i) {
 		if(!shutting_down && r->pid <= 0 && !r->stale_pid) {
 			r->attempt = 0;
 			r->burst = 0;
+			// a pending service is started by its prerequisite, a timer would launch it as pending
+			r->restart_at = 0;
 			go_down(i);
 			svc_mark_pending(i);
 		}
