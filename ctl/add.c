@@ -64,10 +64,6 @@ static int relink(const char* path, const char* target, int enable) {
 		return 0;
 	}
 
-	if(!strcmp(fixed, target)) {
-		return 1;
-	}
-
 	for(unsigned t = 0;; t++) {
 		n = snprintf(tmp, sizeof(tmp), "%s.ninitctl.%d.%u.tmp", path,
 			     (int)getpid(), t);
