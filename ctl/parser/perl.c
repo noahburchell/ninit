@@ -65,19 +65,113 @@ static size_t pl_ident(const char* s, size_t i) {
 	}
 }
 
-static int pl_is(str w, const char* list) {
-	for(const char* p = list; *p;) {
-		size_t l = strlen(p);
+static const str pl_opwords[] = {
+	STR_INIT("and"),
+	STR_INIT("or"),
+	STR_INIT("not"),
+	STR_INIT("xor"),
+	STR_INIT("if"),
+	STR_INIT("unless"),
+	STR_INIT("while"),
+	STR_INIT("until"),
+	STR_INIT("lt"),
+	STR_INIT("gt"),
+	STR_INIT("le"),
+	STR_INIT("ge"),
+	STR_INIT("eq"),
+	STR_INIT("ne"),
+	STR_INIT("cmp"),
+	STR_INIT("isa"),
+};
 
-		if(str_eq(w, (str){ p, l })) {
+static const str pl_termwords[] = {
+	STR_INIT("return"),
+	STR_INIT("split"),
+	STR_INIT("grep"),
+	STR_INIT("map"),
+	STR_INIT("join"),
+	STR_INIT("push"),
+	STR_INIT("unshift"),
+	STR_INIT("print"),
+	STR_INIT("printf"),
+	STR_INIT("say"),
+	STR_INIT("die"),
+	STR_INIT("warn"),
+	STR_INIT("eval"),
+	STR_INIT("do"),
+	STR_INIT("defined"),
+	STR_INIT("ref"),
+	STR_INIT("scalar"),
+	STR_INIT("my"),
+	STR_INIT("our"),
+	STR_INIT("local"),
+	STR_INIT("state"),
+	STR_INIT("sort"),
+	STR_INIT("reverse"),
+	STR_INIT("keys"),
+	STR_INIT("values"),
+	STR_INIT("each"),
+	STR_INIT("delete"),
+	STR_INIT("exists"),
+	STR_INIT("chomp"),
+	STR_INIT("chop"),
+	STR_INIT("lc"),
+	STR_INIT("uc"),
+	STR_INIT("length"),
+	STR_INIT("sprintf"),
+	STR_INIT("open"),
+	STR_INIT("close"),
+	STR_INIT("unlink"),
+	STR_INIT("exit"),
+	STR_INIT("foreach"),
+	STR_INIT("for"),
+	STR_INIT("elsif"),
+	STR_INIT("when"),
+};
+
+static const str pl_blockwords[] = {
+	STR_INIT("else"),
+	STR_INIT("BEGIN"),
+	STR_INIT("END"),
+	STR_INIT("INIT"),
+	STR_INIT("CHECK"),
+	STR_INIT("UNITCHECK"),
+	STR_INIT("default"),
+};
+
+// print and the others take a filehandle before their list
+static const str pl_fhwords[] = {
+	STR_INIT("print"),
+	STR_INIT("printf"),
+	STR_INIT("say"),
+	STR_INIT("exec"),
+	STR_INIT("system"),
+	STR_INIT("sort"),
+};
+
+static const str pl_tokens[] = {
+	STR_INIT("__FILE__"),
+	STR_INIT("__LINE__"),
+	STR_INIT("__PACKAGE__"),
+	STR_INIT("__SUB__"),
+};
+
+static const str pl_endwords[] = { STR_INIT("__END__"), STR_INIT("__DATA__") };
+static const str pl_quote1[] = { STR_INIT("q"), STR_INIT("qq"), STR_INIT("qw"), STR_INIT("qx") };
+static const str pl_match[] = { STR_INIT("m"), STR_INIT("qr") };
+static const str pl_subst[] = { STR_INIT("s"), STR_INIT("tr"), STR_INIT("y") };
+
+static int pl_is(str w, const str* list, size_t n) {
+	for(size_t k = 0; k < n; k++) {
+		if(str_eq(w, list[k])) {
 			return 1;
 		}
-
-		p += l + 1;
 	}
 
 	return 0;
 }
+
+#define PL_IS(w, list) pl_is(w, list, sizeof(list) / sizeof(*(list)))
 
 // after one delimited part that opens at s[i], nesting brackets, SIZE_MAX when it does not end
 static size_t pl_part(const char* s, size_t i, size_t n) {
@@ -208,13 +302,18 @@ static size_t pl_hd_body(const char* s, size_t i, size_t n, const struct pl_hd* 
 	return SIZE_MAX;
 }
 
+// the four bytes =cut at s[i], the file may end sooner
+static int pl_cut(const char* s, size_t i, size_t n) {
+	return n - i >= 4 && !memcmp(s + i, "=cut", 4);
+}
+
 // after the pod that begins at i, its =cut line included, pod with no =cut runs to the end
 static size_t pl_pod(const char* s, size_t i, size_t n) {
 	while(i < n) {
 		const char* nl = memchr(s + i, '\n', n - i);
 
 		i = nl ? (size_t)(nl - s) + 1 : n;
-		if(i < n && !memcmp(s + i, "=cut", 4) && !pl_word((unsigned char)s[i + 4])) {
+		if(pl_cut(s, i, n) && !pl_word((unsigned char)s[i + 4])) {
 			nl = memchr(s + i, '\n', n - i);
 			return nl ? (size_t)(nl - s) : n;
 		}
@@ -264,13 +363,6 @@ static int pl_line_directive(const char* s) {
 
 // a construct whose meaning depends on more than the token before it stops the stripper
 static size_t pl_strip(char* s, size_t n, size_t code, const char* fname) {
-	static const char opwords[] = "and\0or\0not\0xor\0if\0unless\0while\0until\0lt\0gt\0le\0ge\0eq\0ne\0"
-				      "cmp\0isa\0";
-	static const char termwords[] = "return\0split\0grep\0map\0join\0push\0unshift\0print\0printf\0say\0"
-					"die\0warn\0eval\0do\0defined\0ref\0scalar\0my\0our\0local\0state\0"
-					"sort\0reverse\0keys\0values\0each\0delete\0exists\0chomp\0chop\0lc\0uc\0"
-					"length\0sprintf\0open\0close\0unlink\0exit\0foreach\0for\0elsif\0when\0";
-	static const char blockwords[] = "else\0BEGIN\0END\0INIT\0CHECK\0UNITCHECK\0default\0";
 	struct pl_hd hd[PL_HD];
 	uint8_t nest[PL_NEST];
 	unsigned nhd = 0, depth = 0, parens = 0;
@@ -345,7 +437,7 @@ static size_t pl_strip(char* s, size_t n, size_t code, const char* fname) {
 
 			// pod begins where perl expects a statement, its lines stay empty
 			if(c == '=' && i == ls && pl_alpha(s[i + 1])) {
-				if(ex == PL_STMT && !parens && memcmp(s + i, "=cut", 4)) {
+				if(ex == PL_STMT && !parens && !pl_cut(s, i, n)) {
 					e = pl_pod(s, i, n);
 					// perl reads #line in pod too
 					for(size_t k = i; k < e; k++) {
@@ -488,7 +580,7 @@ static size_t pl_strip(char* s, size_t n, size_t code, const char* fname) {
 
 				e = pl_ident(s, i);
 				w = (str){ s + i, e - i };
-				if((s[e] == '\'' && pl_word((unsigned char)s[e + 1])) || pl_is(w, "__END__\0__DATA__\0")) {
+				if((s[e] == '\'' && pl_word((unsigned char)s[e + 1])) || PL_IS(w, pl_endwords)) {
 					goto bail;
 				}
 
@@ -505,11 +597,11 @@ static size_t pl_strip(char* s, size_t n, size_t code, const char* fname) {
 					goto copy;
 				}
 
-				if(pl_is(w, "q\0qq\0qw\0qx\0")) {
+				if(PL_IS(w, pl_quote1)) {
 					parts = 1;
-				} else if(pl_is(w, "m\0qr\0")) {
+				} else if(PL_IS(w, pl_match)) {
 					parts = mods = 1;
-				} else if(pl_is(w, "s\0tr\0y\0")) {
+				} else if(PL_IS(w, pl_subst)) {
 					parts = 2;
 					mods = 1;
 				}
@@ -528,17 +620,17 @@ static size_t pl_strip(char* s, size_t n, size_t code, const char* fname) {
 					}
 
 					ex = PL_OPER;
-				} else if(ex == PL_STMT && pl_is(w, "format\0")) {
+				} else if(ex == PL_STMT && str_eq(w, STR("format"))) {
 					goto bail;
-				} else if(pl_is(w, "__FILE__\0__LINE__\0__PACKAGE__\0__SUB__\0")) {
+				} else if(PL_IS(w, pl_tokens)) {
 					ex = PL_OPER;
-				} else if(pl_is(w, opwords) || pl_is(w, termwords)
+				} else if(PL_IS(w, pl_opwords) || PL_IS(w, pl_termwords)
 					  || (str_eq(w, STR("x")) && ex == PL_OPER)) {
-					fhword = pl_is(w, "print\0printf\0say\0exec\0system\0sort\0");
+					fhword = PL_IS(w, pl_fhwords);
 					ex = PL_TERM;
 				} else {
 					// the block after else, BEGIN or the name of a sub ends a statement
-					block = pl_is(w, blockwords) || sb;
+					block = PL_IS(w, pl_blockwords) || sb;
 					sub = str_eq(w, STR("sub"));
 					ex = PL_WORD;
 				}

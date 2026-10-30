@@ -12,9 +12,8 @@ static int python_claims(str base) {
 #define PY_DEPTH 32
 
 struct py {
-	char*    s;
-	size_t   n;
-	unsigned depth;
+	const char* s;
+	size_t      n;
 };
 
 static int py_ident(unsigned char c) {
@@ -148,11 +147,12 @@ static size_t py_str(const struct py* p, size_t i, int fmt, unsigned d) {
 	return SIZE_MAX;
 }
 
+// LAST is the last byte of the file, its header may since have lost an unterminated line,
 // a lone carriage return ends a line for python and not for the stripper, which then stops
-static size_t py_strip(char* s, size_t n, size_t code, const char* fname) {
-	struct py p = { .s = s, .n = n };
+static size_t py_strip(char* s, size_t n, size_t code, char last, const char* fname) {
+	const struct py p = { .s = s, .n = n };
 	size_t i = code, j = code, e;
-	char last = n > code ? s[n - 1] : '\n';
+	unsigned depth = 0;
 	int cont = 0, empty = 1, pend = 0;
 
 	while(i < n) {
@@ -162,7 +162,7 @@ static size_t py_strip(char* s, size_t n, size_t code, const char* fname) {
 		for(e = i; e < n && (s[e] == ' ' || s[e] == '\t' || s[e] == '\f'); e++)
 			;
 		// indentation is syntax only where a logical line begins
-		if(!cont && !p.depth) {
+		if(!cont && !depth) {
 			empty = 1;
 			if(e < n && s[e] != '\n' && s[e] != '#' && !(s[e] == '\r' && s[e + 1] == '\n')) {
 				memmove(s + j, s + i, e - i);
@@ -246,9 +246,9 @@ static size_t py_strip(char* s, size_t n, size_t code, const char* fname) {
 					e = py_str(&p, e, fmt, 0);
 				}
 			} else if(c == '(' || c == '[' || c == '{') {
-				p.depth++;
-			} else if((c == ')' || c == ']' || c == '}') && p.depth) {
-				p.depth--;
+				depth++;
+			} else if((c == ')' || c == ']' || c == '}') && depth) {
+				depth--;
 			}
 
 			if(e == SIZE_MAX) {
@@ -280,6 +280,7 @@ bail:
 }
 
 static size_t python_store(struct src* s, char* body, size_t len, size_t code_off) {
+	char last = len ? body[len - 1] : '\n';
 	size_t n;
 
 	// the header would hide a line python sees after a lone carriage return
@@ -293,7 +294,7 @@ static size_t python_store(struct src* s, char* body, size_t len, size_t code_of
 
 	s->stripped = 1;
 
-	return py_strip(body, n, n - (len - code_off), s->name);
+	return py_strip(body, n, n - (len - code_off), last, s->name);
 }
 
 static const char* python_check_argv(const struct src* s, char** argv, size_t cap) {

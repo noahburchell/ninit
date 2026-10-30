@@ -41,7 +41,7 @@ static_assert(sizeof(NG_SHELL) <= EXEC_PATH_MAX + 1, "the exec failure message h
 
 static void child_exec(uint32_t i, int out_w, int ntf_w, const char* cg) __attribute__((noreturn));
 
-static size_t put_str(char* dst, size_t at, const char* s) {
+static size_t put_str(char* restrict dst, size_t at, const char* restrict s) {
 	while(*s) {
 		dst[at++] = *s++;
 	}

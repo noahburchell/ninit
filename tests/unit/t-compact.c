@@ -135,7 +135,7 @@ static size_t mutate(char* buf, size_t len, size_t cap) {
 	for(unsigned o = 0; o < ops; o++) {
 		size_t at = len ? tap_below((uint32_t)len + 1) : 0;
 
-		switch(tap_below(4)) {
+		switch(tap_below(5)) {
 			case 0: {
 				const char* t = tokens[tap_below(sizeof(tokens) / sizeof(*tokens))];
 				size_t tl = strlen(t);
@@ -167,6 +167,10 @@ static size_t mutate(char* buf, size_t len, size_t cap) {
 					buf[at] = (char)(' ' + tap_below(95));
 				}
 
+				break;
+			case 3:
+				// a construct cut off by the end of the file
+				len = at;
 				break;
 			default:
 				if(at < len) {
@@ -211,6 +215,7 @@ static void test_compact_fuzz(void) {
 
 	for(size_t it = 0; it < iters; it++) {
 		size_t k = tap_below((uint32_t)n_corpus), len = corpus_len[k], out, nl_in;
+		char* tight;
 
 		if(len >= cap / 2) {
 			continue;
@@ -220,13 +225,18 @@ static void test_compact_fuzz(void) {
 		len = mutate(buf, len, cap / 2);
 		memcpy(orig, buf, len + 1);
 		nl_in = count_nl(buf, len);
-		out = do_compact(buf, len);
-		if(out > len || count_nl(buf, out) > nl_in || memchr(buf, '\0', out)) {
+		// the script fills its buffer, so a sanitizer sees a read past the terminating nul
+		tight = malloc(len + 1);
+		memcpy(tight, buf, len + 1);
+		out = do_compact(tight, len);
+		if(out > len || count_nl(tight, out) > nl_in || memchr(tight, '\0', out)) {
 			if(bad++ < 3) {
 				tap_diag("iteration %zu: %zu bytes became %zu", it, len, out);
 				tap_diag_str("input: ", orig, len);
 			}
 		}
+
+		free(tight);
 	}
 
 	ok(!bad, "%zu mutated scripts never grow, gain lines or hold a nul once stripped", iters);

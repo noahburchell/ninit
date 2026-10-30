@@ -1,0 +1,15 @@
+cat <<"E\nF"
+EnF
+# a comment to the stripper, a body line to bash
+E\nF
+cat <<E\
+X
+$HOME is expanded, the tag goes on after the backslash   # kept
+EX
+cat <<"E\$F"
+E$F
+cat <<"E\\F"
+E\F
+cat <<"E\"F"
+E"F
+echo $LINENO

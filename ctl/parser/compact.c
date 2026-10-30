@@ -62,39 +62,40 @@ static size_t cz_ident(const char* s) {
 	return l;
 }
 
+#define CZ_W(w, rw) { w, sizeof(w) - 1, rw }
+
 // CZ_NAME means the next word is a name and reserved words may follow it
 static int cz_lead(const char* s, int rw) {
 	static const struct {
-		char w[9];
-		uint8_t rw;
+		char    w[9];
+		uint8_t l, rw;
 	} kw[] = {
-		{ "if", CZ_KW },
-		{ "then", CZ_KW },
-		{ "else", CZ_KW },
-		{ "elif", CZ_KW },
-		{ "fi", CZ_KW },
-		{ "do", CZ_KW },
-		{ "done", CZ_KW },
-		{ "while", CZ_KW },
-		{ "until", CZ_KW },
-		{ "!", CZ_KW },
-		{ "{", CZ_KW },
-		{ "}", CZ_KW },
-		{ "time", CZ_KW | CZ_TIME },
-		{ "coproc", CZ_KW | CZ_NAME },
-		{ "for", CZ_NAME },
-		{ "select", CZ_NAME },
-		{ "function", CZ_NAME },
+		CZ_W("if", CZ_KW),
+		CZ_W("then", CZ_KW),
+		CZ_W("else", CZ_KW),
+		CZ_W("elif", CZ_KW),
+		CZ_W("fi", CZ_KW),
+		CZ_W("do", CZ_KW),
+		CZ_W("done", CZ_KW),
+		CZ_W("while", CZ_KW),
+		CZ_W("until", CZ_KW),
+		CZ_W("!", CZ_KW),
+		CZ_W("{", CZ_KW),
+		CZ_W("}", CZ_KW),
+		CZ_W("time", CZ_KW | CZ_TIME),
+		CZ_W("coproc", CZ_KW | CZ_NAME),
+		CZ_W("for", CZ_NAME),
+		CZ_W("select", CZ_NAME),
+		CZ_W("function", CZ_NAME),
 	};
-	size_t k, l;
+	size_t k;
 
 	if(rw & CZ_TIME && s[0] == '-' && (s[1] == 'p' || s[1] == '-') && cz_delim(s[2])) {
 		return CZ_KW | CZ_TIME;
 	}
 
 	for(k = 0; k < sizeof(kw) / sizeof(*kw); k++) {
-		l = strlen(kw[k].w);
-		if(!strncmp(s, kw[k].w, l) && cz_delim(s[l])) {
+		if(!strncmp(s, kw[k].w, kw[k].l) && cz_delim(s[kw[k].l])) {
 			return kw[k].rw;
 		}
 	}
@@ -227,14 +228,32 @@ static size_t hd_tag(const char* s, size_t i, size_t n, struct cz_hd* h) {
 			return SIZE_MAX;
 		}
 
+		// a backslash before a newline joins the lines and quotes nothing
+		if(c == '\\' && s[i] == '\n') {
+			i++;
+			continue;
+		}
+
 		if(c == '\'' || c == '"' || c == '\\') {
 			h->quoted = 1;
 		}
 
 		if(c == '\'' || c == '"') {
 			while(i < n && s[i] != c) {
+				if(s[i] == '\n') {
+					return SIZE_MAX;
+				}
+
+				// in double quotes a backslash escapes only these, elsewhere it stays
 				if(c == '"' && s[i] == '\\' && i + 1 < n) {
-					i++;
+					if(s[i + 1] == '\n') {
+						i += 2;
+						continue;
+					}
+
+					if(strchr("\"\\$`", s[i + 1])) {
+						i++;
+					}
 				}
 
 				if(k == CZ_TAG) {

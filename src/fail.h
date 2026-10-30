@@ -30,11 +30,12 @@ void fail_describe(int status, char* buf, size_t cap);
 enum fail_act fail_service(const void* map, uint32_t i, int status, unsigned attempt,
 			   unsigned tries, str tail);
 
-uint32_t fail_poison(const void* map, uint32_t i, uint8_t* state, const uint8_t* up,
-		     const struct run* rs, uint32_t* undone, uint32_t* waiting);
+// state and up are byte arrays, which may alias anything, restrict says they do not
+uint32_t fail_poison(const void* map, uint32_t i, uint8_t* restrict state, const uint8_t* restrict up,
+		     const struct run* rs, uint32_t* restrict undone, uint32_t* restrict waiting);
 
-uint32_t fail_poison_deps(const void* map, uint32_t i, uint8_t* state, const uint8_t* up,
-			  const struct run* rs, uint32_t* undone, uint32_t* waiting);
+uint32_t fail_poison_deps(const void* map, uint32_t i, uint8_t* restrict state, const uint8_t* restrict up,
+			  const struct run* rs, uint32_t* restrict undone, uint32_t* restrict waiting);
 
 void ninit_cloexec_except(int keep);
 void console_front(int text);

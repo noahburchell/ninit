@@ -143,8 +143,9 @@ static int poison_take(const uint8_t* state, const uint8_t* up, const void* map,
 	return ng_svcs(map)[d].type == NG_TYPE_TARGET && state[d] == NG_ST_DONE && !up[d];
 }
 
-static uint32_t poison_spread(const void* map, uint8_t* state, const uint8_t* up,
-			      const struct run* rs, uint32_t from, uint32_t* undone, uint32_t* waiting) {
+static uint32_t poison_spread(const void* map, uint8_t* restrict state, const uint8_t* restrict up,
+			      const struct run* rs, uint32_t from, uint32_t* restrict undone,
+			      uint32_t* restrict waiting) {
 	const uint32_t* roff = ng_rdep_off(map);
 	const uint32_t* ridx = ng_rdep_idx(map);
 	uint32_t n = ((const struct ng_hdr*)map)->n_svc;
@@ -177,8 +178,8 @@ static uint32_t poison_spread(const void* map, uint8_t* state, const uint8_t* up
 }
 
 // waiting counts the skipped services that were between start attempts
-uint32_t fail_poison(const void* map, uint32_t i, uint8_t* state, const uint8_t* up,
-		     const struct run* rs, uint32_t* undone, uint32_t* waiting) {
+uint32_t fail_poison(const void* map, uint32_t i, uint8_t* restrict state, const uint8_t* restrict up,
+		     const struct run* rs, uint32_t* restrict undone, uint32_t* restrict waiting) {
 	*undone = 0;
 	*waiting = 0;
 	state[i] = NG_ST_FAILED;
@@ -186,8 +187,8 @@ uint32_t fail_poison(const void* map, uint32_t i, uint8_t* state, const uint8_t*
 	return poison_spread(map, state, up, rs, i, undone, waiting);
 }
 
-uint32_t fail_poison_deps(const void* map, uint32_t i, uint8_t* state, const uint8_t* up,
-			  const struct run* rs, uint32_t* undone, uint32_t* waiting) {
+uint32_t fail_poison_deps(const void* map, uint32_t i, uint8_t* restrict state, const uint8_t* restrict up,
+			  const struct run* rs, uint32_t* restrict undone, uint32_t* restrict waiting) {
 	const uint32_t* roff = ng_rdep_off(map);
 	const uint32_t* ridx = ng_rdep_idx(map);
 	uint32_t k, count = 0;

@@ -283,7 +283,7 @@ static size_t mutate(const struct lang_case* c, char* buf, size_t len, size_t ca
 	for(unsigned o = 0; o < ops; o++) {
 		size_t at = len ? tap_below((uint32_t)len + 1) : 0;
 
-		switch(tap_below(4)) {
+		switch(tap_below(5)) {
 			case 0: {
 				const char* t = c->tokens[tap_below((uint32_t)c->n_tokens)];
 				size_t tl = strlen(t);
@@ -315,6 +315,10 @@ static size_t mutate(const struct lang_case* c, char* buf, size_t len, size_t ca
 					buf[at] = (char)(' ' + tap_below(95));
 				}
 
+				break;
+			case 3:
+				// a construct cut off by the end of the file
+				len = at;
 				break;
 			default:
 				if(at < len) {
@@ -401,10 +405,11 @@ static void test_structure(const struct lang_case* c) {
 	size_t cap = 1 << 16, bad = 0, iters = 100000;
 	char* buf = malloc(cap);
 	char* orig = malloc(cap);
-	char* again = malloc(cap);
 
 	for(size_t it = 0; it < iters; it++) {
 		size_t k = tap_below((uint32_t)n_corpus), len = corpus_len[k], out, out2, nl_in, code;
+		char* tight;
+		char* again;
 
 		if(len >= cap / 2) {
 			continue;
@@ -414,28 +419,34 @@ static void test_structure(const struct lang_case* c) {
 		len = mutate(c, buf, len, cap / 2);
 		memcpy(orig, buf, len + 1);
 		nl_in = count_lines(c, buf, len);
-		out = store(c, buf, len, &code);
+		// the script fills its buffer, so a sanitizer sees a read past the terminating nul
+		tight = malloc(len + 1);
+		memcpy(tight, buf, len + 1);
+		out = store(c, tight, len, &code);
 		// a script stored as written keeps its header where it was
-		if(out == len && !memcmp(buf, orig, len)) {
+		if(out == len && !memcmp(tight, orig, len)) {
 			code = header_end(orig, len);
 		}
 
-		memcpy(again, buf, out + 1);
+		again = malloc(out + 1);
+		memcpy(again, tight, out + 1);
 		out2 = restore(c, again, out, code);
-		if(out > len || count_lines(c, buf, out) != nl_in || memchr(buf, '\0', out) || buf[out]
-		   || out2 != out || memcmp(again, buf, out)) {
+		if(out > len || count_lines(c, tight, out) != nl_in || memchr(tight, '\0', out) || tight[out]
+		   || out2 != out || memcmp(again, tight, out)) {
 			if(bad++ < 3) {
 				tap_diag("iteration %zu: %zu bytes became %zu, then %zu", it, len, out, out2);
 				tap_diag_str("input: ", orig, len);
 			}
 		}
+
+		free(tight);
+		free(again);
 	}
 
 	ok(!bad, "%s: %zu mutated scripts never grow, keep every line and strip to the same text twice",
 	   c->name, iters);
 	free(buf);
 	free(orig);
-	free(again);
 }
 
 // runs the canonical form of PATH, returns its output and exit status in one allocation

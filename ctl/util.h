@@ -18,13 +18,14 @@ struct stat;
 
 void die(const char* fmt, ...) __attribute__((format(printf, 1, 2), noreturn));
 void usage_die(const char* fmt, ...) __attribute__((format(printf, 1, 2), noreturn));
-void* xmalloc(size_t n);
-void* xrealloc(void* p, size_t n);
+// a fresh block aliases nothing, so a store through it leaves every other load alone
+void* xmalloc(size_t n) __attribute__((malloc, returns_nonnull, alloc_size(1)));
+void* xrealloc(void* p, size_t n) __attribute__((returns_nonnull, alloc_size(2)));
 void strv_push(struct strv* s, const char* v);
 void set_root(const char* dir);
 int sys_open(const char* path, int flags);
 int sys_stat(const char* path, struct stat* st);
 int sys_exec_ok(const char* path, const struct stat* st);
 char* sys_realpath(const char* dir);
-char* slurp(const char* path, size_t* len);
-char* xstrndup(const char* s, size_t n);
+char* slurp(const char* path, size_t* len) __attribute__((malloc, returns_nonnull));
+char* xstrndup(const char* s, size_t n) __attribute__((malloc, returns_nonnull));
