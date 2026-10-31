@@ -55,7 +55,7 @@ graph, depgraph  the compiled form of the service directory, /etc/ninit.d/depgra
 - /bin/sh for the emergency shell
 - python, lua or perl only for a service file whose #! line names it, see `3.12`_
 - cgroup v2 for service containment. forking directly into a cgroup uses CLONE_INTO_CGROUP (linux 5.7). SIGKILL is delivered through cgroup.kill (linux 5.14). without cgroup v2 services are contained by process group only
-- optional: hwclock at shutdown, sulogin for ``--with-sulogin``, dbus-send and elogind for ninit-shutdown run without root
+- optional: hwclock at shutdown, sulogin for ``--with-sulogin``, setcap for ``--with-shutdown-group``, dbus-send and elogind for ninit-shutdown run without root or that group
 
 1.4 scope
 ---------
@@ -130,20 +130,21 @@ every build is hardened with ``_FORTIFY_SOURCE=2``, ``-fstack-protector-strong``
 2.3 configure options
 ---------------------
 
-==========================  ========================================
-option                      effect
-==========================  ========================================
-``--enable-hardened``       ``_FORTIFY_SOURCE=3``, ``-fcf-protection=full`` on x86 or ``-mbranch-protection=standard`` on arm64, ``-ftrivial-auto-var-init=zero``, ``-fstrict-flex-arrays=3``, ``-fno-delete-null-pointer-checks`` and ``-fno-strict-overflow``
-``--enable-quiet``          only WARN and FAIL lines are printed on the console. ninitctl log is unaffected
-``--with-sulogin``          run sulogin in front of the emergency shell, see `8`_
-``--with-busybox[=PATH]``   try PATH before /bin/sh for the emergency shell. PATH defaults to /bin/busybox
-``--with-shell=PATH``       interpreter for service scripts. default /bin/bash
-``--with-shell-name=NAME``  argv[0] for that interpreter. default the basename of PATH
-``--with-service-dir=DIR``  service directory. default /etc/ninit.d. the graph is DIR/depgraph
-``--disable-man``           do not build or install the manual pages
-``--enable-werror``         warnings are errors
-``--enable-debug``          ``-O0 -g3`` with ASan and UBSan, without link time optimisation or ``_FORTIFY_SOURCE``. not for use as pid 1
-==========================  ========================================
+===============================  ========================================
+option                           effect
+===============================  ========================================
+``--enable-hardened``            ``_FORTIFY_SOURCE=3``, ``-fcf-protection=full`` on x86 or ``-mbranch-protection=standard`` on arm64, ``-ftrivial-auto-var-init=zero``, ``-fstrict-flex-arrays=3``, ``-fno-delete-null-pointer-checks`` and ``-fno-strict-overflow``
+``--enable-quiet``               only WARN and FAIL lines are printed on the console. ninitctl log is unaffected
+``--with-sulogin``               run sulogin in front of the emergency shell, see `8`_
+``--with-busybox[=PATH]``        try PATH before /bin/sh for the emergency shell. PATH defaults to /bin/busybox
+``--with-shutdown-group=GROUP``  install ninit-shutdown as root:GROUP, mode 0710, with the cap_kill file capability, or setuid root where setcap is not found, see `7.3`_
+``--with-shell=PATH``            interpreter for service scripts. default /bin/bash
+``--with-shell-name=NAME``       argv[0] for that interpreter. default the basename of PATH
+``--with-service-dir=DIR``       service directory. default /etc/ninit.d. the graph is DIR/depgraph
+``--disable-man``                do not build or install the manual pages
+``--enable-werror``              warnings are errors
+``--enable-debug``               ``-O0 -g3`` with ASan and UBSan, without link time optimisation or ``_FORTIFY_SOURCE``. not for use as pid 1
+===============================  ========================================
 
 there is no fallback to another shell. ``--with-shell`` also selects the interpreter ninitctl init uses for its syntax check. dash, for example, is ``--with-shell=/bin/dash --with-shell-name=dash``
 
@@ -887,10 +888,10 @@ TIME is ``now``, ``+MINUTES``, or ``HH:MM`` in local time, meaning its next occu
 ninit-shutdown performs, in order:
 
 1. if /proc/1/comm is readable and is not ninit, execute NAME.old from its own directory with the same arguments
-2. with ``-f``, sync and call reboot(2)
-3. without root and with TIME in the future, call org.freedesktop.login1.Manager.CanPowerOff, CanReboot or CanHalt through ``dbus-send --system``. unless the answer is yes or challenge, exit with ``permission denied`` before waiting
+2. with ``-f``, sync and call reboot(2). the real user must be root
+3. if pid 1 cannot be signalled and TIME is in the future, call org.freedesktop.login1.Manager.CanPowerOff, CanReboot or CanHalt through ``dbus-send --system``. unless the answer is yes or challenge, exit with ``permission denied`` before waiting
 4. if TIME is in the future, print a notice on /dev/console and wait in the foreground. ctrl-c cancels
-5. as root, send the signal from `7.1`_ to pid 1
+5. if pid 1 can be signalled, send the signal from `7.1`_ to pid 1
 6. otherwise, call org.freedesktop.login1.Manager.PowerOff, Reboot or Halt through ``dbus-send --system``, leaving the decision to elogind and polkit. if that fails, exit with ``permission denied``
 
 .. code:: sh
@@ -899,6 +900,16 @@ ninit-shutdown performs, in order:
    make tools-uninstall   # put the originals back
 
 tools-install operates in sbindir. each existing shutdown, poweroff, halt, reboot and telinit is renamed to NAME.old. an existing symlink is saved as a new symlink to the same target, or to TARGET.old if the target is one of these names. an existing NAME.old is never replaced. /sbin/init is not touched. tools-uninstall renames every NAME.old back, removes each link to ninit-shutdown that has no NAME.old, and removes ninit-shutdown
+
+whether pid 1 can be signalled is decided by kill(2) with signal 0. root, a setuid root binary and a binary carrying the CAP_KILL file capability pass alike. with ``--with-shutdown-group=GROUP``, make install sets ninit-shutdown to root:GROUP, mode 0710, with ``cap_kill=ep`` through setcap, or mode 4710 where configure found no setcap. members of GROUP power off, halt and reboot without root, other users cannot execute it. the links share the inode, so every name is covered, a copy of the binary carries neither the mode nor the capability. ``-f`` requires a real user id of 0 in every case, and the notice on /dev/console needs write permission on it, which CAP_KILL does not give. the same by hand:
+
+.. code:: sh
+
+   chgrp GROUP /sbin/ninit-shutdown
+   chmod 0710 /sbin/ninit-shutdown
+   setcap cap_kill=ep /sbin/ninit-shutdown
+
+linux has no common name for such a group. bsd uses operator, arch and slackware ship power
 
 .. _8:
 

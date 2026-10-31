@@ -106,6 +106,17 @@ static void fallback(const char* name, char** argv) {
 
 	snprintf(arg0, sizeof(arg0), "%s", name);
 	argv[0] = arg0;
+	// a setuid install must not lend its privilege to the other init's tool
+	if(setgid(getgid()) < 0) {
+		fprintf(stderr, "%s: setgid: %s\n", name, strerror(errno));
+		exit(1);
+	}
+
+	if(setuid(getuid()) < 0) {
+		fprintf(stderr, "%s: setuid: %s\n", name, strerror(errno));
+		exit(1);
+	}
+
 	execv(path, argv);
 
 	fprintf(stderr, "%s: pid 1 is not ninit and %s: %s\n",
@@ -298,7 +309,7 @@ int main(int argc, char** argv) {
 	const char* me = argc > 0 && argv[0] ? path_base(argv[0]) : "ninit-shutdown";
 	enum act act;
 	long when = 0;
-	int is_shutdown, is_telinit, force = 0, have_when = 0, k;
+	int is_shutdown, is_telinit, force = 0, have_when = 0, privileged, k;
 
 	// another init gets its own tool with every argument, whatever ninit would make of them
 	if(pid1_is_ninit() == 0) {
@@ -384,13 +395,20 @@ int main(int argc, char** argv) {
 	}
 
 	if(force) {
+		if(getuid() != 0) {
+			fprintf(stderr, "%s: -f requires root\n", me);
+			return 1;
+		}
+
 		sync();
 		reboot((int)act_rb[act]);
 		fprintf(stderr, "%s: reboot: %s\n", me, strerror(errno));
 		return 1;
 	}
 
-	if(when > 0 && geteuid() != 0 && !logind_can(act)) {
+	// signal 0 checks the permission alone, root, setuid root and cap_kill pass alike
+	privileged = kill(1, 0) == 0;
+	if(when > 0 && !privileged && !logind_can(act)) {
 		fprintf(stderr, "%s: permission denied, must be run as root\n", me);
 		return 1;
 	}
@@ -407,7 +425,7 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	if(geteuid() != 0) {
+	if(!privileged) {
 		if(try_logind(act) == 0) {
 			return 0;
 		}

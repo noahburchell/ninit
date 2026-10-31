@@ -1,4 +1,4 @@
-.TH NINIT-SHUTDOWN 8 2026-09-24 "ninit @PACKAGE_VERSION@"
+.TH NINIT-SHUTDOWN 8 2026-10-31 "ninit @PACKAGE_VERSION@"
 .SH NAME
 ninit-shutdown \- reboot, halt or power off a system running ninit
 .SH SYNOPSIS
@@ -49,9 +49,10 @@ with
 call
 .BR sync (2)
 and
-.BR reboot (2)
+.BR reboot (2).
+the real user must be root
 .IP 3. 4
-if the effective user is not root and
+if process 1 cannot be signalled, see NOTES, and
 .I time
 is in the future, call the
 .BR CanReboot ,
@@ -75,7 +76,7 @@ and wait in the foreground.
 .B SIGINT
 cancels
 .IP 5. 4
-if the effective user is root, send
+if process 1 can be signalled, send
 .B SIGTERM
 (reboot),
 .B SIGUSR1
@@ -108,7 +109,8 @@ halt
 sync and call
 .BR reboot (2)
 directly.
-services are not stopped and filesystems are not remounted
+services are not stopped and filesystems are not remounted.
+requires a real user id of 0
 .TP
 .B \-c
 refused.
@@ -181,6 +183,43 @@ an existing
 is never replaced.
 .B make tools\-uninstall
 restores the originals and removes the links that replaced nothing
+.PP
+whether process 1 can be signalled is decided by
+.BR kill (2)
+with signal 0.
+root, a setuid root binary and a binary carrying the
+.B CAP_KILL
+file capability pass alike.
+with
+.B configure \-\-with\-shutdown\-group=\c
+.IR group ,
+.B make install
+sets the binary to
+.BR root : \c
+.I group
+with mode 0710 and
+.B cap_kill=ep
+through
+.BR setcap (8),
+or mode 4710 where setcap is not found.
+members of
+.I group
+may then power off, halt and reboot, other users cannot execute it.
+the same by hand:
+.PP
+.RS 4
+.nf
+chgrp GROUP @sbindir@/ninit\-shutdown
+chmod 0710 @sbindir@/ninit\-shutdown
+setcap cap_kill=ep @sbindir@/ninit\-shutdown
+.fi
+.RE
+.PP
+the links share the inode, so the mode and the capability cover every name.
+a copy of the binary carries neither.
+the notice on
+.I /dev/console
+needs write permission on it, which the capability does not give
 .SH SEE ALSO
 .BR ninit (8),
 .BR ninitctl (8),

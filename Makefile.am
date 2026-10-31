@@ -214,6 +214,7 @@ qemu_tests = \
 	tests/qemu/ctl.test \
 	tests/qemu/output.test \
 	tests/qemu/shutdown.test \
+	tests/qemu/privilege.test \
 	tests/qemu/signals.test \
 	tests/qemu/emergency.test \
 	tests/qemu/select.test \
@@ -289,9 +290,21 @@ install-data-hook:
 	@echo "install service files in $(DESTDIR)$(ninit_svcdir), then run 'ninitctl init'"
 	@echo "example service files are in $(DESTDIR)$(exampledir)"
 
+# chgrp first, a chown(2) clears the setuid bit and the file capability
+if SHUTDOWN_GROUP
+install-exec-hook:
+	@f="$(DESTDIR)$(sbindir)/ninit-shutdown$(EXEEXT)"; \
+	chgrp '$(ninit_shutdown_group)' "$$f" || exit 1; \
+	if test -n '$(SETCAP)'; then \
+		chmod 0710 "$$f" && '$(SETCAP)' cap_kill=ep "$$f" && echo "$$f: group $(ninit_shutdown_group), mode 0710, cap_kill=ep"; \
+	else \
+		chmod 4710 "$$f" && echo "$$f: group $(ninit_shutdown_group), mode 4710"; \
+	fi
+endif
+
 TOOL_NAMES = shutdown poweroff halt reboot telinit
 
-tools-install: install-sbinPROGRAMS
+tools-install: install-exec-am
 	@d="$(DESTDIR)$(sbindir)"; \
 	for n in $(TOOL_NAMES); do \
 		t=$$d/$$n; \

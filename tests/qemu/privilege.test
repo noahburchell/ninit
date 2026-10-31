@@ -1,0 +1,80 @@
+# a group that shuts down without root, README 7.3, one boot per mechanism
+
+. "$top_srcdir/tests/lib.sh"
+. "$top_srcdir/tests/qemu/lib.sh"
+q_require
+"$Q_BUSYBOX" --list | grep -qx su || t_skip_all "busybox has no su"
+
+# a user op whose supplementary group is power, and a wrapper that runs its arguments as USER
+accounts() {
+	q_file /etc/passwd <<'EOF'
+root:x:0:0:root:/root:/bin/sh
+nobody:x:65534:65534:nobody:/:/bin/false
+op:x:1000:100:op:/:/bin/sh
+EOF
+	q_file /etc/group <<'EOF'
+root:x:0:
+tty:x:5:
+power:x:99:op
+users:x:100:
+nobody:x:65534:
+EOF
+	q_file /t/bin/as 755 <<'EOF'
+#!/bin/sh
+u=$1
+shift
+exec su -s /bin/sh "$u" -c "$*"
+EOF
+	q_svc d <<'EOF'
+#%type: daemon
+exec sleep 1000
+EOF
+}
+
+q_new setuid
+accounts
+q_check <<'EOF'
+st_is d up
+chgrp power /sbin/ninit-shutdown && chmod 4710 /sbin/ninit-shutdown
+is "$(stat -c %U:%G:%a /sbin/ninit-shutdown)" root:power:4710 "the binary is root:power 4710"
+out=$(/t/bin/as nobody /sbin/poweroff 2>&1)
+like "$out" "Permission denied" "a user outside the group cannot execute it"
+out=$(/t/bin/as op /sbin/reboot -f 2>&1)
+is "$?:$out" "1:reboot: -f requires root" "-f is refused for a member of the group"
+st_is d up 1000 "and the system is still up"
+T_END='/t/bin/as op /sbin/poweroff'
+EOF
+q_boot
+q_import
+q_poweroff_ok
+q_has "NOTE > shutdown: stopping" "a member powers off through setuid root"
+
+setcap=$(command -v setcap 2>/dev/null || ls /usr/sbin/setcap /sbin/setcap 2>/dev/null | head -n1)
+if [ -z "$setcap" ]; then
+	t_skip "the cap_kill scenario, setcap is not installed"
+else
+	q_new cap_kill
+	accounts
+	q_copy_elf "$Q/root" "$setcap" /t/bin/setcap || t_bail "cannot copy setcap"
+	q_check <<'EOF'
+st_is d up
+# the rootfs may lack xattrs and /run is nosuid, a tmpfs of its own carries the capability
+mkdir -p /t/caps && mount -t tmpfs tmpfs /t/caps
+cp /sbin/ninit-shutdown /t/caps/ninit-shutdown
+chgrp power /t/caps/ninit-shutdown && chmod 0710 /t/caps/ninit-shutdown
+check "setcap sets cap_kill=ep" /t/bin/setcap cap_kill=ep /t/caps/ninit-shutdown
+out=$(/t/bin/as nobody /t/caps/ninit-shutdown now 2>&1)
+like "$out" "Permission denied" "a user outside the group cannot execute it"
+out=$(/t/bin/as op /t/caps/ninit-shutdown -f now 2>&1)
+is "$?:$out" "1:ninit-shutdown: -f requires root" "-f is refused for a member of the group"
+st_is d up 1000 "and the system is still up"
+T_END='/t/bin/as op /t/caps/ninit-shutdown -r now'
+EOF
+	q_boot
+	q_import
+	q_exit 0 "after reboot"
+	q_has "NOTE > reboot: now" "a member reboots through cap_kill"
+	q_has "reboot: Restarting system" "the kernel restarts"
+fi
+
+t_done

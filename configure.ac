@@ -287,6 +287,24 @@ AC_DEFINE_UNQUOTED([NG_DEFAULT_FILE], ["$with_service_dir/depgraph"], [Compiled 
 ninit_svcdir=$with_service_dir
 AC_SUBST([ninit_svcdir])
 
+AC_ARG_WITH([shutdown-group],
+  [AS_HELP_STRING([--with-shutdown-group=GROUP],
+    [install ninit-shutdown as root:GROUP mode 0710 with cap_kill, setuid root without setcap])],
+  [], [with_shutdown_group=no])
+AS_CASE([$with_shutdown_group],
+  [no], [],
+  [yes|""], [AC_MSG_ERROR([--with-shutdown-group requires a group name])])
+AM_CONDITIONAL([SHUTDOWN_GROUP], [test "x$with_shutdown_group" != xno])
+ninit_shutdown_group=$with_shutdown_group
+AC_SUBST([ninit_shutdown_group])
+ninit_shutdown_priv=none
+AS_IF([test "x$with_shutdown_group" != xno], [
+  AC_PATH_PROG([SETCAP], [setcap], [], [$PATH$PATH_SEPARATOR/usr/sbin$PATH_SEPARATOR/sbin])
+  AS_IF([test -n "$SETCAP"],
+	[ninit_shutdown_priv="$with_shutdown_group (cap_kill)"],
+	[ninit_shutdown_priv="$with_shutdown_group (setuid, setcap not found)"])
+])
+
 AC_ARG_ENABLE([man],
   [AS_HELP_STRING([--disable-man], [do not install the manual pages])],
   [], [enable_man=yes])
@@ -344,6 +362,7 @@ AC_MSG_NOTICE([
     quiet boot ...... $enable_quiet
     sulogin ......... $with_sulogin
     busybox shell ... $with_busybox
+    shutdown group .. $ninit_shutdown_priv
     man pages ....... $enable_man
 
     CFLAGS ..........$NINIT_OPT_CFLAGS $CFLAGS$NINIT_CPPFLAGS$NINIT_CFLAGS

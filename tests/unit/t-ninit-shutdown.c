@@ -18,6 +18,10 @@
 static struct {
 	int kills, kill_sig, kill_errno;
 	pid_t kill_pid;
+	int probes, probe_errno;
+	uid_t uid, set_uid;
+	gid_t gid, set_gid;
+	int setuids, setgids, setuid_errno;
 	int reboots, reboot_cmd, syncs;
 	const char* comm;
 	const char* self;
@@ -31,7 +35,6 @@ static struct {
 	int lp_argc;
 	unsigned long long slept;
 	unsigned sleep_calls, sleep_short;
-	uid_t euid;
 	time_t now;
 	const char* can;
 } sh;
@@ -40,6 +43,16 @@ static jmp_buf exit_jb;
 static char con_path[] = "/tmp/ninit-t-shutdown-console.XXXXXX";
 
 static int shim_kill(pid_t pid, int sig) {
+	if(sig == 0) {
+		sh.probes++;
+		if(sh.probe_errno) {
+			errno = sh.probe_errno;
+			return -1;
+		}
+
+		return 0;
+	}
+
 	sh.kills++;
 	sh.kill_pid = pid;
 	sh.kill_sig = sig;
@@ -200,8 +213,30 @@ static int shim_pipe2(int fd[2], int flags) {
 	return 0;
 }
 
-static uid_t shim_geteuid(void) {
-	return sh.euid;
+static uid_t shim_getuid(void) {
+	return sh.uid;
+}
+
+static gid_t shim_getgid(void) {
+	return sh.gid;
+}
+
+static int shim_setuid(uid_t uid) {
+	sh.setuids++;
+	sh.set_uid = uid;
+	if(sh.setuid_errno) {
+		errno = sh.setuid_errno;
+		return -1;
+	}
+
+	return 0;
+}
+
+static int shim_setgid(gid_t gid) {
+	sh.setgids++;
+	sh.set_gid = gid;
+
+	return 0;
 }
 
 static time_t shim_time(time_t* t) {
@@ -225,7 +260,10 @@ static time_t shim_time(time_t* t) {
 #define exit	 shim_exit
 #define _exit	 shim__exit
 #define sleep	 shim_sleep
-#define geteuid	 shim_geteuid
+#define getuid	 shim_getuid
+#define getgid	 shim_getgid
+#define setuid	 shim_setuid
+#define setgid	 shim_setgid
 #define time	 shim_time
 #define pipe2	 shim_pipe2
 int shutdown_main(int argc, char** argv);
@@ -243,7 +281,10 @@ int shutdown_main(int argc, char** argv);
 #undef exit
 #undef _exit
 #undef sleep
-#undef geteuid
+#undef getuid
+#undef getgid
+#undef setuid
+#undef setgid
 #undef time
 #undef pipe2
 
@@ -569,6 +610,13 @@ static void test_force(void) {
 	sh.slept = 0;
 	run("shutdown", "-f", "+5", NULL);
 	is_int(sh.sleep_calls, 0, "-f does not wait for TIME");
+
+	reset();
+	sh.uid = 1000;
+	rc = run("reboot", "-f", NULL);
+	ok(rc == 1 && !sh.syncs && !sh.reboots && !sh.kills && !sh.probes,
+	   "-f without a real uid of 0 is refused before sync or reboot(2)");
+	has_str(err, "reboot: -f requires root\n", "and says so");
 }
 
 static void test_delegate(void) {
@@ -621,6 +669,22 @@ static void test_delegate(void) {
 	sh.comm = "ninit-real\n";
 	run("reboot", NULL);
 	is_int(sh.execs, 1, "a comm that only starts with ninit is another init");
+
+	reset();
+	sh.comm = "systemd\n";
+	sh.uid = 1000;
+	sh.gid = 100;
+	run("reboot", NULL);
+	ok(sh.setgids == 1 && sh.set_gid == 100 && sh.setuids == 1 && sh.set_uid == 1000 && sh.execs == 1,
+	   "delegation returns to the real ids before the exec");
+
+	reset();
+	sh.comm = "systemd\n";
+	sh.uid = 1000;
+	sh.setuid_errno = EAGAIN;
+	rc = run("reboot", NULL);
+	ok(rc == 1001 && !sh.execs, "a failed setuid exits 1 without the exec");
+	has_str(err, "reboot: setuid: ", "and names the call");
 }
 
 static void test_user(void) {
@@ -637,7 +701,7 @@ static void test_user(void) {
 
 	for(size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
 		reset();
-		sh.euid = 1000;
+		sh.probe_errno = EPERM;
 		sh.fork_ret = 0;
 		rc = run(v[k].argv0, NULL);
 		is_int(rc, 2127, "the dbus-send child exits 127 when it cannot exec");
@@ -651,14 +715,14 @@ static void test_user(void) {
 	}
 
 	reset();
-	sh.euid = 1000;
+	sh.probe_errno = EPERM;
 	sh.fork_ret = 0;
 	run("reboot", NULL);
 	ok(sh.lp_argc == 7 && !strcmp(sh.lp_args[6], "boolean:true"),
 	   "dbus-send requests an interactive authorization check");
 
 	reset();
-	sh.euid = 1000;
+	sh.probe_errno = EPERM;
 	sh.wait_status = 0;
 	sh.wait_eintr = 2;
 	rc = run("reboot", NULL);
@@ -666,20 +730,20 @@ static void test_user(void) {
 	is_int(sh.kills, 0, "and pid 1 is left alone");
 
 	reset();
-	sh.euid = 1000;
+	sh.probe_errno = EPERM;
 	sh.wait_status = 1 << 8;
 	rc = run("reboot", NULL);
 	is_int(rc, 1, "logind refusing is a failure");
 	has_str(err, "reboot: permission denied, must be run as root\n", "reported as permission denied");
 
 	reset();
-	sh.euid = 1000;
+	sh.probe_errno = EPERM;
 	sh.fork_ret = -1;
 	rc = run("reboot", NULL);
 	is_int(rc, 1, "a fork failure falls back to permission denied");
 
 	reset();
-	sh.euid = 1000;
+	sh.probe_errno = EPERM;
 	sh.fork_ret = 0;
 	rc = run("shutdown", "+5", NULL);
 	ok(rc == 2127 && sh.lp_argc == 7 && !strcmp(sh.lp_args[3], "--print-reply=literal")
@@ -689,7 +753,7 @@ static void test_user(void) {
 
 	for(size_t k = 0; k < sizeof(refused) / sizeof(*refused); k++) {
 		reset();
-		sh.euid = 1000;
+		sh.probe_errno = EPERM;
 		sh.can = refused[k];
 		rc = run("shutdown", "+5", NULL);
 		ok(rc == 1 && !sh.slept && !*con && sh.forks == 1, "the answer '%s' refuses at once", refused[k] + strspn(refused[k], " "));
@@ -698,27 +762,39 @@ static void test_user(void) {
 	has_str(err, "shutdown: permission denied, must be run as root\n", "as permission denied");
 
 	reset();
-	sh.euid = 1000;
+	sh.probe_errno = EPERM;
 	sh.can = "   yes";
 	sh.wait_status = 1 << 8;
 	rc = run("shutdown", "+5", NULL);
 	ok(rc == 1 && !sh.slept && sh.forks == 1, "a failed question refuses at once");
 
 	reset();
-	sh.euid = 1000;
+	sh.probe_errno = EPERM;
 	sh.can = "   yes";
 	rc = run("shutdown", "-r", "+5", NULL);
 	ok(rc == 0 && sh.slept == 300 && sh.forks == 2, "yes waits 300 s, then makes the request");
 	reset();
-	sh.euid = 1000;
+	sh.probe_errno = EPERM;
 	sh.can = "   challenge";
 	rc = run("shutdown", "+1", NULL);
 	ok(rc == 0 && sh.slept == 60 && sh.forks == 2, "so does challenge, polkit decides when the request is made");
 
 	reset();
-	sh.euid = 1000;
+	sh.probe_errno = EPERM;
 	run("reboot", NULL);
 	is_int(sh.forks, 1, "without TIME nothing is asked first");
+
+	reset();
+	sh.uid = 1000;
+	expect_signal(run("poweroff", NULL), SIGUSR2, "a user who may signal pid 1 sends the signal");
+	ok(sh.probes == 1 && !sh.forks, "after one probe, without dbus-send");
+
+	reset();
+	sh.uid = 1000;
+	sh.can = "   no";
+	rc = run("shutdown", "-r", "+5", NULL);
+	ok(rc == 0 && sh.slept == 300 && !sh.forks && sh.kills == 1 && sh.kill_sig == SIGTERM,
+	   "such a user waits for TIME without asking logind");
 
 	reset();
 	sh.kill_errno = EPERM;
