@@ -13,6 +13,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdint.h>
@@ -27,12 +28,12 @@
 
 #define TERM_GRACE_MS 5000
 #define STOP_TOTAL_MS 30000
-#define PF_KTHREAD    0x00200000ul
+#define PF_KTHREAD    0x00200000u
 
-static int userspace_left(void) {
+static bool userspace_left(void) {
 	DIR* d = opendir("/proc");
 	struct dirent* e;
-	int found = 0;
+	bool found = false;
 
 	if(!d) {
 		return kill(-1, 0) == 0;
@@ -41,20 +42,21 @@ static int userspace_left(void) {
 	while((e = readdir(d)) != NULL) {
 		char path[64], buf[512];
 		char* p;
-		long pid;
-		int fd, f;
+		int64_t pid;
+		int fd;
+		uint8_t f;
 		ssize_t k;
 
 		if(e->d_name[0] < '1' || e->d_name[0] > '9') {
 			continue;
 		}
 
-		pid = strtol(e->d_name, &p, 10);
+		pid = strtoll(e->d_name, &p, 10);
 		if(*p || pid <= 1) {
 			continue;
 		}
 
-		snprintf(path, sizeof(path), "/proc/%ld/stat", pid);
+		snprintf(path, sizeof(path), "/proc/%" PRId64 "/stat", pid);
 		fd = open(path, O_RDONLY | O_CLOEXEC);
 		if(fd < 0) {
 			continue;
@@ -92,7 +94,7 @@ static int userspace_left(void) {
 			continue;
 		}
 
-		found = 1;
+		found = true;
 		break;
 	}
 
@@ -101,13 +103,13 @@ static int userspace_left(void) {
 	return found;
 }
 
-static void wait_children(long long grace) {
-	long long deadline = now_ms() + grace;
+static void wait_children(int64_t grace) {
+	int64_t deadline = now_ms() + grace;
 
 	for(;;) {
 		struct pollfd p = { .fd = sfd, .events = POLLIN };
 		struct signalfd_siginfo si;
-		long long left;
+		int64_t left;
 
 		log_batch_begin();
 		drain_left = DRAIN_BUDGET;
@@ -180,8 +182,8 @@ static void stop_ordered(void) {
 	uint32_t* off = NULL;
 	uint32_t* idx = NULL;
 	uint32_t* waitc = NULL;
-	long long* stop_at = NULL;
-	long long deadline;
+	int64_t* stop_at = NULL;
+	int64_t deadline;
 	uint8_t* st = NULL;
 	uint32_t i, k, left = 0, live_svc = 0;
 
@@ -223,7 +225,7 @@ static void stop_ordered(void) {
 	for(;;) {
 		struct pollfd p = { .fd = sfd, .events = POLLIN };
 		struct signalfd_siginfo si;
-		long long now = now_ms(), next = deadline;
+		int64_t now = now_ms(), next = deadline;
 
 		for(i = 0; i < n_svc; i++) {
 			if(st[i] == 2 || waitc[i]) {
@@ -314,8 +316,8 @@ out:
 }
 
 void shutdown_system(int how, const char* what) {
-	shutting_down = 1;
-	console_front(0);
+	shutting_down = true;
+	console_front(false);
 	stop_ordered();
 	log_note("%s: sending SIGTERM to all processes", what);
 	kill(-1, SIGTERM);
@@ -326,13 +328,13 @@ void shutdown_system(int how, const char* what) {
 		wait_children(KILL_GRACE_MS);
 	}
 
-	console_front(1);
+	console_front(true);
 	log_note("%s: saving the clock and disabling swap", what);
 	save_hwclock();
 	stop_swap();
 
 	// an unlinked socket that is still open keeps /run from going read-only
-	for(int c = 0; c < n_ctl; c++) {
+	for(uint8_t c = 0; c < n_ctl; c++) {
 		close(ctl_conn[c].fd);
 	}
 

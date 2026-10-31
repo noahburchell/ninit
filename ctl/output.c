@@ -14,32 +14,32 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-static int same_dir(const char* a, const char* b) {
+static bool same_dir(const char* a, const char* b) {
 	struct stat sa, sb;
 
 	return stat(a, &sa) == 0 && stat(b, &sb) == 0
 	       && sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino;
 }
 
-int graph_image(const char* path) {
+bool graph_image(const char* path) {
 	struct ng_hdr h;
 	struct stat st;
 	ssize_t k;
 	int fd = open(path, O_RDONLY | O_CLOEXEC);
 
 	if(fd < 0) {
-		return 0;
+		return false;
 	}
 
 	if(fstat(fd, &st) < 0 || (uint64_t)st.st_size < sizeof(h)) {
 		close(fd);
-		return 0;
+		return false;
 	}
 
 	k = read(fd, &h, sizeof(h));
 	close(fd);
 	if(k != (ssize_t)sizeof(h)) {
-		return 0;
+		return false;
 	}
 
 	return h.magic == NG_MAGIC && h.total_len == (uint32_t)st.st_size;
@@ -72,7 +72,7 @@ int lock_dir(const char* path) {
 	return fd;
 }
 
-static int same_fd_dir(int fd, const char* path) {
+static bool same_fd_dir(int fd, const char* path) {
 	struct stat a, b;
 
 	return fstat(fd, &a) == 0 && stat(path, &b) == 0
@@ -86,7 +86,8 @@ void write_atomic(const char* path, const void* buf, size_t len, mode_t mode, in
 	const char* base;
 	size_t tl;
 	mode_t um;
-	int fd, dfd, owned = 0;
+	int fd, dfd;
+	bool owned = false;
 
 	if(snprintf(parent, sizeof(parent), "%s", path) >= (int)sizeof(parent)) {
 		die("output path is too long: %s", path);
@@ -112,7 +113,7 @@ void write_atomic(const char* path, const void* buf, size_t len, mode_t mode, in
 		dfd = held;
 	} else {
 		dfd = lock_dir(dir);
-		owned = 1;
+		owned = true;
 	}
 
 	um = umask(0);

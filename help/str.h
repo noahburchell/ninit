@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 
 // a view of bytes it does not own, without a terminating nul
@@ -17,11 +18,11 @@ static inline str str_c(const char* s) {
 	return (str){ s, strlen(s) };
 }
 
-static inline int str_eq(str a, str b) {
+static inline bool str_eq(str a, str b) {
 	return a.n == b.n && !memcmp(a.p, b.p, a.n);
 }
 
-static inline int str_prefix(str s, str pre) {
+static inline bool str_prefix(str s, str pre) {
 	return s.n >= pre.n && !memcmp(s.p, pre.p, pre.n);
 }
 
@@ -50,6 +51,6 @@ static inline const char* path_base(const char* path) {
 	return b ? b + 1 : path;
 }
 
-static inline const char* plural(unsigned long n) {
+static inline const char* plural(uint64_t n) {
 	return n == 1 ? "" : "s";
 }

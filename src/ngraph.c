@@ -108,13 +108,13 @@ static uint64_t crc32c_feed_sw(uint64_t crc, const void* data, size_t len) {
 static uint64_t crc32c_feed(uint64_t crc, const void* data, size_t len) {
 #if NG_CRC_X86
 #ifdef __SSE4_2__
-	static const int have_hw = 1;
+	static const int8_t have_hw = 1;
 #else
-	static int have_hw = -1;
+	static int8_t have_hw = -1;
 
 	if(have_hw < 0) {
 		__builtin_cpu_init();
-		have_hw = __builtin_cpu_supports("sse4.2");
+		have_hw = __builtin_cpu_supports("sse4.2") != 0;
 	}
 #endif
 	if(have_hw) {
@@ -200,13 +200,13 @@ const char* ng_name_problem(const char* name) {
 	return NULL;
 }
 
-int ng_reserved_name(const char* name) {
+bool ng_reserved_name(const char* name) {
 	if(!strcmp(name, "unused")) {
-		return 1;
+		return true;
 	}
 
 	if(strncmp(name, "depgraph", 8)) {
-		return 0;
+		return false;
 	}
 
 	return !name[8] || !strcmp(name + 8, ".old") || !strcmp(name + 8, ".tmp");
@@ -229,20 +229,20 @@ static const str locale_vars[NG_LOCALE_MAX] = {
 	STR_INIT("LC_IDENTIFICATION"),
 };
 
-static int locale_value_ok(const char* v) {
+static bool locale_value_ok(const char* v) {
 	if(!*v) {
-		return 0;
+		return false;
 	}
 
 	for(; *v; v++) {
 		if(!((*v >= 'a' && *v <= 'z') || (*v >= 'A' && *v <= 'Z')
 		     || (*v >= '0' && *v <= '9') || *v == '_' || *v == '.'
 		     || *v == '-' || *v == '@')) {
-			return 0;
+			return false;
 		}
 	}
 
-	return 1;
+	return true;
 }
 
 static void note(const char** why, const char* msg) {
@@ -252,19 +252,19 @@ static void note(const char** why, const char* msg) {
 }
 
 // parses /etc/locale.conf
-int ng_locale_env(char (*out)[NG_LOCALE_LEN], int max, const char** why) {
+uint8_t ng_locale_env(char (*out)[NG_LOCALE_LEN], uint8_t max, const char** why) {
 	*why = NULL;
-	if(max <= 0) {
+	if(!max) {
 		return 0;
 	}
 
 	return ng_locale_fd(open(NG_LOCALE_CONF, O_RDONLY | O_CLOEXEC | O_NOCTTY), out, max, why);
 }
 
-int ng_locale_fd(int fd, char (*out)[NG_LOCALE_LEN], int max, const char** why) {
+uint8_t ng_locale_fd(int fd, char (*out)[NG_LOCALE_LEN], uint8_t max, const char** why) {
 	char raw[NG_LOCALE_FILE], extra;
-	int seen[NG_LOCALE_MAX] = { 0 };
-	int n = 0;
+	uint8_t seen[NG_LOCALE_MAX] = { 0 };
+	uint8_t n = 0;
 	ssize_t len;
 	char* p;
 
@@ -273,7 +273,7 @@ int ng_locale_fd(int fd, char (*out)[NG_LOCALE_LEN], int max, const char** why) 
 		return 0;
 	}
 
-	if(max <= 0) {
+	if(!max) {
 		close(fd);
 		return 0;
 	}
@@ -299,7 +299,7 @@ int ng_locale_fd(int fd, char (*out)[NG_LOCALE_LEN], int max, const char** why) 
 		char* v;
 		char* name;
 		size_t nlen;
-		int k;
+		uint8_t k;
 
 		if(nl) {
 			*nl = '\0';
@@ -414,9 +414,9 @@ const char* ng_onfailname(uint8_t policy) {
 	}
 }
 
-static int range_ok(uint32_t off, uint64_t bytes, uint32_t total, uint32_t align) {
+static bool range_ok(uint32_t off, uint64_t bytes, uint32_t total, uint32_t align) {
 	if(off & (align - 1)) {
-		return 0;
+		return false;
 	}
 
 	return (uint64_t)off + bytes <= total;
@@ -427,8 +427,8 @@ struct ng_span {
 };
 
 // a checksum only proves the bytes are intact
-static int spans_disjoint(const struct ng_span* v, unsigned n) {
-	unsigned i, j;
+static bool spans_disjoint(const struct ng_span* v, uint8_t n) {
+	uint8_t i, j;
 
 	for(i = 0; i < n; i++) {
 		if(v[i].lo == v[i].hi) {
@@ -441,20 +441,20 @@ static int spans_disjoint(const struct ng_span* v, unsigned n) {
 			}
 
 			if(v[i].lo < v[j].hi && v[j].lo < v[i].hi) {
-				return 0;
+				return false;
 			}
 		}
 	}
 
-	return 1;
+	return true;
 }
 
 // the blobs trailing nul stops the search even for a runaway offset
-static int str_fits(const char* blob, uint32_t blob_len, uint32_t off, uint32_t cap) {
+static bool str_fits(const char* blob, uint32_t blob_len, uint32_t off, uint32_t cap) {
 	uint32_t left;
 
 	if(off >= blob_len) {
-		return 0;
+		return false;
 	}
 
 	left = blob_len - off;

@@ -21,8 +21,8 @@ void log_init(void);
 void log_batch_begin(void);
 void log_reopen_console(void);
 void log_adopt_fd(int fd);
-void ninit_log(int level, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
-void log_raw(int level, str text);
+void ninit_log(uint8_t level, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
+void log_raw(uint8_t level, str text);
 void print_welcome(void);
 
 uint64_t log_first(void);
@@ -31,7 +31,7 @@ size_t log_line(uint64_t* at, char* buf);
 void log_feed(void (*fn)(void));
 int log_pending_fd(void);
 void log_flush(void);
-long long log_due(void);
+int64_t log_due(void);
 void log_tick(void);
 
 // a quiet build keeps these in the ring but off the console

@@ -123,7 +123,7 @@ static void test_pid_table(void) {
 		}
 
 		for(int k = 0; k < nm; k++) {
-			int stale;
+			bool stale;
 			uint32_t got;
 
 			runs[mval[k]].pid = model[k];
@@ -137,7 +137,7 @@ static void test_pid_table(void) {
 		}
 
 		{
-			int stale;
+			bool stale;
 			pid_t absent = (pid_t)(900000 + tap_below(1000));
 
 			if(find_pid(absent, &stale) != UINT32_MAX) {

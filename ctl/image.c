@@ -28,7 +28,7 @@ static uint32_t blob_add(struct blob* b, const char* s) {
 	return at;
 }
 
-void write_image(const struct build* b, const char* out, int dry, int srclock) {
+void write_image(const struct build* b, const char* out, bool dry, int srclock) {
 	struct src* srcs = b->srcs;
 	struct edge* edges = b->edges;
 	struct graph g = b->g;
@@ -189,7 +189,7 @@ void write_image(const struct build* b, const char* out, int dry, int srclock) {
 	if(dry) {
 		printf("%s: would write %u services, %u edges, %u roots, %zu bytes, "
 		       "mode %04o\n",
-		       out, n, m, nroots, total, (unsigned)out_mode);
+		       out, n, m, nroots, total, (uint32_t)out_mode);
 	} else {
 		write_atomic(out, buf, total, out_mode, srclock);
 		printf("%s: %u services, %u edges, %u roots, %zu bytes\n",

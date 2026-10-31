@@ -18,12 +18,12 @@
 
 #define CG_MAGIC 0x63677270
 
-int cg_ok;
+bool cg_ok;
 
 void cgroup_init(void) {
 	struct statfs sf;
 
-	if(statfs(CG_BASE, &sf) < 0 || (unsigned long)sf.f_type != CG_MAGIC) {
+	if(statfs(CG_BASE, &sf) < 0 || (uint32_t)sf.f_type != CG_MAGIC) {
 		log_warn("cgroup: %s is not a cgroup2 mount, using process groups", CG_BASE);
 		return;
 	}
@@ -40,10 +40,10 @@ void cgroup_init(void) {
 	}
 
 	rmdir(CG_DIR "/.probe");
-	cg_ok = 1;
+	cg_ok = true;
 }
 
-int cg_path(uint32_t i, const char* leaf, char* buf, size_t cap) {
+bool cg_path(uint32_t i, const char* leaf, char* buf, size_t cap) {
 	// named by index, systemd-udevd takes a cgroup ending in /udev as delegated to it
 	// and kills every other process in it when idle
 	int n = snprintf(buf, cap, CG_DIR "/svc-%u%s%s", i, *leaf ? "/" : "", leaf);
@@ -108,35 +108,36 @@ int cgroup_populated(uint32_t i) {
 	return *p == '1';
 }
 
-int cgroup_drop(uint32_t i) {
+bool cgroup_drop(uint32_t i) {
 	char dir[CG_PATH_MAX];
 
 	if(!cg_ok || !cg_path(i, "", dir, sizeof(dir))) {
-		return 1;
+		return true;
 	}
 
 	if(rmdir(dir) == 0 || errno == ENOENT) {
-		return 1;
+		return true;
 	}
 
 	if(errno != EBUSY) {
 		log_warn("%s: rmdir %s: %s", ng_name(map, i), dir, strerror(errno));
 	}
 
-	return 0;
+	return false;
 }
 
-static int cg_kill(uint32_t i) {
+static bool cg_kill(uint32_t i) {
 	char path[CG_PATH_MAX];
-	int fd, ok;
+	int fd;
+	bool ok;
 
 	if(!cg_path(i, "cgroup.kill", path, sizeof(path))) {
-		return 0;
+		return false;
 	}
 
 	fd = open(path, O_WRONLY | O_CLOEXEC);
 	if(fd < 0) {
-		return 0;
+		return false;
 	}
 
 	ok = write(fd, "1", 1) == 1;
@@ -179,10 +180,10 @@ int cgroup_signal(uint32_t i, int sig) {
 
 		buf[held + (size_t)k] = '\0';
 		while((nl = strchr(p, '\n')) != NULL) {
-			long pid;
+			int64_t pid;
 
 			*nl = '\0';
-			pid = strtol(p, NULL, 10);
+			pid = strtoll(p, NULL, 10);
 			if(pid > 1) {
 				kill((pid_t)pid, sig);
 				n++;

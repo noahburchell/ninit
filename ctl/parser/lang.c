@@ -11,7 +11,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-static int word_sep(char c) {
+static bool word_sep(char c) {
 	return c == ' ' || c == '\t' || c == '\r';
 }
 
@@ -46,7 +46,7 @@ struct shebang {
 	str rest;
 };
 
-enum {
+enum env_kind {
 	ENV_PROG,
 	ENV_SKIP,
 	ENV_ARG,
@@ -55,7 +55,7 @@ enum {
 };
 
 // what a word of an env command line is, as gnu and busybox env parse it
-static int env_word(str w, int opts, size_t* off) {
+static enum env_kind env_word(str w, bool opts, size_t* off) {
 	static const str takes[] = { STR_INIT("argv0"), STR_INIT("chdir"), STR_INIT("unset") };
 	const char* eq;
 	str name;
@@ -106,13 +106,14 @@ static int env_word(str w, int opts, size_t* off) {
 }
 
 // the program a #! line runs and what follows it, looking through env and its options
-static int parse_shebang(str line, struct shebang* sb) {
+static bool parse_shebang(str line, struct shebang* sb) {
 	str rest = { line.p + 2, line.n - 2 }, w = word_at(&rest);
 	size_t off;
-	int opts = 1, what;
+	bool opts = true;
+	enum env_kind what;
 
 	if(!w.n) {
-		return 0;
+		return false;
 	}
 
 	if(str_eq(str_base(w), STR("env"))) {
@@ -129,21 +130,21 @@ static int parse_shebang(str line, struct shebang* sb) {
 			}
 
 			if(what == ENV_END) {
-				opts = 0;
+				opts = false;
 			} else if(what == ENV_ARG && !word_at(&rest).n) {
-				return 0;
+				return false;
 			}
 		}
 
 		if(!w.n) {
-			return 0;
+			return false;
 		}
 	}
 
 	sb->prog = w;
 	sb->rest = rest;
 
-	return 1;
+	return true;
 }
 
 // the basename of the interpreter a #! line names, through env and its options
@@ -157,11 +158,11 @@ static str shebang_interp(str line) {
 	return str_base(sb.prog);
 }
 
-static int is_name(str w, const char* path) {
+static bool is_name(str w, const char* path) {
 	return str_eq(w, str_c(path_base(path)));
 }
 
-static int runnable(const char* path) {
+static bool runnable(const char* path) {
 	struct stat st;
 
 	return sys_stat(path, &st) == 0 && S_ISREG(st.st_mode) && sys_exec_ok(path, &st) == 0;
@@ -318,18 +319,18 @@ void late_directive(const char* fname, str line) {
 }
 
 // NAME followed by nothing but a version, such as python3.14 or lua5.4
-int claims_versioned(str base, str name) {
+bool claims_versioned(str base, str name) {
 	if(!str_prefix(base, name)) {
-		return 0;
+		return false;
 	}
 
 	for(size_t k = name.n; k < base.n; k++) {
 		if((base.p[k] < '0' || base.p[k] > '9') && base.p[k] != '.') {
-			return 0;
+			return false;
 		}
 	}
 
-	return 1;
+	return true;
 }
 
 // HEAD, NAME with Q and backslash escaped, then TAIL

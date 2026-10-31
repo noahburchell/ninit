@@ -33,18 +33,18 @@ static void usage(FILE* f) {
 	      f);
 }
 
-static int takes_value(const char* a) {
+static bool takes_value(const char* a) {
 	return !strcmp(a, "-d") || !strcmp(a, "--dir")
 	       || !strcmp(a, "-o") || !strcmp(a, "--out") || !strcmp(a, "--root")
 	       || !strcmp(a, "-f") || !strcmp(a, "--file");
 }
 
-static int wants_help(int argc, char** argv) {
+static bool wants_help(int argc, char** argv) {
 	int k;
 
 	for(k = 0; k < argc; k++) {
 		if(!strcmp(argv[k], "--")) {
-			return 0;
+			return false;
 		}
 
 		if(takes_value(argv[k])) {
@@ -53,11 +53,11 @@ static int wants_help(int argc, char** argv) {
 		}
 
 		if(!strcmp(argv[k], "-h") || !strcmp(argv[k], "--help")) {
-			return 1;
+			return true;
 		}
 	}
 
-	return 0;
+	return false;
 }
 
 int main(int argc, char** argv) {

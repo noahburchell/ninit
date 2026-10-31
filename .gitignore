@@ -82,6 +82,8 @@ perf.data
 perf.data.old
 
 *~
+\#*
+.#*
 *.swp
 *.swo
 *.orig

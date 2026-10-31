@@ -8,6 +8,7 @@
 #include "stop.h"
 
 #include <errno.h>
+#include <inttypes.h>
 #include <signal.h>
 #include <stdint.h>
 #include <string.h>
@@ -99,14 +100,14 @@ void report_stalls(void) {
 		uint32_t i = live[k];
 
 		if(runs[i].starting) {
-			log_wait("%s: still running after %lld s", ng_name(map, i),
+			log_wait("%s: still running after %" PRId64 " s", ng_name(map, i),
 				 (now_ms() - runs[i].started) / 1000);
 		}
 	}
 }
 
 void check_timeouts(void) {
-	long long now = now_ms();
+	int64_t now = now_ms();
 	uint32_t k;
 
 	if(shutting_down) {
@@ -118,7 +119,7 @@ void check_timeouts(void) {
 		struct run* r = &runs[i];
 
 		if(!r->starting || r->timedout
-		   || now - r->started < (long long)ng_start_ms(map, i)) {
+		   || now - r->started < (int64_t)ng_start_ms(map, i)) {
 			k++;
 			continue;
 		}

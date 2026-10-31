@@ -5,7 +5,7 @@
 #include <sys/resource.h>
 
 extern char env_locale[NG_LOCALE_MAX][NG_LOCALE_LEN];
-extern int n_locale;
+extern uint8_t n_locale;
 extern struct rlimit child_nofile;
 
 void ensure_stdio(void);

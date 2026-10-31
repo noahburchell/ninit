@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <string.h>
 
-static int python_claims(str base) {
+static bool python_claims(str base) {
 	return claims_versioned(base, STR("python"));
 }
 
@@ -16,22 +16,22 @@ struct py {
 	size_t      n;
 };
 
-static int py_ident(unsigned char c) {
+static bool py_ident(unsigned char c) {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 	       || c == '_' || c >= 0x80;
 }
 
 // r, u, b, f and t alone, or r with b, f or t in either order, in any case
-static int py_prefix(str w, int* fmt) {
+static bool py_prefix(str w, bool* fmt) {
 	char a = (char)(w.p[0] | 0x20), b = w.n == 2 ? (char)(w.p[1] | 0x20) : 0;
 
 	if(w.n == 1 && strchr("rubft", a)) {
 		*fmt = a == 'f' || a == 't';
-		return 1;
+		return true;
 	}
 
 	if(w.n != 2 || (a != 'r' && b != 'r')) {
-		return 0;
+		return false;
 	}
 
 	if(a == 'r') {
@@ -43,12 +43,12 @@ static int py_prefix(str w, int* fmt) {
 	return a == 'b' || a == 'f' || a == 't';
 }
 
-static size_t py_str(const struct py* p, size_t i, int fmt, unsigned d);
+static size_t py_str(const struct py* p, size_t i, bool fmt, uint8_t d);
 
 // a replacement field of an f-string from after its brace to after the brace that closes it
-static size_t py_field(const struct py* p, size_t i, char q, int triple, unsigned d) {
+static size_t py_field(const struct py* p, size_t i, char q, bool triple, uint8_t d) {
 	const char* s = p->s;
-	unsigned depth = 0;
+	uint32_t depth = 0;
 
 	if(d > PY_DEPTH) {
 		return SIZE_MAX;
@@ -58,10 +58,10 @@ static size_t py_field(const struct py* p, size_t i, char q, int triple, unsigne
 		char c = s[i];
 
 		if(c == '\'' || c == '"') {
-			i = py_str(p, i, 0, d + 1);
+			i = py_str(p, i, false, d + 1);
 		} else if(py_ident((unsigned char)c) && !(c >= '0' && c <= '9')) {
 			size_t e = i;
-			int f;
+			bool f;
 
 			while(e < p->n && py_ident((unsigned char)s[e])) {
 				e++;
@@ -110,10 +110,10 @@ static size_t py_field(const struct py* p, size_t i, char q, int triple, unsigne
 }
 
 // a string from its opening quote to after its closing one, SIZE_MAX when it does not end
-static size_t py_str(const struct py* p, size_t i, int fmt, unsigned d) {
+static size_t py_str(const struct py* p, size_t i, bool fmt, uint8_t d) {
 	const char* s = p->s;
 	char q = s[i];
-	int triple = s[i + 1] == q && s[i + 2] == q;
+	bool triple = s[i + 1] == q && s[i + 2] == q;
 
 	if(d > PY_DEPTH) {
 		return SIZE_MAX;
@@ -152,18 +152,18 @@ static size_t py_str(const struct py* p, size_t i, int fmt, unsigned d) {
 static size_t py_strip(char* s, size_t n, size_t code, char last, const char* fname) {
 	const struct py p = { .s = s, .n = n };
 	size_t i = code, j = code, e;
-	unsigned depth = 0;
-	int cont = 0, empty = 1, pend = 0;
+	uint32_t depth = 0;
+	bool cont = false, empty = true, pend = false;
 
 	while(i < n) {
-		int bol = 1;
+		bool bol = true;
 
-		pend = 0;
+		pend = false;
 		for(e = i; e < n && (s[e] == ' ' || s[e] == '\t' || s[e] == '\f'); e++)
 			;
 		// indentation is syntax only where a logical line begins
 		if(!cont && !depth) {
-			empty = 1;
+			empty = true;
 			if(e < n && s[e] != '\n' && s[e] != '#' && !(s[e] == '\r' && s[e + 1] == '\n')) {
 				memmove(s + j, s + i, e - i);
 				j += e - i;
@@ -171,7 +171,7 @@ static size_t py_strip(char* s, size_t n, size_t code, char last, const char* fn
 		}
 
 		i = e;
-		cont = 0;
+		cont = false;
 		while(i < n) {
 			char c = s[i];
 
@@ -182,7 +182,7 @@ static size_t py_strip(char* s, size_t n, size_t code, char last, const char* fn
 			}
 
 			if(c == ' ' || c == '\t' || c == '\f') {
-				pend = 1;
+				pend = true;
 				i++;
 				continue;
 			}
@@ -207,7 +207,7 @@ static size_t py_strip(char* s, size_t n, size_t code, char last, const char* fn
 					late_directive(fname, (str){ s + i, e - i });
 				}
 
-				pend = 0;
+				pend = false;
 				i = e;
 				continue;
 			}
@@ -216,7 +216,7 @@ static size_t py_strip(char* s, size_t n, size_t code, char last, const char* fn
 				s[j++] = ' ';
 			}
 
-			pend = bol = 0;
+			pend = bol = false;
 			if(c == '\\') {
 				e = s[i + 1] == '\n' ? i + 2 : s[i + 1] == '\r' && s[i + 2] == '\n' ? i + 3
 												    : 0;
@@ -232,12 +232,12 @@ static size_t py_strip(char* s, size_t n, size_t code, char last, const char* fn
 				break;
 			}
 
-			empty = 0;
+			empty = false;
 			e = i + 1;
 			if(c == '\'' || c == '"') {
-				e = py_str(&p, i, 0, 0);
+				e = py_str(&p, i, false, 0);
 			} else if(py_ident((unsigned char)c)) {
-				int fmt;
+				bool fmt;
 
 				for(e = i; e < n && py_ident((unsigned char)s[e]); e++)
 					;
@@ -292,7 +292,7 @@ static size_t python_store(struct src* s, char* body, size_t len, size_t code_of
 
 	n = blank_header(s, body, len, code_off);
 
-	s->stripped = 1;
+	s->stripped = true;
 
 	return py_strip(body, n, n - (len - code_off), last, s->name);
 }

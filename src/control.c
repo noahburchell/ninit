@@ -23,7 +23,7 @@
 int ctl_lfd = -1;
 uint32_t n_ops;
 struct ctl ctl_conn[CTL_MAX];
-int n_ctl;
+uint8_t n_ctl;
 
 const char* state_name(uint32_t i) {
 	switch(state[i]) {
@@ -102,7 +102,7 @@ void ctl_out(struct ctl* c, const char* fmt, ...) {
 	c->out_len += (uint16_t)n;
 }
 
-void ctl_end(struct ctl* c, int ok, const char* fmt, ...) {
+void ctl_end(struct ctl* c, bool ok, const char* fmt, ...) {
 	char buf[CTL_BUF];
 	va_list ap;
 
@@ -196,7 +196,7 @@ void ctl_feed(void) {
 		return;
 	}
 
-	for(int k = 0; k < n_ctl; k++) {
+	for(uint8_t k = 0; k < n_ctl; k++) {
 		struct ctl* c = &ctl_conn[k];
 
 		if(!c->watch || c->out_at < c->out_len || log_end() - c->log_at < LOG_RING / 2) {

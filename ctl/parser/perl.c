@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <string.h>
 
-static int perl_claims(str base) {
+static bool perl_claims(str base) {
 	return claims_versioned(base, STR("perl"));
 }
 
@@ -34,19 +34,19 @@ enum {
 struct pl_hd {
 	char   tag[PL_TAG];
 	size_t len;
-	int    indent;
+	bool   indent;
 };
 
-static int pl_word(unsigned char c) {
+static bool pl_word(unsigned char c) {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 	       || c == '_' || c >= 0x80;
 }
 
-static int pl_alpha(char c) {
+static bool pl_alpha(char c) {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 }
 
-static int pl_blank(char c) {
+static bool pl_blank(char c) {
 	return c == ' ' || c == '\t' || c == '\f';
 }
 
@@ -161,14 +161,14 @@ static const str pl_quote1[] = { STR_INIT("q"), STR_INIT("qq"), STR_INIT("qw"), 
 static const str pl_match[] = { STR_INIT("m"), STR_INIT("qr") };
 static const str pl_subst[] = { STR_INIT("s"), STR_INIT("tr"), STR_INIT("y") };
 
-static int pl_is(str w, const str* list, size_t n) {
+static bool pl_is(str w, const str* list, size_t n) {
 	for(size_t k = 0; k < n; k++) {
 		if(str_eq(w, list[k])) {
-			return 1;
+			return true;
 		}
 	}
 
-	return 0;
+	return false;
 }
 
 #define PL_IS(w, list) pl_is(w, list, sizeof(list) / sizeof(*(list)))
@@ -179,7 +179,7 @@ static size_t pl_part(const char* s, size_t i, size_t n) {
 				    : o == '{'	     ? '}'
 				    : o == '<'	     ? '>'
 						     : o;
-	unsigned depth = 1;
+	uint32_t depth = 1;
 
 	for(i++; i < n; i++) {
 		if(s[i] == '\\') {
@@ -195,18 +195,18 @@ static size_t pl_part(const char* s, size_t i, size_t n) {
 }
 
 // a heredoc inside quoted text, such as s///e, has a body the stripper would not see
-static int pl_hidden_hd(const char* s, size_t i, size_t e) {
+static bool pl_hidden_hd(const char* s, size_t i, size_t e) {
 	for(; i + 2 < e; i++) {
 		if(s[i] == '<' && s[i + 1] == '<' && (strchr("~\"'\\_", s[i + 2]) || pl_alpha(s[i + 2]))) {
-			return 1;
+			return true;
 		}
 	}
 
-	return 0;
+	return false;
 }
 
 // after a quote-like operator whose delimiter is at s[i], PARTS is 2 for s, tr and y
-static size_t pl_quote(const char* s, size_t i, size_t n, int parts, int mods) {
+static size_t pl_quote(const char* s, size_t i, size_t n, uint8_t parts, bool mods) {
 	size_t e = pl_part(s, i, n);
 
 	if(e != SIZE_MAX && parts == 2) {
@@ -303,7 +303,7 @@ static size_t pl_hd_body(const char* s, size_t i, size_t n, const struct pl_hd* 
 }
 
 // the four bytes =cut at s[i], the file may end sooner
-static int pl_cut(const char* s, size_t i, size_t n) {
+static bool pl_cut(const char* s, size_t i, size_t n) {
 	return n - i >= 4 && !memcmp(s + i, "=cut", 4);
 }
 
@@ -322,7 +322,7 @@ static size_t pl_pod(const char* s, size_t i, size_t n) {
 	return n;
 }
 
-static int pl_digit(char c, int hex) {
+static bool pl_digit(char c, bool hex) {
 	return (c >= '0' && c <= '9') || c == '_' || (hex && ((c | 0x20) >= 'a' && (c | 0x20) <= 'f'));
 }
 
@@ -352,7 +352,7 @@ static size_t pl_number(const char* s, size_t i) {
 }
 
 // #line N "file" renumbers the lines in messages and stays
-static int pl_line_directive(const char* s) {
+static bool pl_line_directive(const char* s) {
 	s++;
 	while(*s == ' ' || *s == '\t') {
 		s++;
@@ -365,16 +365,17 @@ static int pl_line_directive(const char* s) {
 static size_t pl_strip(char* s, size_t n, size_t code, const char* fname) {
 	struct pl_hd hd[PL_HD];
 	uint8_t nest[PL_NEST];
-	unsigned nhd = 0, depth = 0, parens = 0;
+	uint8_t nhd = 0, depth = 0;
+	uint32_t parens = 0;
 	size_t i = code, j = code, e;
 	enum pl_expect ex = PL_STMT;
-	int pend = 0, arrow = 0, block = 0, sub = 0, fhword = 0, fh = 0;
+	bool pend = false, arrow = false, block = false, sub = false, fhword = false, fh = false;
 
 	while(i < n) {
 		size_t ls = i;
-		int bol = 1;
+		bool bol = true;
 
-		pend = 0;
+		pend = false;
 		while(i < n && pl_blank(s[i])) {
 			i++;
 		}
@@ -383,13 +384,13 @@ static size_t pl_strip(char* s, size_t n, size_t code, const char* fname) {
 		pend = i > ls && s[i] == '=' && pl_alpha(s[i + 1]);
 		while(i < n) {
 			char c = s[i], last, before;
-			int bl = block, sb = sub, fw = fhword;
+			bool bl = block, sb = sub, fw = fhword;
 
 			if(c == '\n') {
 				s[j++] = '\n';
 				i++;
-				pend = 0;
-				for(unsigned k = 0; k < nhd; k++) {
+				pend = false;
+				for(uint8_t k = 0; k < nhd; k++) {
 					e = pl_hd_body(s, i, n, &hd[k]);
 					if(e == SIZE_MAX) {
 						goto bail;
@@ -430,7 +431,7 @@ static size_t pl_strip(char* s, size_t n, size_t code, const char* fname) {
 					late_directive(fname, (str){ s + i, e - i });
 				}
 
-				pend = 0;
+				pend = false;
 				i = e;
 				continue;
 			}
@@ -466,8 +467,8 @@ static size_t pl_strip(char* s, size_t n, size_t code, const char* fname) {
 				s[j++] = ' ';
 			}
 
-			pend = bol = 0;
-			block = sub = fhword = 0;
+			pend = bol = false;
+			block = sub = fhword = false;
 			last = j > code ? s[j - 1] : '\n';
 			before = j > code + 1 ? s[j - 2] : '\n';
 			e = i + 1;
@@ -477,7 +478,7 @@ static size_t pl_strip(char* s, size_t n, size_t code, const char* fname) {
 				goto bail;
 			}
 
-			fh = 0;
+			fh = false;
 			if(c == '$') {
 				fh = fw || ex == PL_WORD;
 				if(s[e] == '#' && (s[e + 1] == '{' || s[e + 1] == '$')) {
@@ -574,7 +575,8 @@ static size_t pl_strip(char* s, size_t n, size_t code, const char* fname) {
 
 				ex = PL_OPER;
 			} else if(pl_word((unsigned char)c)) {
-				int parts = 0, mods = 0;
+				uint8_t parts = 0;
+				bool mods = false;
 				size_t k;
 				str w;
 
@@ -585,7 +587,7 @@ static size_t pl_strip(char* s, size_t n, size_t code, const char* fname) {
 				}
 
 				if(arrow) {
-					arrow = 0;
+					arrow = false;
 					ex = PL_OPER;
 					goto copy;
 				}
@@ -600,10 +602,11 @@ static size_t pl_strip(char* s, size_t n, size_t code, const char* fname) {
 				if(PL_IS(w, pl_quote1)) {
 					parts = 1;
 				} else if(PL_IS(w, pl_match)) {
-					parts = mods = 1;
+					parts = 1;
+					mods = true;
 				} else if(PL_IS(w, pl_subst)) {
 					parts = 2;
-					mods = 1;
+					mods = true;
 				}
 
 				if(parts) {
@@ -721,7 +724,7 @@ bail:
 static size_t perl_store(struct src* s, char* body, size_t len, size_t code_off) {
 	size_t n = blank_header(s, body, len, code_off);
 
-	s->stripped = 1;
+	s->stripped = true;
 
 	return pl_strip(body, n, n - (len - code_off), s->name);
 }
@@ -755,7 +758,7 @@ static void perl_exec_args(struct src* s) {
 }
 
 // the reason one switch cluster is refused, *next is set when its argument is the next word
-static const char* perl_cluster(const char* c, int* next) {
+static const char* perl_cluster(const char* c, bool* next) {
 	for(; *c; c++) {
 		switch(*c) {
 			case 'e':
@@ -817,7 +820,7 @@ static const char* perl_bad_arg(const struct strv* a, const char** word) {
 	for(uint32_t k = 0; k < a->n; k++) {
 		const char* w = *word = a->v[k];
 		const char* why;
-		int next = 0;
+		bool next = false;
 
 		if(w[0] != '-' || !w[1] || !strcmp(w, "--")) {
 			return ARG_SCRIPT;

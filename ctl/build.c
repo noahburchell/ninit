@@ -14,14 +14,14 @@ static void locale_note(void) {
 	char loc[NG_LOCALE_MAX][NG_LOCALE_LEN];
 	const char* bad;
 	int fd = sys_open(NG_LOCALE_CONF, O_RDONLY | O_NOCTTY);
-	int nl = ng_locale_fd(fd, loc, NG_LOCALE_MAX, &bad);
+	uint8_t nl = ng_locale_fd(fd, loc, NG_LOCALE_MAX, &bad);
 
 	fflush(stdout);
 	if(bad) {
 		fprintf(stderr, "ninitctl: warning: %s%s %s\n", g_root_pfx, NG_LOCALE_CONF, bad);
 	}
 
-	if(nl <= 0) {
+	if(!nl) {
 		fprintf(stderr,
 			"ninitctl: %s%s %s, services will run with LANG=%s\n"
 			"ninitctl: for example: printf 'LANG=en_US.UTF-8\\n' > %s%s\n",
@@ -60,7 +60,8 @@ int cmd_init(int argc, char** argv) {
 	char outbuf[4096];
 	struct build b = { 0 };
 	str out_base;
-	int k, custom_dir = 0, dry = 0, nocheck = 0, srclock;
+	int k, srclock;
+	bool custom_dir = false, dry = false, nocheck = false;
 
 	// argv is already past argv[0] and the subcommand
 	for(k = 0; k < argc; k++) {
@@ -70,7 +71,7 @@ int cmd_init(int argc, char** argv) {
 			}
 
 			dir = argv[k];
-			custom_dir = 1;
+			custom_dir = true;
 		} else if(!strcmp(argv[k], "-o") || !strcmp(argv[k], "--out")) {
 			if(++k == argc) {
 				usage_die("init: %s needs a file", argv[k - 1]);
@@ -78,9 +79,9 @@ int cmd_init(int argc, char** argv) {
 
 			out = argv[k];
 		} else if(!strcmp(argv[k], "-n") || !strcmp(argv[k], "--dry-run")) {
-			dry = 1;
+			dry = true;
 		} else if(!strcmp(argv[k], "--no-check")) {
-			nocheck = 1;
+			nocheck = true;
 		} else if(!strcmp(argv[k], "--root")) {
 			if(++k == argc) {
 				usage_die("init: %s needs a directory", argv[k - 1]);
@@ -99,7 +100,7 @@ int cmd_init(int argc, char** argv) {
 		memcpy(rd, g_root_pfx, pl);
 		memcpy(rd + pl, NG_DEFAULT_DIR, sizeof(NG_DEFAULT_DIR));
 		dir = rd;
-		custom_dir = 1;
+		custom_dir = true;
 	}
 
 	g_dir = dir;

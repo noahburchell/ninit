@@ -46,13 +46,13 @@ struct srow {
 struct stab {
 	struct srow* v;
 	size_t       n, cap;
-	int          raw;
+	bool         raw;
 };
 
 // NAME STATE wanted|stopped pid N, checked without disturbing the line
-static int st_shaped(const char* s) {
+static bool st_shaped(const char* s) {
 	const char* tok3 = NULL;
-	int i;
+	uint8_t i;
 
 	for(i = 0; i < 5; i++) {
 		while(*s == ' ') {
@@ -60,7 +60,7 @@ static int st_shaped(const char* s) {
 		}
 
 		if(!*s) {
-			return 0;
+			return false;
 		}
 
 		if(i == 3) {
@@ -82,7 +82,7 @@ static int st_shaped(const char* s) {
 static void st_split(struct srow* r) {
 	char** fld[5] = { &r->name, &r->state, &r->want, NULL, &r->pid };
 	char* q = r->dup;
-	int i;
+	uint8_t i;
 
 	for(i = 0; i < 5; i++) {
 		while(*q == ' ') {
@@ -103,7 +103,7 @@ static void st_split(struct srow* r) {
 	}
 }
 
-static int stab_add(struct stab* t, const char* line) {
+static bool stab_add(struct stab* t, const char* line) {
 	struct srow r = { 0 };
 
 	if(t->n == t->cap) {
@@ -111,7 +111,7 @@ static int stab_add(struct stab* t, const char* line) {
 		struct srow* v = realloc(t->v, cap * sizeof(*v));
 
 		if(!v) {
-			return 0;
+			return false;
 		}
 
 		t->v = v;
@@ -120,16 +120,16 @@ static int stab_add(struct stab* t, const char* line) {
 
 	r.dup = strdup(line);
 	if(!r.dup) {
-		return 0;
+		return false;
 	}
 
 	if(!st_shaped(line)) {
-		t->raw = 1;
+		t->raw = true;
 	}
 
 	t->v[t->n++] = r;
 
-	return 1;
+	return true;
 }
 
 static const char* state_colour(const struct sty* st, const char* state) {
@@ -148,14 +148,14 @@ static const char* state_colour(const struct sty* st, const char* state) {
 	return st->dim;
 }
 
-static int stab_print(struct stab* t) {
+static bool stab_print(struct stab* t) {
 	const struct sty* st = isatty(STDOUT_FILENO) ? &sty_tty : &sty_plain;
 	size_t i, wn = 7, ws = 5, wp = 3, wi = 1, rule;
-	int held = 0, table = 0;
+	bool held = false, table = false;
 	char idx[24];
 
 	if(!t->n) {
-		return 0;
+		return false;
 	}
 
 	if(t->raw) {
@@ -166,7 +166,7 @@ static int stab_print(struct stab* t) {
 		goto done;
 	}
 
-	table = 1;
+	table = true;
 
 	wi = (size_t)snprintf(idx, sizeof(idx), "%zu", t->n - 1);
 	for(i = 0; i < t->n; i++) {
@@ -190,7 +190,7 @@ static int stab_print(struct stab* t) {
 		}
 
 		if(strcmp(t->v[i].want, "wanted")) {
-			held = 1;
+			held = true;
 		}
 	}
 
@@ -209,7 +209,7 @@ static int stab_print(struct stab* t) {
 	for(i = 0; i < t->n; i++) {
 		const struct srow* r = &t->v[i];
 		const char* col = state_colour(st, r->state);
-		int gone = !strcmp(r->pid, "0");
+		bool gone = !strcmp(r->pid, "0");
 		size_t pl = gone ? 1 : strlen(r->pid);
 
 		printf("  %s%*zu%s  %-*s  ", st->dim, (int)wi, i, st->reset,
@@ -238,7 +238,7 @@ done:
 	free(t->v);
 	t->v = NULL;
 	t->n = t->cap = 0;
-	t->raw = 0;
+	t->raw = false;
 
 	return table;
 }
@@ -255,7 +255,7 @@ static const char* log_tag(const char* l) {
 }
 
 // the tag in the colour ninit gives it on the console
-static void log_print(const char* l, int errors, int tty) {
+static void log_print(const char* l, bool errors, bool tty) {
 	static const char* const col[][2] = {
 		{ "DONE", "\033[32m" },
 		{ "NOTE", "\033[36m" },
@@ -326,29 +326,30 @@ int cmd_ctl(const char* verb, int argc, char** argv) {
 	const char* name = NULL;
 	struct stab tab = { 0 };
 	size_t held = 0, at;
-	int fd, k, endopts = 0, rc = NCTL_EXIT_USAGE, seen_end = 0;
-	int tabular = !strcmp(verb, "status"), log = !strcmp(verb, "log");
-	int errors = 0, watch = 0, boot = 0, tty = isatty(STDOUT_FILENO);
+	int fd, k, rc = NCTL_EXIT_USAGE;
+	bool endopts = false, seen_end = false;
+	bool tabular = !strcmp(verb, "status"), log = !strcmp(verb, "log");
+	bool errors = false, watch = false, boot = false, tty = isatty(STDOUT_FILENO);
 	ssize_t n;
 
 	for(k = 0; k < argc; k++) {
 		if(!endopts && !strcmp(argv[k], "--")) {
-			endopts = 1;
+			endopts = true;
 			continue;
 		}
 
 		if(!endopts && log && (!strcmp(argv[k], "-e") || !strcmp(argv[k], "--error"))) {
-			errors = 1;
+			errors = true;
 			continue;
 		}
 
 		if(!endopts && log && (!strcmp(argv[k], "-w") || !strcmp(argv[k], "--watch"))) {
-			watch = 1;
+			watch = true;
 			continue;
 		}
 
 		if(!endopts && log && (!strcmp(argv[k], "-t") || !strcmp(argv[k], "--time"))) {
-			boot = 1;
+			boot = true;
 			continue;
 		}
 
@@ -433,7 +434,7 @@ int cmd_ctl(const char* verb, int argc, char** argv) {
 					printf("%s\n", p + NCTL_TAG_LEN);
 				}
 			} else if(NCTL_IS_OK(p)) {
-				int shown = stab_print(&tab);
+				bool shown = stab_print(&tab);
 
 				// for one service the trailing line only repeats its name
 				if(!log && (!tabular || !name)) {
@@ -442,12 +443,12 @@ int cmd_ctl(const char* verb, int argc, char** argv) {
 				}
 
 				rc = NCTL_EXIT_OK;
-				seen_end = 1;
+				seen_end = true;
 			} else if(NCTL_IS_ERR(p)) {
 				stab_print(&tab);
 				fprintf(stderr, "ninitctl: %s\n", p + NCTL_TAG_LEN);
 				rc = NCTL_EXIT_FAIL;
-				seen_end = 1;
+				seen_end = true;
 			} else if(*p) {
 				fprintf(stderr, "ninitctl: malformed reply: %s\n", p);
 			}

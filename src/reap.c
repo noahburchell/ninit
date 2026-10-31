@@ -10,6 +10,7 @@
 #include "state.h"
 
 #include <errno.h>
+#include <inttypes.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -19,10 +20,10 @@
 #define RETRY_MIN_MS	   10
 #define RESTART_SETTLED_MS 10000
 
-static const unsigned restart_delay_ms[] = { 100, 250, 500, 1000, 2000, 5000 };
+static const uint16_t restart_delay_ms[] = { 100, 250, 500, 1000, 2000, 5000 };
 
-static unsigned retry_delay_ms(uint32_t i) {
-	unsigned d = ng_pol(map, i)->retry_ms;
+static uint16_t retry_delay_ms(uint32_t i) {
+	uint16_t d = ng_pol(map, i)->retry_ms;
 
 	return d < RETRY_MIN_MS ? RETRY_MIN_MS : d;
 }
@@ -46,7 +47,7 @@ void service_failed(uint32_t i, int status) {
 	enum fail_act act;
 
 	kill_group(i);
-	drain_out(i, DRAIN_FINAL_CHUNKS, 0);
+	drain_out(i, DRAIN_FINAL_CHUNKS, false);
 	close_fds(i);
 	r->starting = 0;
 
@@ -78,18 +79,18 @@ void service_failed(uint32_t i, int status) {
 }
 
 static void give_up(uint32_t i, int status) {
-	unsigned tries = ng_start_tries(map, i);
+	uint8_t tries = ng_start_tries(map, i);
 
 	fail_apply(i, fail_service(map, i, status, tries, tries, tail_of(&runs[i])));
 }
 
 // an instance that never became ready was not up, so it neither resets the delay nor counts as up
-static void restart_schedule(uint32_t i, int status, int was_up) {
+static void restart_schedule(uint32_t i, int status, bool was_up) {
 	struct run* r = &runs[i];
-	unsigned last = sizeof(restart_delay_ms) / sizeof(*restart_delay_ms) - 1;
-	long long alive = now_ms() - r->started;
-	unsigned d;
-	int first;
+	uint8_t last = sizeof(restart_delay_ms) / sizeof(*restart_delay_ms) - 1;
+	int64_t alive = now_ms() - r->started;
+	uint16_t d;
+	bool first;
 	char how[64];
 
 	if(was_up && alive >= RESTART_SETTLED_MS) {
@@ -103,7 +104,7 @@ static void restart_schedule(uint32_t i, int status, int was_up) {
 	}
 
 	kill_group(i);
-	drain_out(i, DRAIN_FINAL_CHUNKS, 0);
+	drain_out(i, DRAIN_FINAL_CHUNKS, false);
 	close_fds(i);
 	svc_abandon(i);
 	r->restart_at = now_ms() + d;
@@ -111,10 +112,10 @@ static void restart_schedule(uint32_t i, int status, int was_up) {
 
 	fail_describe(status, how, sizeof(how));
 	if(was_up) {
-		log_warn("%s: exited (%s) after %lld ms up, restarting in %u ms",
+		log_warn("%s: exited (%s) after %" PRId64 " ms up, restarting in %" PRIu16 " ms",
 			 ng_name(map, i), how, alive, d);
 	} else {
-		log_warn("%s: exited (%s) after %lld ms, before it became ready, restarting in %u ms",
+		log_warn("%s: exited (%s) after %" PRId64 " ms, before it became ready, restarting in %" PRIu16 " ms",
 			 ng_name(map, i), how, alive, d);
 	}
 
@@ -135,7 +136,7 @@ void start_failed(uint32_t i, int status) {
 	}
 
 	if(!shutting_down && ng_restart(map, i)) {
-		restart_schedule(i, status, 0);
+		restart_schedule(i, status, false);
 		return;
 	}
 
@@ -147,7 +148,7 @@ void start_failed(uint32_t i, int status) {
 	maybe_free(i);
 }
 
-static void fire_restart(uint32_t i, long long now) {
+static void fire_restart(uint32_t i, int64_t now) {
 	struct run* r = &runs[i];
 	const char* why;
 
@@ -182,13 +183,13 @@ static void fire_restart(uint32_t i, long long now) {
 		if(state[i] == NG_ST_RUNNING) {
 			service_failed(i, EXIT_NOEXEC);
 		} else {
-			restart_schedule(i, EXIT_NOEXEC, 0);
+			restart_schedule(i, EXIT_NOEXEC, false);
 		}
 	}
 }
 
 void fire_restarts(void) {
-	long long now = now_ms();
+	int64_t now = now_ms();
 	uint32_t k;
 
 	if(shutting_down) {
@@ -216,7 +217,7 @@ static void child_exited(uint32_t i, int status) {
 	const char* name = ng_name(map, i);
 	char how[64];
 
-	drain_out(i, DRAIN_FINAL_CHUNKS, 0);
+	drain_out(i, DRAIN_FINAL_CHUNKS, false);
 
 	if(r->ntf_fd >= 0 && !r->ntf_exec) {
 		drain_notify(i, DRAIN_FINAL_CHUNKS);
@@ -234,7 +235,7 @@ static void child_exited(uint32_t i, int status) {
 			kill_group(i);
 		}
 
-		drain_out(i, DRAIN_FINAL_CHUNKS, 0);
+		drain_out(i, DRAIN_FINAL_CHUNKS, false);
 		close_fds(i);
 		if(state[i] == NG_ST_RUNNING) {
 			n_active--;
@@ -247,7 +248,7 @@ static void child_exited(uint32_t i, int status) {
 	}
 
 	if(state[i] != NG_ST_RUNNING) {
-		int was_up = !r->starting;
+		bool was_up = !r->starting;
 
 		r->starting = 0;
 		if(state[i] == NG_ST_DONE && !shutting_down) {
@@ -264,10 +265,10 @@ static void child_exited(uint32_t i, int status) {
 			}
 
 			fail_describe(status, how, sizeof(how));
-			log_warn("%s: exited (%s) after %lld ms up", name, how,
+			log_warn("%s: exited (%s) after %" PRId64 " ms up", name, how,
 				 now_ms() - r->started);
 			kill_group(i);
-			drain_out(i, DRAIN_FINAL_CHUNKS, 0);
+			drain_out(i, DRAIN_FINAL_CHUNKS, false);
 			if(r->tail_len) {
 				log_raw(LOG_WARN, tail_of(r));
 			}
@@ -298,9 +299,9 @@ static void child_exited(uint32_t i, int status) {
 
 	if(ng_svcs(map)[i].type == NG_TYPE_ONESHOT) {
 		if(WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-			long long ms = now_ms() - r->started;
+			int64_t ms = now_ms() - r->started;
 
-			log_done("%s (%lld ms)", name, ms);
+			log_done("%s (%" PRId64 " ms)", name, ms);
 			complete(i);
 			maybe_free(i);
 		} else {
@@ -333,7 +334,8 @@ static void stale_reaped(uint32_t i, pid_t pid) {
 
 void reap(void) {
 	for(;;) {
-		int status, stale;
+		int status;
+		bool stale;
 		pid_t pid = waitpid(-1, &status, WNOHANG);
 		uint32_t i;
 

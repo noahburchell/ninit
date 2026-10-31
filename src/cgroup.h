@@ -9,11 +9,11 @@
 #define CG_DIR	    CG_BASE "/ninit.services"
 #define CG_PATH_MAX (sizeof(CG_DIR) + NG_MAX_NAME + 24)
 
-extern int cg_ok;
+extern bool cg_ok;
 
 void cgroup_init(void);
-int cg_path(uint32_t i, const char* leaf, char* buf, size_t cap);
+bool cg_path(uint32_t i, const char* leaf, char* buf, size_t cap);
 void cgroup_make(uint32_t i, char* procs, size_t cap);
 int cgroup_populated(uint32_t i);
-int cgroup_drop(uint32_t i);
+bool cgroup_drop(uint32_t i);
 int cgroup_signal(uint32_t i, int sig);

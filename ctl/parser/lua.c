@@ -5,11 +5,11 @@
 #include <stdint.h>
 #include <string.h>
 
-static int lua_claims(str base) {
+static bool lua_claims(str base) {
 	return claims_versioned(base, STR("lua")) || str_prefix(base, STR("luajit"));
 }
 
-static int lua_blank(char c) {
+static bool lua_blank(char c) {
 	return c == ' ' || c == '\t' || c == '\v' || c == '\f';
 }
 
@@ -75,12 +75,12 @@ static size_t lua_str(const char* s, size_t i, size_t n) {
 // lua counts a lone carriage return as a line, and \n\r as one line where they meet
 static size_t lua_strip(char* s, size_t n, size_t code) {
 	size_t i = code, j = code, e, lv;
-	int pend = 0, crlf = 0;
+	bool pend = false, crlf = false;
 
 	while(i < n) {
-		int bol = 1;
+		bool bol = true;
 
-		pend = 0;
+		pend = false;
 		while(i < n && lua_blank(s[i])) {
 			i++;
 		}
@@ -137,8 +137,8 @@ static size_t lua_strip(char* s, size_t n, size_t code) {
 					if(nl) {
 						memset(s + j, '\n', nl);
 						j += nl;
-						bol = 1;
-						pend = 0;
+						bol = true;
+						pend = false;
 					} else {
 						pend = !bol;
 					}
@@ -153,7 +153,7 @@ static size_t lua_strip(char* s, size_t n, size_t code) {
 					}
 				}
 
-				pend = 0;
+				pend = false;
 				i = e;
 				continue;
 			}
@@ -162,7 +162,7 @@ static size_t lua_strip(char* s, size_t n, size_t code) {
 				s[j++] = ' ';
 			}
 
-			pend = bol = 0;
+			pend = bol = false;
 			e = i + 1;
 			if(c == '\'' || c == '"') {
 				e = lua_str(s, i, n);
@@ -197,7 +197,7 @@ bail:
 static size_t lua_store(struct src* s, char* body, size_t len, size_t code_off) {
 	size_t n = blank_header(s, body, len, code_off);
 
-	s->stripped = 1;
+	s->stripped = true;
 
 	return lua_strip(body, n, n - (len - code_off));
 }

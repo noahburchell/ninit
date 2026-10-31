@@ -4,10 +4,10 @@
 
 #include <string.h>
 
-int g_sh_lexed = 1;
+bool g_sh_lexed = true;
 
 // the stripper follows sh lexing, under zsh it would cut glob flags such as (#i)
-int sh_lexed(const char* argv0) {
+bool sh_lexed(const char* argv0) {
 	static const char* const names[] = {
 		"sh",
 		"bash",
@@ -24,15 +24,15 @@ int sh_lexed(const char* argv0) {
 
 	for(size_t k = 0; k < sizeof(names) / sizeof(*names); k++) {
 		if(!strcmp(base, names[k])) {
-			return 1;
+			return true;
 		}
 	}
 
-	return 0;
+	return false;
 }
 
 // the characters of a word the shell passes through unchanged, no expansion, no quoting
-static int plain_char(char c) {
+static bool plain_char(char c) {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 	       || c == '_' || c == '.' || c == '/' || c == ':' || c == ',' || c == '=' || c == '+'
 	       || c == '%' || c == '@' || c == '-';
@@ -96,7 +96,7 @@ static size_t shell_store(struct src* s, char* body, size_t len, size_t code_off
 		return len;
 	}
 
-	s->stripped = 1;
+	s->stripped = true;
 	len = compact(body, len, code_off, s->name);
 	detect_direct(s, body);
 

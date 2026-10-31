@@ -23,12 +23,12 @@ struct cz_out {
 	const char* fname;
 };
 
-static size_t sk_cmd(const char* s, size_t i, size_t n, int d, struct cz_out* e, int nested);
-static size_t sk_dq(const char* s, size_t i, size_t n, int d);
-static size_t sk_brace(const char* s, size_t i, size_t n, int d);
-static size_t sk_pair(const char* s, size_t i, size_t n, int d, char open, char close, unsigned depth);
+static size_t sk_cmd(const char* s, size_t i, size_t n, uint8_t d, struct cz_out* e, bool nested);
+static size_t sk_dq(const char* s, size_t i, size_t n, uint8_t d);
+static size_t sk_brace(const char* s, size_t i, size_t n, uint8_t d);
+static size_t sk_pair(const char* s, size_t i, size_t n, uint8_t d, char open, char close, uint32_t depth);
 
-static int cz_meta(char c) {
+static bool cz_meta(char c) {
 	switch(c) {
 		case ';':
 		case '&':
@@ -37,13 +37,13 @@ static int cz_meta(char c) {
 		case ')':
 		case '<':
 		case '>':
-			return 1;
+			return true;
 	}
 
-	return 0;
+	return false;
 }
 
-static int cz_delim(char c) {
+static bool cz_delim(char c) {
 	return !c || c == ' ' || c == '\t' || c == '\n' || cz_meta(c);
 }
 
@@ -65,7 +65,7 @@ static size_t cz_ident(const char* s) {
 #define CZ_W(w, rw) { w, sizeof(w) - 1, rw }
 
 // CZ_NAME means the next word is a name and reserved words may follow it
-static int cz_lead(const char* s, int rw) {
+static uint8_t cz_lead(const char* s, uint8_t rw) {
 	static const struct {
 		char    w[9];
 		uint8_t l, rw;
@@ -119,10 +119,10 @@ static size_t sk_esc(const char* s, size_t i, size_t n, char end) {
 	return i < n ? i + 1 : n;
 }
 
-static size_t sk_dollar(const char* s, size_t i, size_t n, int d, int dq) {
+static size_t sk_dollar(const char* s, size_t i, size_t n, uint8_t d, bool dq) {
 	switch(s[i + 1]) {
 		case '(':
-			return s[i + 2] == '(' ? sk_pair(s, i + 3, n, d, '(', ')', 2) : sk_cmd(s, i + 2, n, d, NULL, 1);
+			return s[i + 2] == '(' ? sk_pair(s, i + 3, n, d, '(', ')', 2) : sk_cmd(s, i + 2, n, d, NULL, true);
 		case '{':
 			return sk_brace(s, i + 2, n, d);
 		case '\'':
@@ -134,7 +134,7 @@ static size_t sk_dollar(const char* s, size_t i, size_t n, int d, int dq) {
 	return i + 1;
 }
 
-static size_t sk_quoted(const char* s, size_t i, size_t n, int d, int dq) {
+static size_t sk_quoted(const char* s, size_t i, size_t n, uint8_t d, bool dq) {
 	switch(s[i]) {
 		case '\\':
 			return i + 2;
@@ -151,31 +151,31 @@ static size_t sk_quoted(const char* s, size_t i, size_t n, int d, int dq) {
 	return i + 1;
 }
 
-static size_t sk_dq(const char* s, size_t i, size_t n, int d) {
+static size_t sk_dq(const char* s, size_t i, size_t n, uint8_t d) {
 	if(++d > CZ_DEPTH) {
 		return n;
 	}
 
 	while(i < n && s[i] != '"') {
-		i = sk_quoted(s, i, n, d, 1);
+		i = sk_quoted(s, i, n, d, true);
 	}
 
 	return i < n ? i + 1 : n;
 }
 
-static size_t sk_brace(const char* s, size_t i, size_t n, int d) {
+static size_t sk_brace(const char* s, size_t i, size_t n, uint8_t d) {
 	if(++d > CZ_DEPTH) {
 		return n;
 	}
 
 	while(i < n && s[i] != '}') {
-		i = sk_quoted(s, i, n, d, 0);
+		i = sk_quoted(s, i, n, d, false);
 	}
 
 	return i < n ? i + 1 : n;
 }
 
-static size_t sk_pair(const char* s, size_t i, size_t n, int d, char open, char close, unsigned depth) {
+static size_t sk_pair(const char* s, size_t i, size_t n, uint8_t d, char open, char close, uint32_t depth) {
 	if(++d > CZ_DEPTH) {
 		return n;
 	}
@@ -191,20 +191,20 @@ static size_t sk_pair(const char* s, size_t i, size_t n, int d, char open, char 
 
 			i++;
 		} else {
-			i = sk_quoted(s, i, n, d, 0);
+			i = sk_quoted(s, i, n, d, false);
 		}
 	}
 
 	return n;
 }
 
-static size_t sk_regex(const char* s, size_t i, size_t n, int d) {
+static size_t sk_regex(const char* s, size_t i, size_t n, uint8_t d) {
 	while(s[i] == ' ' || s[i] == '\t') {
 		i++;
 	}
 
 	while(i < n && s[i] != ' ' && s[i] != '\t' && s[i] != '\n') {
-		i = s[i] == '(' ? sk_pair(s, i + 1, n, d, '(', ')', 1) : sk_quoted(s, i, n, d, 0);
+		i = s[i] == '(' ? sk_pair(s, i + 1, n, d, '(', ')', 1) : sk_quoted(s, i, n, d, false);
 	}
 
 	return i < n ? i : n;
@@ -293,7 +293,7 @@ static size_t hd_tag(const char* s, size_t i, size_t n, struct cz_hd* h) {
 static size_t hd_body(const char* s, size_t i, size_t n, const struct cz_hd* h, struct cz_out* e) {
 	while(i < n) {
 		size_t b = i, p, eol, end, r, seg, m = 0;
-		int last = 1, join;
+		bool last = true, join;
 
 		if(h->dash) {
 			while(b < n && s[b] == '\t') {
@@ -311,7 +311,7 @@ static size_t hd_body(const char* s, size_t i, size_t n, const struct cz_hd* h, 
 			join = !h->quoted && nl && ((eol - r) & 1);
 			seg = eol - p - (size_t)join;
 			if(last && (seg > h->len - m || memcmp(s + p, h->tag + m, seg))) {
-				last = 0;
+				last = false;
 			}
 
 			m += seg;
@@ -346,17 +346,17 @@ static void cz_copy(struct cz_out* e, const char* s, size_t from, size_t to) {
 	e->keep = e->j;
 }
 
-static size_t cz_sub(const char* s, size_t i, size_t n, int d, struct cz_out* e) {
+static size_t cz_sub(const char* s, size_t i, size_t n, uint8_t d, struct cz_out* e) {
 	cz_copy(e, s, i, i + 2);
 
-	return sk_cmd(s, i + 2, n, d, e, 1);
+	return sk_cmd(s, i + 2, n, d, e, true);
 }
 
-static size_t sk_cmd(const char* s, size_t i, size_t n, int d, struct cz_out* e, int nested) {
+static size_t sk_cmd(const char* s, size_t i, size_t n, uint8_t d, struct cz_out* e, bool nested) {
 	struct cz_hd hd[CZ_HD];
-	unsigned nhd = 0, ncs = 0, depth = 0, comp = 0, k;
-	int ws = 1, bol = !nested, pend = 0, cmd = 1, cond = 0, eq = 0, tight = 0, rop = 0, after_eq;
-	int rw = CZ_KW, pat = 0, cin = 0;
+	uint8_t nhd = 0, k, rw = CZ_KW, cin = 0;
+	uint32_t ncs = 0, depth = 0, comp = 0;
+	bool ws = true, bol = !nested, pend = false, cmd = true, cond = false, eq = false, tight = false, rop = false, after_eq, pat = false;
 	size_t at = i, sub = SIZE_MAX;
 
 	if(++d > CZ_DEPTH) {
@@ -368,8 +368,8 @@ static size_t sk_cmd(const char* s, size_t i, size_t n, int d, struct cz_out* e,
 
 		if(c == ' ' || c == '\t') {
 			pend = !bol;
-			ws = 1;
-			tight = 0;
+			ws = true;
+			tight = false;
 			i++;
 			continue;
 		}
@@ -382,8 +382,8 @@ static size_t sk_cmd(const char* s, size_t i, size_t n, int d, struct cz_out* e,
 				}
 			}
 
-			pend = tight = 0;
-			ws = bol = cmd = 1;
+			pend = tight = false;
+			ws = bol = cmd = true;
 			rw = CZ_KW;
 			i++;
 			for(k = 0; k < nhd; k++) {
@@ -402,7 +402,7 @@ static size_t sk_cmd(const char* s, size_t i, size_t n, int d, struct cz_out* e,
 				late_directive(e->fname, (str){ s + i, end - i });
 			}
 
-			pend = tight = 0;
+			pend = tight = false;
 			i = end;
 			continue;
 		}
@@ -417,28 +417,28 @@ static size_t sk_cmd(const char* s, size_t i, size_t n, int d, struct cz_out* e,
 			e->o[e->j++] = ' ';
 		}
 
-		pend = bol = 0;
+		pend = bol = false;
 		after_eq = eq;
 		eq = 0;
 		if(ws && !rop && (!comp || depth != comp) && !cz_meta(c) && (c != '\\' || s[i + 1] != '\n')) {
 			size_t l = cz_ident(s + i);
-			int r = rw;
+			uint8_t r = rw;
 
 			rw = r & CZ_NAME ? CZ_KW : 0;
 			if(cin) {
 				if(cin == 2 && !strncmp(s + i, "in", 2) && cz_delim(s[i + 2])) {
-					pat = 1;
+					pat = true;
 					rw = CZ_KW;
 				}
 
 				cin = cin == 1 ? 2 : 0;
 			} else if(r & CZ_KW && ncs && !strncmp(s + i, "esac", 4) && cz_delim(s[i + 4])) {
 				ncs--;
-				pat = 0;
+				pat = false;
 				rw = CZ_KW;
 			} else if(cond) {
 				if(!strncmp(s + i, "]]", 2) && cz_delim(s[i + 2])) {
-					cond = 0;
+					cond = false;
 					rw = CZ_KW;
 				}
 			} else if(r & CZ_KW && !pat) {
@@ -446,7 +446,7 @@ static size_t sk_cmd(const char* s, size_t i, size_t n, int d, struct cz_out* e,
 					ncs++;
 					cin = 1;
 				} else if(!strncmp(s + i, "[[", 2) && cz_delim(s[i + 2])) {
-					cond = 1;
+					cond = true;
 				} else {
 					rw |= cz_lead(s + i, r);
 				}
@@ -460,13 +460,13 @@ static size_t sk_cmd(const char* s, size_t i, size_t n, int d, struct cz_out* e,
 		}
 
 		if(!cz_meta(c) && (c != '\\' || s[i + 1] != '\n')) {
-			rop = 0;
+			rop = false;
 		}
 
 		switch(c) {
 			case '\\':
 				if(s[i + 1] != '\n') {
-					ws = 0;
+					ws = false;
 				}
 
 				i += i + 1 < n ? 2 : 1;
@@ -474,31 +474,31 @@ static size_t sk_cmd(const char* s, size_t i, size_t n, int d, struct cz_out* e,
 			case '\'':
 			case '"':
 			case '`':
-				i = sk_quoted(s, i, n, d, 0);
-				ws = 0;
+				i = sk_quoted(s, i, n, d, false);
+				ws = false;
 				break;
 			case '$':
 				if(s[i + 1] == '(' && s[i + 2] != '(') {
 					i = cz_sub(s, i, n, d, e);
-					ws = 0;
+					ws = false;
 					continue;
 				}
 
-				i = sk_dollar(s, i, n, d, 0);
-				ws = 0;
+				i = sk_dollar(s, i, n, d, false);
+				ws = false;
 				break;
 			case '(':
 				if(s[i + 1] == '(') {
 					i = sk_pair(s, i + 2, n, d, '(', ')', 2);
-					ws = 1;
-					cmd = 0;
+					ws = true;
+					cmd = false;
 					rw = CZ_KW;
 					break;
 				}
 
 				i++;
 				if(pat) {
-					ws = 1;
+					ws = true;
 					rw = 0;
 					break;
 				}
@@ -508,19 +508,20 @@ static size_t sk_cmd(const char* s, size_t i, size_t n, int d, struct cz_out* e,
 					comp = depth;
 				}
 
-				ws = cmd = 1;
+				ws = cmd = true;
 				rw = CZ_KW;
 				break;
 			case ')':
 				i++;
-				ws = cmd = 1;
+				ws = cmd = true;
 				rw = CZ_KW;
 				if(pat) {
-					pat = 0;
+					pat = false;
 				} else if(depth) {
 					if(depth == comp) {
 						comp = 0;
-						ws = rw = 0;
+						ws = false;
+						rw = 0;
 					}
 
 					depth--;
@@ -539,19 +540,19 @@ static size_t sk_cmd(const char* s, size_t i, size_t n, int d, struct cz_out* e,
 				rw = 0;
 				if(s[i + 1] == '(' && s[i + 2] == '(') {
 					i = sk_pair(s, i + 3, n, d, '(', ')', 2);
-					ws = 0;
+					ws = false;
 					break;
 				}
 
 				if(s[i + 1] == '(') {
 					i = cz_sub(s, i, n, d, e);
-					ws = 0;
+					ws = false;
 					continue;
 				}
 
 				if(c == '<' && s[i + 1] == '<' && s[i + 2] == '<') {
 					i += 3;
-					ws = rop = 1;
+					ws = rop = true;
 					break;
 				}
 
@@ -566,27 +567,27 @@ static size_t sk_cmd(const char* s, size_t i, size_t n, int d, struct cz_out* e,
 					}
 
 					nhd++;
-					ws = 0;
+					ws = false;
 					break;
 				}
 
 				i++;
-				ws = rop = 1;
+				ws = rop = true;
 				break;
 			case ';':
 			case '&':
 			case '|':
 				i++;
 				if(!rop && (c != '&' || s[i] != '>')) {
-					cmd = 1;
+					cmd = true;
 					rw = pat && c == '|' ? 0 : CZ_KW;
 					if(c == ';' && ncs && (s[i] == ';' || s[i] == '&')) {
-						pat = 1;
+						pat = true;
 					}
 				}
 
-				ws = 1;
-				tight = 0;
+				ws = true;
+				tight = false;
 				break;
 			default:
 				if(i == sub) {
@@ -604,7 +605,7 @@ static size_t sk_cmd(const char* s, size_t i, size_t n, int d, struct cz_out* e,
 					i++;
 				}
 
-				ws = 0;
+				ws = false;
 		}
 
 		cz_copy(e, s, at, i);
@@ -621,7 +622,7 @@ bail:
 size_t compact(char* s, size_t n, size_t code_off, const char* fname) {
 	struct cz_out e = { .o = s, .code_off = code_off, .fname = fname };
 
-	sk_cmd(s, 0, n, 0, &e, 0);
+	sk_cmd(s, 0, n, 0, &e, false);
 	s[e.keep] = '\0';
 
 	return e.keep;

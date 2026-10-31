@@ -4,6 +4,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -109,7 +110,8 @@ int cmd_show(int argc, char** argv) {
 	struct stat sb;
 	size_t maplen = 0;
 	void* map = MAP_FAILED;
-	int fd, k, verbose = 0, rc = 1;
+	int fd, k, rc = 1;
+	bool verbose = false;
 
 	for(k = 0; k < argc; k++) {
 		if(!strcmp(argv[k], "-f") || !strcmp(argv[k], "--file")) {
@@ -120,7 +122,7 @@ int cmd_show(int argc, char** argv) {
 
 			path = argv[k];
 		} else if(!strcmp(argv[k], "-v") || !strcmp(argv[k], "--verbose")) {
-			verbose = 1;
+			verbose = true;
 		} else if(argv[k][0] != '-') {
 			path = argv[k];
 		} else {
@@ -213,8 +215,8 @@ int cmd_show(int argc, char** argv) {
 	}
 
 	printf("%s%sdepgraph%s  %s\n", st->bold, st->cyan, st->reset, path);
-	printf("%s%u services, %u edges, %u roots, %u levels, %lu bytes, crc %08x%s\n\n",
-	       st->dim, n, m, h->n_roots, maxlvl, (unsigned long)sb.st_size, h->crc32, st->reset);
+	printf("%s%u services, %u edges, %u roots, %u levels, %" PRIu64 " bytes, crc %08x%s\n\n",
+	       st->dim, n, m, h->n_roots, maxlvl, (uint64_t)sb.st_size, h->crc32, st->reset);
 
 	printf("%s  #  %-*s  %-7s  %-*s  lvl  kills  onfail  rdy  rst  depends on%s\n",
 	       st->dim, (int)wname, "service", "type", (int)wvia, "via", st->reset);

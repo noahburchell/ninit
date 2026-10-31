@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
@@ -126,7 +127,7 @@ void remount_ro(void) {
 		}
 	}
 
-	for(int pass = 0; pass < RO_PASSES; pass++) {
+	for(uint8_t pass = 0; pass < RO_PASSES; pass++) {
 		size_t left = 0, k = n;
 
 		while(k--) {
@@ -187,7 +188,7 @@ void remount_ro(void) {
 		}
 	}
 
-	for(int pass = 0; pass < RO_PASSES; pass++) {
+	for(uint8_t pass = 0; pass < RO_PASSES; pass++) {
 		if(mount(NULL, "/", NULL, MS_REMOUNT | MS_RDONLY, NULL) == 0) {
 			break;
 		} else if(pass == RO_PASSES - 1) {
@@ -233,23 +234,23 @@ void stop_swap(void) {
 	free(buf);
 }
 
-static int wait_pid_ms(pid_t pid, long long ms) {
-	long long deadline = now_ms() + ms;
+static bool wait_pid_ms(pid_t pid, int64_t ms) {
+	int64_t deadline = now_ms() + ms;
 	int st;
 
 	for(;;) {
 		struct pollfd p = { .fd = sfd, .events = POLLIN };
 		struct signalfd_siginfo si;
 		pid_t r = waitpid(pid, &st, WNOHANG);
-		long long left;
+		int64_t left;
 
 		if(r == pid || (r < 0 && errno != EINTR)) {
-			return 1;
+			return true;
 		}
 
 		left = deadline - now_ms();
 		if(left <= 0) {
-			return 0;
+			return false;
 		}
 
 		if(left > SHUTDOWN_DRAIN_MS) {
@@ -262,20 +263,20 @@ static int wait_pid_ms(pid_t pid, long long ms) {
 	}
 }
 
-static int rtc_local(void) {
+static bool rtc_local(void) {
 	char buf[4096];
 	char* p;
 	ssize_t k;
 	int fd = open("/etc/adjtime", O_RDONLY | O_CLOEXEC | O_NOCTTY);
 
 	if(fd < 0) {
-		return 0;
+		return false;
 	}
 
 	k = read(fd, buf, sizeof(buf) - 1);
 	close(fd);
 	if(k <= 0) {
-		return 0;
+		return false;
 	}
 
 	buf[k] = '\0';

@@ -10,6 +10,7 @@
 #include "spawn.h"
 #include "state.h"
 
+#include <inttypes.h>
 #include <signal.h>
 #include <stdint.h>
 #include <string.h>
@@ -30,7 +31,7 @@ static uint32_t ctl_find(const char* name) {
 }
 
 // every connection watching this service learns how its operation ended
-static void svc_op_set(uint32_t i, uint8_t op, long long at) {
+static void svc_op_set(uint32_t i, uint8_t op, int64_t at) {
 	if((runs[i].op == SVC_OP_NONE) != (op == SVC_OP_NONE)) {
 		if(op == SVC_OP_NONE) {
 			n_ops--;
@@ -43,8 +44,8 @@ static void svc_op_set(uint32_t i, uint8_t op, long long at) {
 	runs[i].op_at = at;
 }
 
-static void svc_op_done(uint32_t i, int ok, const char* msg) {
-	int k;
+static void svc_op_done(uint32_t i, bool ok, const char* msg) {
+	uint8_t k;
 
 	svc_op_set(i, SVC_OP_NONE, 0);
 	runs[i].op_restart = 0;
@@ -72,7 +73,7 @@ static void svc_op_start(uint32_t i) {
 			svc_mark_pending(i);
 		}
 
-		svc_op_done(i, 0, why);
+		svc_op_done(i, false, why);
 		return;
 	}
 
@@ -86,16 +87,16 @@ static void svc_op_start(uint32_t i) {
 		live_add(i);
 	}
 
-	svc_op_set(i, SVC_OP_START, now_ms() + (long long)ng_start_ms(map, i) + KILL_GRACE_MS);
+	svc_op_set(i, SVC_OP_START, now_ms() + (int64_t)ng_start_ms(map, i) + KILL_GRACE_MS);
 	spawn(i);
 }
 
-static void svc_op_stop(uint32_t i, int restart) {
+static void svc_op_stop(uint32_t i, bool restart) {
 	struct run* r = &runs[i];
 
 	want[i] = 1;
 	r->restart_at = 0;
-	r->op_restart = (uint8_t)restart;
+	r->op_restart = restart;
 	if(!live_has(i)) {
 		live_add(i);
 	}
@@ -108,7 +109,7 @@ static void svc_op_stop(uint32_t i, int restart) {
 
 		// it exited on its own so nothing else will hand its dependents back
 		go_down(i);
-		svc_op_done(i, 1, "already stopped");
+		svc_op_done(i, true, "already stopped");
 		return;
 	}
 
@@ -117,7 +118,7 @@ static void svc_op_stop(uint32_t i, int restart) {
 }
 
 void ctl_tick(void) {
-	long long now;
+	int64_t now;
 	uint32_t k;
 
 	if(!n_ops) {
@@ -128,7 +129,7 @@ void ctl_tick(void) {
 	for(k = 0; k < n_live;) {
 		uint32_t i = live[k];
 		struct run* r = &runs[i];
-		int gone = svc_gone(i);
+		bool gone = svc_gone(i);
 
 		// a oneshot that left processes behind has no main process whose exit takes it down
 		if(gone && (r->op == SVC_OP_TERM || r->op == SVC_OP_KILL)) {
@@ -141,7 +142,7 @@ void ctl_tick(void) {
 					if(r->op_restart) {
 						svc_op_start(i);
 					} else {
-						svc_op_done(i, 1, "stopped");
+						svc_op_done(i, true, "stopped");
 					}
 
 					break;
@@ -162,31 +163,31 @@ void ctl_tick(void) {
 					if(r->op_restart) {
 						svc_op_start(i);
 					} else {
-						svc_op_done(i, 1, "stopped after SIGKILL");
+						svc_op_done(i, true, "stopped after SIGKILL");
 					}
 
 					break;
 				}
 
 				if(now >= r->op_at) {
-					svc_op_done(i, 0, "did not stop after SIGKILL");
+					svc_op_done(i, false, "did not stop after SIGKILL");
 				}
 
 				break;
 
 			case SVC_OP_START:
 				if(state[i] == NG_ST_DONE && up[i]) {
-					svc_op_done(i, 1, "up");
+					svc_op_done(i, true, "up");
 					break;
 				}
 
 				if(state[i] == NG_ST_FAILED || state[i] == NG_ST_SKIPPED) {
-					svc_op_done(i, 0, state_name(i));
+					svc_op_done(i, false, state_name(i));
 					break;
 				}
 
 				if(now >= r->op_at) {
-					svc_op_done(i, 0, "start timed out");
+					svc_op_done(i, false, "start timed out");
 				}
 
 				break;
@@ -245,7 +246,7 @@ static void ctl_resume(struct ctl* c) {
 void ctl_cmd(struct ctl* c, char* line) {
 	char* arg = strchr(line, ' ');
 	uint32_t i;
-	int restart;
+	bool restart;
 
 	if(arg) {
 		*arg++ = '\0';
@@ -278,7 +279,7 @@ void ctl_cmd(struct ctl* c, char* line) {
 	}
 
 	if(!strcmp(line, "log")) {
-		int watching = 0;
+		uint8_t watching = 0;
 
 		if(arg && !strcmp(arg, "time")) {
 			if(boot_ms < 0) {
@@ -286,7 +287,7 @@ void ctl_cmd(struct ctl* c, char* line) {
 				return;
 			}
 
-			ctl_out(c, NCTL_DATA "%lld ms\n", boot_ms);
+			ctl_out(c, NCTL_DATA "%" PRId64 " ms\n", boot_ms);
 			ctl_end(c, 1, "boot time");
 			return;
 		}
@@ -296,7 +297,7 @@ void ctl_cmd(struct ctl* c, char* line) {
 			return;
 		}
 
-		for(int k = 0; k < n_ctl; k++) {
+		for(uint8_t k = 0; k < n_ctl; k++) {
 			watching += ctl_conn[k].watch;
 		}
 
@@ -361,9 +362,9 @@ void ctl_cmd(struct ctl* c, char* line) {
 	log_note("control: %s %s", line, ng_name(map, i));
 	c->svc = i;
 	if(restart) {
-		svc_op_stop(i, 1);
+		svc_op_stop(i, true);
 	} else if(!strcmp(line, "stop")) {
-		svc_op_stop(i, 0);
+		svc_op_stop(i, false);
 	} else {
 		svc_op_start(i);
 	}

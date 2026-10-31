@@ -13,7 +13,7 @@
 #include <sys/wait.h>
 
 static uint32_t q_head, q_tail;
-static int draining;
+static bool draining;
 
 void signal_group(uint32_t i, int sig) {
 	// a process in both would get the signal twice, a daemon may take a second SIGTERM as a force quit
@@ -42,57 +42,57 @@ void svc_abandon(uint32_t i) {
 	r->pid = 0;
 }
 
-int svc_gone(uint32_t i) {
+bool svc_gone(uint32_t i) {
 	const struct run* r = &runs[i];
 
 	if(r->pid > 0 || r->stale_pid) {
-		return 0;
+		return false;
 	}
 
 	return !r->started || cgroup_populated(i) <= 0;
 }
 
-int svc_can_start(uint32_t i, const char** why) {
+bool svc_can_start(uint32_t i, const char** why) {
 	const struct run* r = &runs[i];
 
 	if(shutting_down) {
 		*why = "shutting down";
-		return 0;
+		return false;
 	}
 
 	if(want[i]) {
 		*why = "held stopped";
-		return 0;
+		return false;
 	}
 
 	if(r->pid > 0) {
 		*why = "already running";
-		return 0;
+		return false;
 	}
 
 	if(r->stale_pid) {
 		*why = "its previous instance has not exited";
-		return 0;
+		return false;
 	}
 
 	if(unmet[i]) {
 		*why = "waiting on a prerequisite";
-		return 0;
+		return false;
 	}
 
-	return 1;
+	return true;
 }
 
-int svc_try_start(uint32_t i) {
+bool svc_try_start(uint32_t i) {
 	const char* why;
 
 	if(!svc_can_start(i, &why)) {
-		return 0;
+		return false;
 	}
 
 	spawn(i);
 
-	return 1;
+	return true;
 }
 
 static void svc_mark_done(uint32_t i) {
@@ -124,12 +124,12 @@ void svc_mark_pending(uint32_t i) {
 	n_pending++;
 }
 
-static void svc_set_up(uint32_t i, int v) {
-	if(!up[i] == !v) {
+static void svc_set_up(uint32_t i, bool v) {
+	if((up[i] != 0) == v) {
 		return;
 	}
 
-	up[i] = (uint8_t)!!v;
+	up[i] = v;
 	if(v) {
 		n_up++;
 	} else {
@@ -151,7 +151,7 @@ static void svc_release(uint32_t i) {
 		return;
 	}
 
-	draining = 1;
+	draining = true;
 	while(q_head < q_tail) {
 		uint32_t j = queue[q_head++], k;
 
@@ -167,7 +167,7 @@ static void svc_release(uint32_t i) {
 					continue;
 				}
 
-				svc_set_up(d, 1);
+				svc_set_up(d, true);
 				svc_mark_done(d);
 				log_done("%s", ng_name(map, d));
 				released[d] = 1;
@@ -189,7 +189,7 @@ static void svc_release(uint32_t i) {
 		}
 	}
 
-	draining = 0;
+	draining = false;
 	q_head = q_tail = 0;
 }
 
@@ -221,7 +221,7 @@ static void svc_reclaim(uint32_t i) {
 			}
 
 			released[d] = 0;
-			svc_set_up(d, 0);
+			svc_set_up(d, false);
 			rqueue[rt++] = d;
 		}
 	}
@@ -232,13 +232,13 @@ void go_down(uint32_t i) {
 		return;
 	}
 
-	svc_set_up(i, 0);
+	svc_set_up(i, false);
 	svc_reclaim(i);
 }
 
 void complete(uint32_t i) {
 	svc_mark_done(i);
-	svc_set_up(i, 1);
+	svc_set_up(i, true);
 	svc_release(i);
 }
 

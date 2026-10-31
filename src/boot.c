@@ -22,7 +22,7 @@
 
 struct rlimit child_nofile;
 char env_locale[NG_LOCALE_MAX][NG_LOCALE_LEN] = { "LANG=" NG_FALLBACK_LANG };
-int n_locale = 1;
+uint8_t n_locale = 1;
 
 void ensure_stdio(void) {
 	int fd;
@@ -50,27 +50,27 @@ void ensure_stdio(void) {
 	}
 }
 
-static int is_mountpoint(const char* path) {
+static bool is_mountpoint(const char* path) {
 	struct stat a, b;
 	char parent[64];
 
 	if(stat(path, &a) < 0) {
-		return 0;
+		return false;
 	}
 
 	if(snprintf(parent, sizeof(parent), "%s/..", path) >= (int)sizeof(parent)) {
-		return 0;
+		return false;
 	}
 
 	if(stat(parent, &b) < 0) {
-		return 0;
+		return false;
 	}
 
 	return a.st_dev != b.st_dev;
 }
 
 static void mount_one(const char* src, const char* dst, const char* type,
-		      unsigned long flags, const char* data) {
+		      uint32_t flags, const char* data) {
 	if(is_mountpoint(dst)) {
 		return;
 	}
@@ -122,7 +122,7 @@ void raise_nofile(void) {
 	rlim_t lo = CHILD_NOFILE_MAX > need ? need : CHILD_NOFILE_MAX;
 	rlim_t ask[3];
 	struct rlimit rl, orig;
-	int n = 0, k;
+	uint8_t n = 0, k;
 
 	if(getrlimit(RLIMIT_NOFILE, &orig) < 0) {
 		orig.rlim_cur = 1024;
@@ -229,13 +229,13 @@ const void* load_graph(const char* path, const char** why) {
 
 void load_locale(void) {
 	const char* why;
-	int n = ng_locale_env(env_locale, NG_LOCALE_MAX, &why);
+	uint8_t n = ng_locale_env(env_locale, NG_LOCALE_MAX, &why);
 
 	if(why) {
 		log_warn("locale: %s %s, ignoring the rest", NG_LOCALE_CONF, why);
 	}
 
-	if(n > 0) {
+	if(n) {
 		n_locale = n;
 		return;
 	}

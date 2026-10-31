@@ -15,9 +15,9 @@ static int keep(const struct dirent* d) {
 	return d->d_name[0] != '.';
 }
 
-static int is_artifact(const char* name, str base) {
+static bool is_artifact(const char* name, str base) {
 	if(!base.p || strncmp(name, base.p, base.n)) {
-		return 0;
+		return false;
 	}
 
 	return !name[base.n] || !strcmp(name + base.n, ".old")
@@ -56,8 +56,8 @@ void read_sources(struct build* b, str out_base) {
 		size_t len;
 		mode_t sm;
 
-		int is_out = is_artifact(ents[k]->d_name, out_base);
-		int is_dg = ng_reserved_name(ents[k]->d_name);
+		bool is_out = is_artifact(ents[k]->d_name, out_base);
+		bool is_dg = ng_reserved_name(ents[k]->d_name);
 
 		if(snprintf(path, sizeof(path), "%s/%s", dir, ents[k]->d_name) >= (int)sizeof(path)) {
 			die("%s/%s: path is too long", dir, ents[k]->d_name);

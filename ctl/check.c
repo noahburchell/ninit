@@ -6,7 +6,6 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <limits.h>
 #include <sched.h>
 #include <signal.h>
 #include <stdint.h>
@@ -47,7 +46,7 @@ struct slot {
 	pid_t     pid;
 	int       errfd;
 	uint32_t  who;
-	long long due;
+	int64_t   due;
 };
 
 struct checks {
@@ -55,12 +54,13 @@ struct checks {
 	char**       failed;
 	uint8_t*     late;
 	uint32_t     nslot, live, bad, unchecked;
-	int          devnull, giveup, userns;
+	int          devnull;
+	bool         giveup, userns;
 	sigset_t     chld, old_mask;
 };
 
 // a new user namespace grants CAP_SYS_CHROOT within it, chroot must come before any exec drops it
-static int enter_root(int userns) {
+static int enter_root(bool userns) {
 	if(userns && unshare(CLONE_NEWUSER) < 0) {
 		return -1;
 	}
@@ -72,7 +72,7 @@ static int enter_root(int userns) {
 static pid_t reap_check(struct checks* c, int* st) {
 	for(;;) {
 		pid_t got = waitpid(-1, st, WNOHANG);
-		long long now, next = LLONG_MAX;
+		int64_t now, next = INT64_MAX;
 		struct timespec ts;
 
 		if(got) {
@@ -95,12 +95,12 @@ static pid_t reap_check(struct checks* c, int* st) {
 			}
 		}
 
-		if(next == LLONG_MAX) {
+		if(next == INT64_MAX) {
 			next = now + 1000;
 		}
 
 		ts.tv_sec = (time_t)((next - now) / 1000);
-		ts.tv_nsec = (long)((next - now) % 1000 * 1000000);
+		ts.tv_nsec = (next - now) % 1000 * 1000000;
 		sigtimedwait(&c->chld, NULL, &ts);
 	}
 }
@@ -129,7 +129,7 @@ static void collect_one(struct checks* c) {
 
 			c->unchecked += c->live;
 			c->live = 0;
-			c->giveup = 1;
+			c->giveup = true;
 			return;
 		}
 
@@ -198,7 +198,7 @@ static void start_one(struct checks* c, struct src* s, uint32_t i, const char* d
 		fprintf(stderr, "ninitctl: warning: memfd_create: %s, "
 				"skipping the syntax check\n",
 			strerror(errno));
-		c->giveup = 1;
+		c->giveup = true;
 		c->unchecked++;
 		return;
 	}
@@ -275,10 +275,10 @@ static void report(struct checks* c, struct src* srcs, uint32_t n, const char* d
 }
 
 // a check for another root runs inside it, through a user namespace when chroot alone is refused
-static int root_errno(int* userns) {
+static int root_errno(bool* userns) {
 	int e = 0;
 
-	for(int u = 0; u < 2; u++) {
+	for(uint8_t u = 0; u < 2; u++) {
 		pid_t pid = fork();
 		int st, r;
 
@@ -311,18 +311,19 @@ static int root_errno(int* userns) {
 }
 
 void check_syntax(struct src* srcs, uint32_t n, const char* dir) {
-	long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+	int64_t ncpu = sysconf(_SC_NPROCESSORS_ONLN);
 	struct checks c = { .nslot = ncpu > 1 ? (uint32_t)ncpu : 1 };
 	struct sigaction dfl = { .sa_handler = SIG_DFL }, old_chld;
 	struct stat sh;
-	int shell_ok = 1, e;
+	bool shell_ok = true;
+	int e;
 
 	// an interpreter #! names was found runnable when the file was read, the shell was not
 	if(sys_stat(NG_SHELL, &sh) < 0 || sys_exec_ok(NG_SHELL, &sh) < 0) {
 		fprintf(stderr, "ninitctl: warning: %s%s is not executable, "
 				"skipping the syntax check of shell scripts\n",
 			g_root_pfx, NG_SHELL);
-		shell_ok = 0;
+		shell_ok = false;
 	}
 
 	if(c.nslot > 32) {
@@ -342,7 +343,7 @@ void check_syntax(struct src* srcs, uint32_t n, const char* dir) {
 	if(g_root && (e = root_errno(&c.userns))) {
 		fprintf(stderr, "ninitctl: warning: chroot %s: %s, skipping the syntax check\n",
 			g_root, strerror(e));
-		c.giveup = 1;
+		c.giveup = true;
 	}
 
 	for(uint32_t i = 0; i < n; i++) {

@@ -72,7 +72,7 @@ void live_add(uint32_t i) {
 	live[n_live++] = i;
 }
 
-int live_has(uint32_t i) {
+bool live_has(uint32_t i) {
 	return runs[i].live_pos < n_live && live[runs[i].live_pos] == i;
 }
 
@@ -83,7 +83,7 @@ void live_del(uint32_t i) {
 	runs[last].live_pos = pos;
 }
 
-uint32_t find_pid(pid_t pid, int* stale) {
+uint32_t find_pid(pid_t pid, bool* stale) {
 	uint32_t i, k;
 
 	if(pid_key) {
@@ -101,12 +101,12 @@ uint32_t find_pid(pid_t pid, int* stale) {
 		uint32_t j = live[k];
 
 		if(runs[j].pid == pid) {
-			*stale = 0;
+			*stale = false;
 			return j;
 		}
 
 		if(runs[j].stale_pid == pid) {
-			*stale = 1;
+			*stale = true;
 			return j;
 		}
 	}

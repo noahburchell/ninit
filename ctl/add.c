@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <sys/file.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
@@ -22,11 +23,11 @@ static int rename_noreplace(const char* from, const char* to) {
 	return renameat2(AT_FDCWD, from, AT_FDCWD, to, RENAME_NOREPLACE);
 #else
 	return (int)syscall(SYS_renameat2, AT_FDCWD, from, AT_FDCWD, to,
-			    (unsigned)RENAME_NOREPLACE);
+			    (uint32_t)RENAME_NOREPLACE);
 #endif
 }
 
-static void print_rebuild_hint(const char* dir, int custom) {
+static void print_rebuild_hint(const char* dir, bool custom) {
 	const char* p;
 
 	if(!custom) {
@@ -46,7 +47,7 @@ static void print_rebuild_hint(const char* dir, int custom) {
 	fputs("'\n", stdout);
 }
 
-static int relink(const char* path, const char* target, int enable) {
+static bool relink(const char* path, const char* target, bool enable) {
 	char fixed[4200], tmp[4200];
 	const char* slash = strrchr(path, '/');
 	int dl = slash ? (int)(slash - path + 1) : 0;
@@ -63,15 +64,15 @@ static int relink(const char* path, const char* target, int enable) {
 	}
 
 	if(n < 0 || (size_t)n >= sizeof(fixed)) {
-		return 0;
+		return false;
 	}
 
 	// a temporary name made from the service name could pass NAME_MAX
-	for(unsigned t = 0;; t++) {
-		n = snprintf(tmp, sizeof(tmp), "%.*s.ninitctl.%d.%u.tmp", dl, path,
+	for(uint16_t t = 0;; t++) {
+		n = snprintf(tmp, sizeof(tmp), "%.*s.ninitctl.%d.%" PRIu16 ".tmp", dl, path,
 			     (int)getpid(), t);
 		if(n < 0 || (size_t)n >= sizeof(tmp)) {
-			return 0;
+			return false;
 		}
 
 		if(symlink(fixed, tmp) == 0) {
@@ -79,37 +80,39 @@ static int relink(const char* path, const char* target, int enable) {
 		}
 
 		if(errno != EEXIST || t == 999) {
-			return 0;
+			return false;
 		}
 	}
 
 	if(rename(tmp, path) < 0) {
 		unlink(tmp);
-		return 0;
+		return false;
 	}
 
-	return 1;
+	return true;
 }
 
-static int join(char* out, size_t cap, const char* dir, const char* name) {
+static bool join(char* out, size_t cap, const char* dir, const char* name) {
 	size_t dl = strlen(dir), nl = strlen(name);
 
 	if(dl + nl + 2 > cap) {
-		return 0;
+		return false;
 	}
 
 	memcpy(out, dir, dl);
 	out[dl] = '/';
 	memcpy(out + dl + 1, name, nl + 1);
 
-	return 1;
+	return true;
 }
 
-int svc_move(int argc, char** argv, int enable) {
+int svc_move(int argc, char** argv, bool enable) {
 	const char* dir = NG_DEFAULT_DIR;
 	const char* verb = enable ? "add" : "del";
 	char unused[4096], from[4096], to[4096];
-	int k, names = 0, moved = 0, bad = 0, dfd, endopts = 0, custom_dir = 0;
+	int k, dfd, endopts = 0;
+	uint32_t names = 0, moved = 0, bad = 0;
+	bool custom_dir = false;
 
 	setvbuf(stdout, NULL, _IOLBF, 0);
 
@@ -126,7 +129,7 @@ int svc_move(int argc, char** argv, int enable) {
 			}
 
 			dir = argv[k];
-			custom_dir = 1;
+			custom_dir = true;
 		} else if(argv[k][0] == '-') {
 			fprintf(stderr, "ninitctl: %s: unknown option '%s'\n", verb, argv[k]);
 			return 2;
@@ -285,5 +288,5 @@ int svc_move(int argc, char** argv, int enable) {
 }
 
 int cmd_add(int argc, char** argv) {
-	return svc_move(argc, argv, 1);
+	return svc_move(argc, argv, true);
 }

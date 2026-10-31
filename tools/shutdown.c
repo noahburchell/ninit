@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <signal.h>
 #ifdef HAVE_STDCKDINT_H
@@ -39,7 +40,7 @@ static const int act_signal[] = {
 	[ACT_HALT] = SIGUSR1,
 };
 
-static const unsigned act_rb[] = {
+static const uint32_t act_rb[] = {
 	[ACT_REBOOT] = RB_AUTOBOOT,
 	[ACT_POWEROFF] = RB_POWER_OFF,
 	[ACT_HALT] = RB_HALT_SYSTEM,
@@ -125,24 +126,24 @@ static void fallback(const char* name, char** argv) {
 }
 
 // seconds until the moment described, or -1
-static long parse_when(const char* s) {
+static int64_t parse_when(const char* s) {
 	char* end;
-	long v;
+	int64_t v;
 
 	if(!strcmp(s, "now")) {
 		return 0;
 	}
 
 	if(*s == '+') {
-		long secs;
+		int64_t secs;
 
 		if(s[1] < '0' || s[1] > '9') {
 			return -1;
 		}
 
 		errno = 0;
-		v = strtol(s + 1, &end, 10);
-		if(errno || end == s + 1 || *end || v < 0 || ckd_mul(&secs, v, 60L)) {
+		v = strtoll(s + 1, &end, 10);
+		if(errno || end == s + 1 || *end || v < 0 || ckd_mul(&secs, v, 60)) {
 			return -1;
 		}
 
@@ -152,7 +153,7 @@ static long parse_when(const char* s) {
 	if(strchr(s, ':')) {
 		struct tm tm;
 		time_t now = time(NULL);
-		long hh, mm, delta;
+		int64_t hh, mm, delta;
 
 		// strtol takes a missing number for 0 and skips blanks and signs
 		if(*s < '0' || *s > '9') {
@@ -160,12 +161,12 @@ static long parse_when(const char* s) {
 		}
 
 		errno = 0;
-		hh = strtol(s, &end, 10);
+		hh = strtoll(s, &end, 10);
 		if(errno || *end != ':' || hh > 23 || end[1] < '0' || end[1] > '9') {
 			return -1;
 		}
 
-		mm = strtol(end + 1, &end, 10);
+		mm = strtoll(end + 1, &end, 10);
 		if(errno || *end || mm > 59) {
 			return -1;
 		}
@@ -216,7 +217,7 @@ static int try_logind(enum act a) {
 }
 
 // a user waits for TIME only after logind says the request can be made
-static int logind_can(enum act a) {
+static bool logind_can(enum act a) {
 	static const char* const method[] = {
 		[ACT_REBOOT] = "org.freedesktop.login1.Manager.CanReboot",
 		[ACT_POWEROFF] = "org.freedesktop.login1.Manager.CanPowerOff",
@@ -230,14 +231,14 @@ static int logind_can(enum act a) {
 	int p[2], st = -1;
 
 	if(pipe2(p, O_CLOEXEC) < 0) {
-		return 0;
+		return false;
 	}
 
 	pid = fork();
 	if(pid < 0) {
 		close(p[0]);
 		close(p[1]);
-		return 0;
+		return false;
 	}
 
 	if(pid == 0) {
@@ -267,7 +268,7 @@ static int logind_can(enum act a) {
 	while((got = waitpid(pid, &st, 0)) < 0 && errno == EINTR)
 		;
 	if(got != pid || !WIFEXITED(st) || WEXITSTATUS(st)) {
-		return 0;
+		return false;
 	}
 
 	w = buf + strspn(buf, " \t\n");
@@ -277,7 +278,7 @@ static int logind_can(enum act a) {
 	return !strcmp(w, "yes") || !strcmp(w, "challenge");
 }
 
-static void warn_console(const char* me, enum act a, long secs) {
+static void warn_console(const char* me, enum act a, int64_t secs) {
 	char msg[160];
 	int fd = open("/dev/console", O_WRONLY | O_NOCTTY | O_CLOEXEC);
 	int n;
@@ -287,11 +288,11 @@ static void warn_console(const char* me, enum act a, long secs) {
 	}
 
 	if(secs >= 60) {
-		n = snprintf(msg, sizeof(msg), "\r\n%s: %s in %ld minute%s\r\n",
-			     me, act_name[a], secs / 60, plural((unsigned long)(secs / 60)));
+		n = snprintf(msg, sizeof(msg), "\r\n%s: %s in %" PRId64 " minute%s\r\n",
+			     me, act_name[a], secs / 60, plural((uint64_t)(secs / 60)));
 	} else {
-		n = snprintf(msg, sizeof(msg), "\r\n%s: %s in %ld second%s\r\n",
-			     me, act_name[a], secs, plural((unsigned long)secs));
+		n = snprintf(msg, sizeof(msg), "\r\n%s: %s in %" PRId64 " second%s\r\n",
+			     me, act_name[a], secs, plural((uint64_t)secs));
 	}
 
 	if(n >= (int)sizeof(msg)) {
@@ -308,8 +309,9 @@ static void warn_console(const char* me, enum act a, long secs) {
 int main(int argc, char** argv) {
 	const char* me = argc > 0 && argv[0] ? path_base(argv[0]) : "ninit-shutdown";
 	enum act act;
-	long when = 0;
-	int is_shutdown, is_telinit, force = 0, have_when = 0, privileged, k;
+	int64_t when = 0;
+	bool is_shutdown, is_telinit, force = false, have_when = false, privileged;
+	int k;
 
 	// another init gets its own tool with every argument, whatever ninit would make of them
 	if(pid1_is_ninit() == 0) {
@@ -344,7 +346,7 @@ int main(int argc, char** argv) {
 		} else if(!strcmp(a, "-p")) {
 			act = ACT_POWEROFF;
 		} else if(!strcmp(a, "-f")) {
-			force = 1;
+			force = true;
 		} else if(!strcmp(a, "-c")) {
 			fprintf(stderr, "%s: a pending shutdown runs in the "
 					"foreground, interrupt it instead\n",
@@ -371,7 +373,7 @@ int main(int argc, char** argv) {
 				return 2;
 			}
 
-			have_when = 1;
+			have_when = true;
 		} else if(!have_when) {
 			when = parse_when(a);
 			if(when < 0) {
@@ -379,7 +381,7 @@ int main(int argc, char** argv) {
 				return 2;
 			}
 
-			have_when = 1;
+			have_when = true;
 		}
 	}
 
@@ -415,13 +417,13 @@ int main(int argc, char** argv) {
 
 	if(when > 0) {
 		warn_console(me, act, when);
-		printf("%s: %s in %ld seconds\n", me, act_name[act], when);
+		printf("%s: %s in %" PRId64 " seconds\n", me, act_name[act], when);
 		fflush(stdout);
 		// sleep takes an unsigned int and +MINUTES can ask for more
 		while(when > 0) {
-			unsigned s = when > UINT_MAX ? UINT_MAX : (unsigned)when;
+			uint32_t s = when > UINT32_MAX ? UINT32_MAX : (uint32_t)when;
 
-			when -= (long)(s - sleep(s));
+			when -= (int64_t)(s - sleep(s));
 		}
 	}
 

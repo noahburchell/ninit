@@ -123,8 +123,8 @@ struct ready {
 	uint32_t  n;
 };
 
-static int ready_before(const struct graph* g, uint32_t a, uint32_t b) {
-	int ra = !g->indeg[a], rb = !g->indeg[b];
+static bool ready_before(const struct graph* g, uint32_t a, uint32_t b) {
+	bool ra = !g->indeg[a], rb = !g->indeg[b];
 
 	if(ra != rb) {
 		return ra;
@@ -235,7 +235,7 @@ void link_graph(struct build* b) {
 
 	for(i = 0; i < n; i++) {
 		for(j = 0; j < srcs[i].depon.n + srcs[i].depof.n; j++) {
-			int rev = j >= srcs[i].depon.n;
+			bool rev = j >= srcs[i].depon.n;
 			const char* name = rev ? srcs[i].depof.v[j - srcs[i].depon.n]
 					       : srcs[i].depon.v[j];
 			uint32_t o = lookup(srcs, byname, n, name);

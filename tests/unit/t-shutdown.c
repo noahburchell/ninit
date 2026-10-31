@@ -214,7 +214,7 @@ static int shim_execve(const char* p, char* const* a, char* const* e) {
 
 int sfd = -1;
 
-long long now_ms(void) {
+int64_t now_ms(void) {
 	return fake_ms;
 }
 

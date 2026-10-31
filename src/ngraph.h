@@ -167,8 +167,8 @@ static inline uint32_t ng_stop_ms(const void* m, uint32_t i) {
 	return v ? v : NG_DEF_STOP_MS;
 }
 
-static inline unsigned ng_start_tries(const void* m, uint32_t i) {
-	unsigned v = ng_pol(m, i)->start_tries;
+static inline uint8_t ng_start_tries(const void* m, uint32_t i) {
+	uint8_t v = ng_pol(m, i)->start_tries;
 
 	if(v) {
 		return v;
@@ -178,7 +178,7 @@ static inline unsigned ng_start_tries(const void* m, uint32_t i) {
 						    : NG_DEF_TRIES_ONESHOT;
 }
 
-static inline int ng_order_only(const void* m, uint32_t i) {
+static inline bool ng_order_only(const void* m, uint32_t i) {
 	return ng_pol(m, i)->pflags & NG_PF_ORDER_ONLY;
 }
 
@@ -190,11 +190,11 @@ static inline const char* ng_script(const void* m, uint32_t i) {
 	return ng_blob(m) + ng_svcs(m)[i].script_off;
 }
 
-static inline int ng_interp(const void* m, uint32_t i) {
+static inline bool ng_interp(const void* m, uint32_t i) {
 	return ng_svcs(m)[i].flags & NG_FLAG_INTERP;
 }
 
-static inline int ng_direct(const void* m, uint32_t i) {
+static inline bool ng_direct(const void* m, uint32_t i) {
 	return ng_svcs(m)[i].flags & NG_FLAG_DIRECT;
 }
 
@@ -212,7 +212,7 @@ static inline uint8_t ng_onfail(const void* m, uint32_t i) {
 	return ng_svcs(m)[i].flags & NG_ONFAIL_MASK;
 }
 
-static inline int ng_restart(const void* m, uint32_t i) {
+static inline bool ng_restart(const void* m, uint32_t i) {
 	return ng_svcs(m)[i].flags & NG_FLAG_RESTART;
 }
 
@@ -225,10 +225,10 @@ const char* ng_verify(const void* map, size_t len);
 const char* ng_typename(uint8_t type);
 
 const char* ng_name_problem(const char* name);
-int ng_reserved_name(const char* name);
+bool ng_reserved_name(const char* name);
 
 const char* ng_onfailname(uint8_t policy);
 
-int ng_locale_env(char (*out)[NG_LOCALE_LEN], int max, const char** why);
+uint8_t ng_locale_env(char (*out)[NG_LOCALE_LEN], uint8_t max, const char** why);
 // the same for an open locale.conf, which it closes, a negative fd is a missing file
-int ng_locale_fd(int fd, char (*out)[NG_LOCALE_LEN], int max, const char** why);
+uint8_t ng_locale_fd(int fd, char (*out)[NG_LOCALE_LEN], uint8_t max, const char** why);

@@ -9,6 +9,7 @@
 #include "state.h"
 
 #include <errno.h>
+#include <inttypes.h>
 #include <signal.h>
 #include <stdint.h>
 #include <string.h>
@@ -97,7 +98,7 @@ static void absorb(uint32_t i, const char* buf, size_t len) {
 	}
 }
 
-void drain_out(uint32_t i, unsigned chunks, int budgeted) {
+void drain_out(uint32_t i, uint8_t chunks, bool budgeted) {
 	struct run* r = &runs[i];
 	char buf[4096];
 
@@ -141,7 +142,7 @@ void drain_out(uint32_t i, unsigned chunks, int budgeted) {
 	}
 }
 
-void drain_notify(uint32_t i, unsigned chunks) {
+void drain_notify(uint32_t i, uint8_t chunks) {
 	struct run* r = &runs[i];
 	char buf[256];
 
@@ -150,10 +151,10 @@ void drain_notify(uint32_t i, unsigned chunks) {
 
 		if(k > 0) {
 			if(r->starting && !r->timedout && !r->hup && memchr(buf, '\n', (size_t)k)) {
-				long long ms = now_ms() - r->started;
+				int64_t ms = now_ms() - r->started;
 
 				r->starting = 0;
-				log_done("%s (%lld ms)", ng_name(map, i), ms);
+				log_done("%s (%" PRId64 " ms)", ng_name(map, i), ms);
 				if(state[i] == NG_ST_RUNNING || state[i] == NG_ST_DONE) {
 					complete(i);
 				}
@@ -210,7 +211,7 @@ void drain_exec(uint32_t i) {
 		}
 
 		r->starting = 0;
-		log_done("%s (%lld ms)", ng_name(map, i), now_ms() - r->started);
+		log_done("%s (%" PRId64 " ms)", ng_name(map, i), now_ms() - r->started);
 		if(state[i] == NG_ST_RUNNING || state[i] == NG_ST_DONE) {
 			complete(i);
 		}
@@ -224,7 +225,7 @@ void drain_output(void) {
 		uint32_t i = live[k];
 
 		if(runs[i].out_fd >= 0) {
-			drain_out(i, DRAIN_POLL_CHUNKS, 1);
+			drain_out(i, DRAIN_POLL_CHUNKS, true);
 		}
 	}
 }
@@ -236,7 +237,7 @@ void drain_all(void) {
 		uint32_t i = live[k];
 
 		if(runs[i].out_fd >= 0) {
-			drain_out(i, DRAIN_POLL_CHUNKS, 1);
+			drain_out(i, DRAIN_POLL_CHUNKS, true);
 		}
 
 		if(runs[i].ntf_fd >= 0) {

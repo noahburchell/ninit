@@ -23,7 +23,7 @@ static char* trim(char* s) {
 	return s;
 }
 
-static void split_into(struct strv* out, char* val, int comma) {
+static void split_into(struct strv* out, char* val, bool comma) {
 	char* p = val;
 
 	while(*p) {
@@ -52,7 +52,7 @@ static void split_into(struct strv* out, char* val, int comma) {
 
 static uint32_t parse_ms(const char* val, const char* fname, const char* key) {
 	char* end;
-	unsigned long long v, mul = 1;
+	uint64_t v, mul = 1;
 
 	errno = 0;
 	v = strtoull(val, &end, 10);
@@ -86,7 +86,7 @@ static uint32_t parse_ms(const char* val, const char* fname, const char* key) {
 	return (uint32_t)v;
 }
 
-static int has_code(const char* buf) {
+static bool has_code(const char* buf) {
 	const char* p = buf;
 
 	while(*p) {
@@ -95,7 +95,7 @@ static int has_code(const char* buf) {
 		}
 
 		if(*p && *p != '#' && *p != '\n' && *p != '\r') {
-			return 1;
+			return true;
 		}
 
 		p = strchr(p, '\n');
@@ -106,14 +106,14 @@ static int has_code(const char* buf) {
 		p++;
 	}
 
-	return 0;
+	return false;
 }
 
 // bash line numbers must match the file
 void parse_src(struct src* s, const char* fname, char* body, size_t len) {
 	char* scratch = xmalloc(len + 1);
 	char* line = scratch;
-	int code;
+	bool code;
 
 	memcpy(scratch, body, len + 1);
 
@@ -170,9 +170,9 @@ void parse_src(struct src* s, const char* fname, char* body, size_t len) {
 				    g_dir, fname, val);
 			}
 		} else if(!strcmp(key, "depon")) {
-			split_into(&s->depon, val, 1);
+			split_into(&s->depon, val, true);
 		} else if(!strcmp(key, "depof")) {
-			split_into(&s->depof, val, 1);
+			split_into(&s->depof, val, true);
 		} else if(!strcmp(key, "onfail")) {
 			if(!strcmp(val, "warn")) {
 				s->onfail = NG_ONFAIL_WARN;
@@ -185,7 +185,7 @@ void parse_src(struct src* s, const char* fname, char* body, size_t len) {
 				    g_dir, fname, val);
 			}
 
-			s->have_onfail = 1;
+			s->have_onfail = true;
 		} else if(!strcmp(key, "restart")) {
 			if(!strcmp(val, "always")) {
 				s->restart = 1;
@@ -197,10 +197,10 @@ void parse_src(struct src* s, const char* fname, char* body, size_t len) {
 			}
 		} else if(!strcmp(key, "notify")) {
 			char* end;
-			unsigned long fd;
+			uint64_t fd;
 
 			errno = 0;
-			fd = strtoul(val, &end, 10);
+			fd = strtoull(val, &end, 10);
 			if(*val == '-' || errno || end == val || *end
 			   || fd < NG_NOTIFY_MIN || fd > NG_NOTIFY_MAX) {
 				die("%s/%s: notify:%s must be between %u and %u",
@@ -223,10 +223,10 @@ void parse_src(struct src* s, const char* fname, char* body, size_t len) {
 			s->retry_ms = (uint16_t)d;
 		} else if(!strcmp(key, "start-tries")) {
 			char* end;
-			unsigned long t;
+			uint64_t t;
 
 			errno = 0;
-			t = strtoul(val, &end, 10);
+			t = strtoull(val, &end, 10);
 			if(*val == '-' || errno || end == val || *end
 			   || t < 1 || t > NG_MAX_TRIES) {
 				die("%s/%s: start-tries:%s must be between 1 and %u",
@@ -254,7 +254,7 @@ void parse_src(struct src* s, const char* fname, char* body, size_t len) {
 				die("%s/%s: unknown type:%s", g_dir, fname, val);
 			}
 
-			s->have_type = 1;
+			s->have_type = true;
 		} else {
 			die("%s/%s: unknown directive '%s'", g_dir, fname, key);
 		}

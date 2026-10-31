@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <poll.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -19,11 +20,11 @@
 #define LOG_HOLD_MS  1000
 
 static int log_fd = 2;
-static int log_color;
-static long long log_start;
-static unsigned long log_dropped;
-static int log_stalled;
-static long long log_wait_until;
+static bool log_color;
+static int64_t log_start;
+static uint32_t log_dropped;
+static bool log_stalled;
+static int64_t log_wait_until;
 
 // the rest of a line the console took in part, written before any later line
 static char log_pend[LOG_CON];
@@ -72,12 +73,12 @@ static uint32_t seen_n;
 
 // the last rep_len lines logged repeat, rep_pos lines into the current repetition
 static uint32_t rep_len, rep_pos;
-static unsigned long rep_count;
-static unsigned rep_backoff;
-static long long rep_ms, rep_due, hold_due;
-static long long hold_ms[LOG_REPEAT], first_ms[LOG_REPEAT];
+static uint32_t rep_count;
+static uint8_t rep_backoff;
+static int64_t rep_ms, rep_due, hold_due;
+static int64_t hold_ms[LOG_REPEAT], first_ms[LOG_REPEAT];
 
-static const long long repeat_ms[] = { 30000, 120000, 600000 };
+static const uint32_t repeat_ms[] = { 30000, 120000, 600000 };
 
 // the offset past the newline that ends the line starting at at, at < ring_head
 static uint64_t ring_eol(uint64_t at) {
@@ -128,7 +129,7 @@ static void ring_get(uint64_t at, char* dst, size_t n) {
 	memcpy(dst + k, log_ring, n - k);
 }
 
-static int ring_eq(uint64_t at, str s) {
+static bool ring_eq(uint64_t at, str s) {
 	size_t off = (size_t)(at & (LOG_RING - 1)), k = LOG_RING - off;
 
 	if(k > s.n) {
@@ -161,7 +162,7 @@ static void log_set_nonblock(void) {
 
 void log_batch_begin(void) {
 	log_wait_until = mono_ms() + LOG_BATCH_MS;
-	log_stalled = 0;
+	log_stalled = false;
 }
 
 void log_init(void) {
@@ -196,8 +197,8 @@ void log_adopt_fd(int fd) {
 }
 
 // the bytes the console accepts, waiting only as the batch allows. -1 on a hard error
-static ssize_t log_push(const char* buf, size_t len, int wait) {
-	long long deadline = 0, now;
+static ssize_t log_push(const char* buf, size_t len, bool wait) {
+	int64_t deadline = 0, now;
 	size_t done = 0;
 
 	while(done < len) {
@@ -206,7 +207,7 @@ static ssize_t log_push(const char* buf, size_t len, int wait) {
 
 		if(w > 0) {
 			done += (size_t)w;
-			log_stalled = 0;
+			log_stalled = false;
 			continue;
 		}
 
@@ -233,7 +234,7 @@ static ssize_t log_push(const char* buf, size_t len, int wait) {
 				deadline = log_wait_until;
 			}
 		} else if(now >= deadline) {
-			log_stalled = 1;
+			log_stalled = true;
 			break;
 		}
 
@@ -244,11 +245,11 @@ static ssize_t log_push(const char* buf, size_t len, int wait) {
 }
 
 // a line reaches the console whole or not at all, the caller counts a line that does not
-static int log_write(const char* buf, size_t len) {
+static bool log_write(const char* buf, size_t len) {
 	ssize_t n;
 
 	if(pend_len) {
-		n = log_push(log_pend + pend_at, pend_len - pend_at, 1);
+		n = log_push(log_pend + pend_at, pend_len - pend_at, true);
 		if(n < 0 || pend_at + (size_t)n < pend_len) {
 			if(n < 0) {
 				pend_at = pend_len = 0;
@@ -256,25 +257,25 @@ static int log_write(const char* buf, size_t len) {
 				pend_at += (size_t)n;
 			}
 
-			return 0;
+			return false;
 		}
 
 		pend_at = pend_len = 0;
 	}
 
-	n = log_push(buf, len, 1);
+	n = log_push(buf, len, true);
 	if(n == (ssize_t)len) {
-		return 1;
+		return true;
 	}
 
 	if(n <= 0 || len - (size_t)n > sizeof(log_pend)) {
-		return 0;
+		return false;
 	}
 
 	pend_len = len - (size_t)n;
 	memcpy(log_pend, buf + n, pend_len);
 
-	return 1;
+	return true;
 }
 
 int log_pending_fd(void) {
@@ -283,7 +284,7 @@ int log_pending_fd(void) {
 
 // called when the console is writable. a wakeup that writes nothing gives up the line
 void log_flush(void) {
-	ssize_t n = log_push(log_pend + pend_at, pend_len - pend_at, 0);
+	ssize_t n = log_push(log_pend + pend_at, pend_len - pend_at, false);
 
 	if(n > 0) {
 		pend_at += (size_t)n;
@@ -313,14 +314,14 @@ static int fitted(int ret, int at, size_t cap) {
 }
 
 // the same truncation as every deadline, so two stamps differ by exactly the ms between them
-static long long log_elapsed_ms(void) {
-	long long ms = mono_ms() - log_start;
+static int64_t log_elapsed_ms(void) {
+	int64_t ms = mono_ms() - log_start;
 
 	return ms < 0 ? 0 : ms;
 }
 
-static int prefix(char* buf, size_t cap, const char* tag, long long ms) {
-	int n = fitted(snprintf(buf, cap, "[%03lld.%03lld] %s > ", ms / 1000, ms % 1000, tag),
+static int prefix(char* buf, size_t cap, const char* tag, int64_t ms) {
+	int n = fitted(snprintf(buf, cap, "[%03" PRId64 ".%03" PRId64 "] %s > ", ms / 1000, ms % 1000, tag),
 		       0, cap);
 
 	return n > LOG_PREFIX_MAX ? LOG_PREFIX_MAX : n;
@@ -335,8 +336,8 @@ size_t log_line(uint64_t* at, char* buf) {
 
 	if(*at < ring_tail) {
 		p = prefix(buf, LOG_LINE, tag_plain[LOG_WARN], log_elapsed_ms());
-		p = fitted(snprintf(buf + p, LOG_LINE - (size_t)p, "log: skipped %llu bytes\n",
-				    (unsigned long long)(ring_tail - *at)),
+		p = fitted(snprintf(buf + p, LOG_LINE - (size_t)p, "log: skipped %" PRIu64 " bytes\n",
+				    ring_tail - *at),
 			   p, LOG_LINE);
 		*at = ring_tail;
 		return (size_t)p;
@@ -354,13 +355,13 @@ size_t log_line(uint64_t* at, char* buf) {
 	return n;
 }
 
-static int log_report_dropped(unsigned long lost) {
+static bool log_report_dropped(uint32_t lost) {
 	const char* const* tags = log_color ? tag_color : tag_plain;
 	char buf[160];
 	int n, ret;
 
 	n = prefix(buf, sizeof(buf), tags[LOG_WARN], log_elapsed_ms());
-	ret = snprintf(buf + n, sizeof(buf) - n, "console: dropped %lu message%s", lost, plural(lost));
+	ret = snprintf(buf + n, sizeof(buf) - n, "console: dropped %" PRIu32 " message%s", lost, plural(lost));
 	n = fitted(ret, n, sizeof(buf));
 	if(n > (int)sizeof(buf) - 2) {
 		n = (int)sizeof(buf) - 2;
@@ -372,7 +373,7 @@ static int log_report_dropped(unsigned long lost) {
 }
 
 // key is the level with LOG_NOCON, the body of the line is at buf + p
-static void log_out(int key, long long ms, const char* buf, int p, int n) {
+static void log_out(uint8_t key, int64_t ms, const char* buf, int p, int n) {
 	char con[LOG_CON];
 	int c;
 
@@ -383,7 +384,7 @@ static void log_out(int key, long long ms, const char* buf, int p, int n) {
 
 	// reporting before the console has caught up would take the place of real lines
 	if(log_dropped && !pend_len) {
-		unsigned long lost = log_dropped;
+		uint32_t lost = log_dropped;
 
 		if(log_report_dropped(lost)) {
 			log_dropped -= lost;
@@ -405,7 +406,7 @@ static void log_out(int key, long long ms, const char* buf, int p, int n) {
 	}
 }
 
-static uint32_t body_hash(int key, str s) {
+static uint32_t body_hash(uint8_t key, str s) {
 	uint32_t h = 2166136261u ^ (uint32_t)key;
 
 	while(s.n--) {
@@ -419,27 +420,27 @@ static struct seen* seen_back(uint32_t back) {
 	return &seen[(seen_n - back) & (LOG_SEEN - 1)];
 }
 
-static int seen_is(const struct seen* e, int key, uint32_t h, str s) {
+static bool seen_is(const struct seen* e, uint8_t key, uint32_t h, str s) {
 	return e->key == key && e->hash == h && e->len == s.n && e->at >= ring_tail
 	       && ring_eq(e->at, s);
 }
 
-static void log_emit(int key, long long ms, const char* buf, int p, int n, uint32_t h) {
+static void log_emit(uint8_t key, int64_t ms, const char* buf, int p, int n, uint32_t h) {
 	struct seen* e = &seen[seen_n++ & (LOG_SEEN - 1)];
 
 	e->at = ring_head + (uint64_t)p;
 	e->hash = h;
 	e->len = (uint16_t)(n - p);
-	e->key = (uint8_t)key;
+	e->key = key;
 	log_out(key, ms, buf, p, n);
 }
 
-static int log_head(char* buf, int level, long long ms) {
+static int log_head(char* buf, uint8_t level, int64_t ms) {
 	return level == LOG_INFO ? 0 : prefix(buf, LOG_LINE, tag_plain[level], ms);
 }
 
 // logs a held line after all, with the time it arrived
-static void log_again(const struct seen* s, long long ms) {
+static void log_again(const struct seen* s, int64_t ms) {
 	struct seen e = *s;
 	char buf[LOG_LINE];
 	int p = log_head(buf, e.key & ~LOG_NOCON, ms);
@@ -459,11 +460,11 @@ static void log_again(const struct seen* s, long long ms) {
 }
 
 // the most severe tag in the block, on the console if any line of it was
-static int rep_key(void) {
-	int level = LOG_NOTE, nocon = LOG_NOCON;
+static uint8_t rep_key(void) {
+	uint8_t level = LOG_NOTE, nocon = LOG_NOCON;
 
 	for(uint32_t k = 1; k <= rep_len; k++) {
-		int key = seen_back(k)->key;
+		uint8_t key = seen_back(k)->key;
 
 		if((key & ~LOG_NOCON) == LOG_FAIL) {
 			level = LOG_FAIL;
@@ -480,7 +481,8 @@ static int rep_key(void) {
 // a single repetition is logged as it was. the block stays the last rep_len lines either way
 static void rep_flush(void) {
 	char buf[LOG_LINE];
-	int key, p, n;
+	uint8_t key;
+	int p, n;
 
 	if(rep_count == 1) {
 		rep_count = 0;
@@ -498,10 +500,10 @@ static void rep_flush(void) {
 	key = rep_key();
 	p = prefix(buf, sizeof(buf), tag_plain[key & ~LOG_NOCON], rep_ms);
 	if(rep_len == 1) {
-		n = snprintf(buf + p, sizeof(buf) - (size_t)p, "last message repeated %lu times\n",
+		n = snprintf(buf + p, sizeof(buf) - (size_t)p, "last message repeated %" PRIu32 " times\n",
 			     rep_count);
 	} else {
-		n = snprintf(buf + p, sizeof(buf) - (size_t)p, "last %u messages repeated %lu times\n",
+		n = snprintf(buf + p, sizeof(buf) - (size_t)p, "last %u messages repeated %" PRIu32 " times\n",
 			     rep_len, rep_count);
 	}
 
@@ -521,22 +523,22 @@ static void rep_break(void) {
 	rep_backoff = 0;
 }
 
-static int seen_twice(uint32_t len) {
+static bool seen_twice(uint32_t len) {
 	for(uint32_t k = 1; k <= len; k++) {
 		const struct seen* a = seen_back(k);
 		const struct seen* b = seen_back(k + len);
 
 		if(a->key != b->key || a->hash != b->hash || a->len != b->len) {
-			return 0;
+			return false;
 		}
 	}
 
-	return 1;
+	return true;
 }
 
 // a line repeats once logged again. a longer block repeats once logged twice in a row,
 // so a line that only recurs is never held back
-static uint32_t rep_find(int key, uint32_t h, str s) {
+static uint32_t rep_find(uint8_t key, uint32_t h, str s) {
 	if(seen_n && seen_is(seen_back(1), key, h, s)) {
 		return 1;
 	}
@@ -550,8 +552,8 @@ static uint32_t rep_find(int key, uint32_t h, str s) {
 	return 0;
 }
 
-long long log_due(void) {
-	long long due;
+int64_t log_due(void) {
+	int64_t due;
 
 	if(!rep_pos && !rep_count) {
 		return -1;
@@ -566,7 +568,7 @@ long long log_due(void) {
 }
 
 void log_tick(void) {
-	long long now;
+	int64_t now;
 
 	if(!rep_pos && !rep_count) {
 		return;
@@ -580,22 +582,23 @@ void log_tick(void) {
 
 	if(rep_count && now >= rep_due) {
 		rep_flush();
-		if(rep_backoff + 1 < sizeof(repeat_ms) / sizeof(*repeat_ms)) {
+		if(rep_backoff + 1u < sizeof(repeat_ms) / sizeof(*repeat_ms)) {
 			rep_backoff++;
 		}
 	}
 }
 
-void ninit_log(int level, const char* fmt, ...) {
+void ninit_log(uint8_t level, const char* fmt, ...) {
 	char buf[LOG_LINE];
-	int nocon = level & LOG_NOCON, n, p, ret, key;
-	long long ms = log_elapsed_ms();
+	uint8_t nocon = level & LOG_NOCON, key;
+	int n, p, ret;
+	int64_t ms = log_elapsed_ms();
 	uint32_t h;
 	va_list ap;
 	str body;
 
 	level &= ~LOG_NOCON;
-	if((unsigned)level >= LOG_N) {
+	if(level >= LOG_N) {
 		level = LOG_INFO;
 	}
 
@@ -646,7 +649,7 @@ void ninit_log(int level, const char* fmt, ...) {
 	}
 }
 
-void log_raw(int level, str text) {
+void log_raw(uint8_t level, str text) {
 	while(text.n) {
 		str line = str_cut(&text, '\n');
 

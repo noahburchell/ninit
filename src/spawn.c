@@ -32,7 +32,7 @@ struct ninit_clone_args {
 
 static_assert(sizeof(struct ninit_clone_args) == 88, "clone_args v2 is 88 bytes");
 
-static int clone3_ok = 1;
+static bool clone3_ok = true;
 
 // a direct command is at most NG_MAX_INTERP bytes below a directory of NG_PATH
 #define EXEC_PATH_MAX (sizeof(NG_PATH) + NG_MAX_INTERP)
@@ -49,9 +49,9 @@ static size_t put_str(char* restrict dst, size_t at, const char* restrict s) {
 	return at;
 }
 
-static size_t put_num(char* dst, size_t at, unsigned v) {
+static size_t put_num(char* dst, size_t at, uint32_t v) {
 	char tmp[10];
-	int k = 0;
+	uint8_t k = 0;
 
 	do {
 		tmp[k++] = (char)('0' + v % 10);
@@ -124,7 +124,7 @@ static void child_exec(uint32_t i, int out_w, int ntf_w, const char* cg) {
 	static char arg_shell[] = NG_SHELL_ARGV0, arg_c[] = "-c";
 	char* argv[NG_MAX_EXEC_ARGS + 2];
 	const char* prog = NG_SHELL;
-	int e = 0;
+	uint8_t e = 0;
 	char msg[EXEC_PATH_MAX + 64], path[EXEC_PATH_MAX + 1];
 	sigset_t none;
 	int nfd = ng_notify(map, i), err;
@@ -133,7 +133,7 @@ static void child_exec(uint32_t i, int out_w, int ntf_w, const char* cg) {
 	envp[e++] = env_path;
 	envp[e++] = env_home;
 	envp[e++] = env_term;
-	for(int k = 0; k < n_locale; k++) {
+	for(uint8_t k = 0; k < n_locale; k++) {
 		envp[e++] = env_locale[k];
 	}
 
@@ -144,7 +144,7 @@ static void child_exec(uint32_t i, int out_w, int ntf_w, const char* cg) {
 	setsid();
 	if(*cg) {
 		int cf = open(cg, O_WRONLY | O_CLOEXEC);
-		int joined = 0;
+		bool joined = false;
 
 		if(cf >= 0) {
 			joined = write(cf, "0", 1) == 1;
@@ -154,7 +154,7 @@ static void child_exec(uint32_t i, int out_w, int ntf_w, const char* cg) {
 		if(!joined) {
 			// out_w is already the stdout of this service, so pid 1 logs it
 			at = put_str(msg, 0, "ninit: could not join its cgroup: errno ");
-			at = put_num(msg, at, (unsigned)errno);
+			at = put_num(msg, at, (uint32_t)errno);
 			at = put_str(msg, at, ", it is only contained by its process group\n");
 			(void)!write(out_w, msg, at);
 		}
@@ -177,7 +177,7 @@ static void child_exec(uint32_t i, int out_w, int ntf_w, const char* cg) {
 	ninit_cloexec_except(nfd ? nfd : -1);
 	if(setrlimit(RLIMIT_NOFILE, &child_nofile) < 0) {
 		at = put_str(msg, 0, "ninit: could not set its descriptor limit: errno ");
-		at = put_num(msg, at, (unsigned)errno);
+		at = put_num(msg, at, (uint32_t)errno);
 		at = put_str(msg, at, ", it runs with pid 1's\n");
 		(void)!write(2, msg, at);
 	}
@@ -228,7 +228,7 @@ static void child_exec(uint32_t i, int out_w, int ntf_w, const char* cg) {
 	at = put_str(msg, 0, "ninit: exec ");
 	at = put_str(msg, at, prog);
 	at = put_str(msg, at, ": errno ");
-	at = put_num(msg, at, (unsigned)err);
+	at = put_num(msg, at, (uint32_t)err);
 	at = put_str(msg, at, "\n");
 	(void)!write(2, msg, at);
 	if(ntf_w >= 0 && !nfd) {
@@ -239,11 +239,11 @@ static void child_exec(uint32_t i, int out_w, int ntf_w, const char* cg) {
 	_exit(err == EACCES ? 126 : 127);
 }
 
-static pid_t spawn_into_cgroup(uint32_t i, int have_cg) {
+static pid_t spawn_into_cgroup(uint32_t i, bool have_cg) {
 #ifdef SYS_clone3
 	struct ninit_clone_args ca = { .flags = CLONE_INTO_CGROUP, .exit_signal = SIGCHLD };
 	char dir[CG_PATH_MAX];
-	long pid;
+	int64_t pid;
 	int fd, err;
 
 	if(!clone3_ok || !have_cg || !cg_path(i, "", dir, sizeof(dir))) {
@@ -269,7 +269,7 @@ static pid_t spawn_into_cgroup(uint32_t i, int have_cg) {
 	err = errno;
 	close(fd);
 	if(err == ENOSYS || err == EINVAL || err == E2BIG || err == EOPNOTSUPP) {
-		clone3_ok = 0;
+		clone3_ok = false;
 		log_warn("cgroup: this kernel cannot fork into a cgroup, joining after fork instead");
 	}
 

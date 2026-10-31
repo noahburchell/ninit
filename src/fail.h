@@ -27,8 +27,8 @@ enum fail_act {
 
 void fail_describe(int status, char* buf, size_t cap);
 
-enum fail_act fail_service(const void* map, uint32_t i, int status, unsigned attempt,
-			   unsigned tries, str tail);
+enum fail_act fail_service(const void* map, uint32_t i, int status, uint8_t attempt,
+			   uint8_t tries, str tail);
 
 // state and up are byte arrays, which may alias anything, restrict says they do not
 uint32_t fail_poison(const void* map, uint32_t i, uint8_t* restrict state, const uint8_t* restrict up,
@@ -38,15 +38,15 @@ uint32_t fail_poison_deps(const void* map, uint32_t i, uint8_t* restrict state, 
 			  const struct run* rs, uint32_t* restrict undone, uint32_t* restrict waiting);
 
 void ninit_cloexec_except(int keep);
-void console_front(int text);
+void console_front(bool text);
 
 void ninit_oom_score_adj(str v);
 
 void fail_emergency_shell(const char* why);
 
-int fail_emergency_reaped(pid_t pid, int status);
+bool fail_emergency_reaped(pid_t pid, int status);
 
-long long fail_emergency_due(void);
+int64_t fail_emergency_due(void);
 
 void fail_emergency_tick(void);
 

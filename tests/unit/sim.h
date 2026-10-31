@@ -518,7 +518,7 @@ static inline const char* invariants(void) {
 
 		if(runs[i].pid > 0) {
 			struct sim_child* c = kid_of(runs[i].pid);
-			int stale;
+			bool stale;
 
 			if(!c) {
 				return "a service names a pid that was never forked";

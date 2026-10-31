@@ -19,8 +19,8 @@ extern uint8_t* released;
 extern uint32_t n_active, n_done, n_pending, n_up;
 extern uint32_t drain_left;
 extern uint32_t drain_rotor;
-extern int shutting_down;
+extern bool shutting_down;
 extern int null_fd;
-extern long long boot_ms;
+extern int64_t boot_ms;
 
-long long now_ms(void);
+int64_t now_ms(void);

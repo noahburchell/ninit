@@ -6,6 +6,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
@@ -30,7 +31,7 @@
 #define NG_K_UNICODE   0x03
 #define NG_VT_ACTIVATE 0x5606
 
-static const char* verb_s(unsigned n) {
+static const char* verb_s(uint16_t n) {
 	return n == 1 ? "s" : "";
 }
 
@@ -78,7 +79,7 @@ void fail_describe(int status, char* buf, size_t cap) {
 	} else if(WIFEXITED(status)) {
 		snprintf(buf, cap, "exit %d", WEXITSTATUS(status));
 	} else if(WIFSIGNALED(status)) {
-		unsigned sig = (unsigned)WTERMSIG(status);
+		uint8_t sig = (uint8_t)WTERMSIG(status);
 		const char* ab = sig < sizeof(signame) / sizeof(*signame) ? signame[sig] : NULL;
 		const char* core = WCOREDUMP(status) ? " (core dumped)" : "";
 
@@ -88,12 +89,12 @@ void fail_describe(int status, char* buf, size_t cap) {
 			snprintf(buf, cap, "killed by signal %d%s", WTERMSIG(status), core);
 		}
 	} else {
-		snprintf(buf, cap, "status %#x", (unsigned)status);
+		snprintf(buf, cap, "status %#x", (uint32_t)status);
 	}
 }
 
-enum fail_act fail_service(const void* map, uint32_t i, int status, unsigned attempt,
-			   unsigned tries, str tail) {
+enum fail_act fail_service(const void* map, uint32_t i, int status, uint8_t attempt,
+			   uint8_t tries, str tail) {
 	const struct ng_svc* s = &ng_svcs(map)[i];
 	const char* name = ng_name(map, i);
 	char how[64];
@@ -101,18 +102,18 @@ enum fail_act fail_service(const void* map, uint32_t i, int status, unsigned att
 	fail_describe(status, how, sizeof(how));
 
 	if(attempt < tries) {
-		log_warn("%s: failed (%s), retrying (%u of %u)", name, how, attempt, tries);
+		log_warn("%s: failed (%s), retrying (%" PRIu8 " of %" PRIu8 ")", name, how, attempt, tries);
 		return FAIL_RETRY;
 	}
 
-	log_err("%s: failed %u time%s (%s)", name, attempt, plural(attempt), how);
+	log_err("%s: failed %" PRIu8 " time%s (%s)", name, attempt, plural(attempt), how);
 	if(tail.n) {
 		log_raw(LOG_FAIL, tail);
 	}
 
 	// restart covers supervision after readiness
 	if(ng_restart(map, i)) {
-		log_warn("%s: restart applies after readiness, start-tries is %u", name, tries);
+		log_warn("%s: restart applies after readiness, start-tries is %" PRIu8, name, tries);
 	}
 
 	switch(ng_onfail(map, i)) {
@@ -120,19 +121,19 @@ enum fail_act fail_service(const void* map, uint32_t i, int status, unsigned att
 			log_warn("%s: no dependent services, continuing", name);
 			return FAIL_WARN;
 		case NG_ONFAIL_SHELL:
-			log_err("%s: %u of %u services depend%s on it, starting emergency shell", name,
+			log_err("%s: %" PRIu16 " of %u services depend%s on it, starting emergency shell", name,
 				s->n_desc, ((const struct ng_hdr*)map)->n_svc, verb_s(s->n_desc));
 			return FAIL_SHELL;
 		default:
-			log_err("%s: %u service%s depend%s on it, stopping", name, s->n_desc,
+			log_err("%s: %" PRIu16 " service%s depend%s on it, stopping", name, s->n_desc,
 				plural(s->n_desc), verb_s(s->n_desc));
 			return FAIL_STOP;
 	}
 }
 
-static int poison_take(const uint8_t* state, const uint8_t* up, const void* map, const struct run* rs, uint32_t d) {
+static bool poison_take(const uint8_t* state, const uint8_t* up, const void* map, const struct run* rs, uint32_t d) {
 	if(state[d] == NG_ST_PENDING) {
-		return 1;
+		return true;
 	}
 
 	// a start between attempts has no process and cannot go on without the prerequisite
@@ -231,9 +232,9 @@ uint32_t fail_poison_deps(const void* map, uint32_t i, uint8_t* restrict state, 
 #define CLOSE_RANGE_CLOEXEC (1u << 2)
 #endif
 
-static void cloexec_range(unsigned lo, unsigned hi) {
+static void cloexec_range(uint32_t lo, uint32_t hi) {
 	struct rlimit rl;
-	unsigned fd, max;
+	uint32_t fd, max;
 
 #ifdef SYS_close_range
 	if(syscall(SYS_close_range, lo, hi, CLOSE_RANGE_CLOEXEC) == 0) {
@@ -242,7 +243,7 @@ static void cloexec_range(unsigned lo, unsigned hi) {
 #endif
 	max = getrlimit(RLIMIT_NOFILE, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY
 			      && rl.rlim_cur < 65536
-		      ? (unsigned)rl.rlim_cur
+		      ? (uint32_t)rl.rlim_cur
 		      : 65536;
 	if(hi != ~0u && hi + 1 < max) {
 		max = hi + 1;
@@ -271,10 +272,10 @@ void ninit_cloexec_except(int keep) {
 	}
 
 	if(keep > 3) {
-		cloexec_range(3, (unsigned)keep - 1);
+		cloexec_range(3, (uint32_t)keep - 1);
 	}
 
-	cloexec_range((unsigned)keep + 1, ~0u);
+	cloexec_range((uint32_t)keep + 1, ~0u);
 }
 
 enum emerg_state {
@@ -285,15 +286,15 @@ enum emerg_state {
 
 static pid_t emerg_pid = -1;
 static int emerg_bar = -1;
-static long long emerg_conf_at;
+static int64_t emerg_conf_at;
 static struct timespec emerg_at;
-static unsigned emerg_fast;
-static unsigned emerg_fail;
-static int emerg_gone;
+static uint8_t emerg_fast;
+static uint8_t emerg_fail;
+static bool emerg_gone;
 static enum emerg_state emerg_conf;
-static int emerg_greeted;
-static unsigned emerg_noexec;
-static long long emerg_retry_at;
+static bool emerg_greeted;
+static uint8_t emerg_noexec;
+static int64_t emerg_retry_at;
 
 static int emerg_console(void) {
 	int fd = open("/dev/console", O_RDWR | O_NOCTTY | O_CLOEXEC);
@@ -326,12 +327,12 @@ static int emerg_console(void) {
 }
 
 // a compositor that died leaves its vt in graphics mode and the keyboard raw, 1 for a vt
-static int console_text(int con) {
+static bool console_text(int con) {
 	char kbtype;
 	int mode;
 
 	if(ioctl(con, NG_KDGKBTYPE, &kbtype) < 0) {
-		return 0;
+		return false;
 	}
 
 	if(ioctl(con, NG_KDGETMODE, &mode) == 0 && mode != NG_KD_TEXT) {
@@ -344,12 +345,12 @@ static int console_text(int con) {
 		ioctl(con, NG_KDSKBMODE, NG_K_UNICODE);
 	}
 
-	return 1;
+	return true;
 }
 
 // shutdown messages are read on tty1. a compositor holding the vt releases it on request or
 // when it dies, so the switch is asked for twice, the second time with tty1 put back in text mode
-void console_front(int text) {
+void console_front(bool text) {
 	int fd = open("/dev/tty0", O_RDWR | O_NOCTTY | O_CLOEXEC);
 
 	if(fd < 0) {
@@ -375,9 +376,9 @@ void console_front(int text) {
 }
 
 // whatever died may have left the console unusable
-static int emerg_console_reset(int con) {
+static bool emerg_console_reset(int con) {
 	struct termios t;
-	int vt = console_text(con);
+	bool vt = console_text(con);
 
 	if(tcgetattr(con, &t) == 0) {
 		const tcflag_t sane = ISIG | ICANON | ECHO;
@@ -411,13 +412,13 @@ static int emerg_console_reset(int con) {
 }
 
 #ifdef NINIT_SULOGIN
-static int root_hash_usable(void) {
+static bool root_hash_usable(void) {
 	FILE* f = fopen("/etc/shadow", "re");
 	char line[512];
-	int ok = 0;
+	bool ok = false;
 
 	if(!f) {
-		return 0;
+		return false;
 	}
 
 	while(fgets(line, sizeof(line), f)) {
@@ -438,7 +439,7 @@ static int root_hash_usable(void) {
 }
 #endif
 
-static pid_t emerg_spawn(int con, int vt, int barrier, int auth) {
+static pid_t emerg_spawn(int con, bool vt, int barrier, bool auth) {
 	static char sul0[] = "sulogin";
 	static char* const sulv[] = { sul0, NULL };
 	static char arg0[] = "-sh", path[] = NG_PATH, home[] = "HOME=/";
@@ -497,7 +498,7 @@ static void emerg_greet(void) {
 		return;
 	}
 
-	emerg_greeted = 1;
+	emerg_greeted = true;
 	ninit_log(LOG_DONE, "shell: started on the console, exit with reboot or poweroff");
 	// rebuilding the graph does not reload it, pid 1 read it once at boot
 	log_note("shell: 'ninitctl resume' retries failed services");
@@ -510,7 +511,7 @@ static void emerg_settle(enum emerg_state st, int err) {
 	if(st == EMERG_EXEC_FAILED) {
 		log_err("shell: cannot exec a shell: %s", strerror(err));
 		if(++emerg_noexec >= EMERG_NOEXEC_MAX) {
-			emerg_gone = 1;
+			emerg_gone = true;
 			log_err("shell: giving up, no shell can be started");
 		}
 
@@ -575,7 +576,8 @@ void fail_emergency_report(void) {
 }
 
 static int emerg_start(void) {
-	int bar[2], con, err, vt, auth = 0;
+	int bar[2], con, err;
+	bool vt, auth = false;
 	pid_t pid;
 
 	emerg_pid = -1;
@@ -628,8 +630,8 @@ static void emerg_restart(void) {
 	}
 
 	if(++emerg_fail >= EMERG_FAIL_MAX) {
-		emerg_gone = 1;
-		log_err("shell: giving up after %u attempts", emerg_fail);
+		emerg_gone = true;
+		log_err("shell: giving up after %" PRIu8 " attempts", emerg_fail);
 		return;
 	}
 
@@ -637,8 +639,8 @@ static void emerg_restart(void) {
 	log_err("shell: not running, retrying in %d ms", EMERG_RETRY_MS);
 }
 
-long long fail_emergency_due(void) {
-	long long now = mono_ms(), best = -1;
+int64_t fail_emergency_due(void) {
+	int64_t now = mono_ms(), best = -1;
 
 	if(emerg_conf_at) {
 		best = ms_until(emerg_conf_at, now);
@@ -690,12 +692,12 @@ void fail_emergency_shell(const char* why) {
 	emerg_restart();
 }
 
-int fail_emergency_reaped(pid_t pid, int status) {
-	long long ms;
+bool fail_emergency_reaped(pid_t pid, int status) {
+	int64_t ms;
 	char how[64];
 
 	if(pid <= 0 || pid != emerg_pid) {
-		return 0;
+		return false;
 	}
 
 	emerg_pid = -1;
@@ -708,11 +710,11 @@ int fail_emergency_reaped(pid_t pid, int status) {
 	if(ms >= EMERG_FAST_MS) {
 		emerg_fast = 0;
 	} else if(++emerg_fast >= EMERG_FAST_MAX) {
-		emerg_gone = 1;
-		log_err("shell: exited immediately %u times (%s), not restarting",
+		emerg_gone = true;
+		log_err("shell: exited immediately %" PRIu8 " times (%s), not restarting",
 			emerg_fast, how);
 		log_err("shell: giving up, no shell can be started");
-		return 1;
+		return true;
 	}
 
 	if(!(WIFEXITED(status) && WEXITSTATUS(status) == EMERG_NOEXEC)) {
@@ -720,12 +722,12 @@ int fail_emergency_reaped(pid_t pid, int status) {
 	}
 
 	if(emerg_gone) {
-		return 1;
+		return true;
 	}
 
 	emerg_restart();
 
-	return 1;
+	return true;
 }
 
 void fail_summary(const void* map, const uint8_t* state) {

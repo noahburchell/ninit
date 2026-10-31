@@ -4,6 +4,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <linux/openat2.h>
 #include <stdarg.h>
@@ -92,18 +93,18 @@ void set_root(const char* dir) {
 int sys_open(const char* path, int flags) {
 	struct open_how how = { .flags = (uint64_t)(flags | O_CLOEXEC),
 				.resolve = RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS };
-	long fd;
+	int fd;
 
 	if(!g_root) {
 		return open(path, flags | O_CLOEXEC);
 	}
 
-	fd = syscall(SYS_openat2, root_fd, path, &how, sizeof(how));
+	fd = (int)syscall(SYS_openat2, root_fd, path, &how, sizeof(how));
 	if(fd < 0 && errno == ENOSYS) {
 		die("--root: openat2: %s", strerror(errno));
 	}
 
-	return (int)fd;
+	return fd;
 }
 
 int sys_stat(const char* path, struct stat* st) {
@@ -200,8 +201,8 @@ char* slurp(const char* path, size_t* len) {
 	}
 
 	if((uint64_t)st.st_size > NG_MAX_SRC) {
-		die("%s: is %llu bytes, the maximum is %u", path,
-		    (unsigned long long)st.st_size, NG_MAX_SRC);
+		die("%s: is %" PRIu64 " bytes, the maximum is %u", path,
+		    (uint64_t)st.st_size, NG_MAX_SRC);
 	}
 
 	buf = xmalloc((size_t)st.st_size + 1);

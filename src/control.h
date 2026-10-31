@@ -25,12 +25,12 @@ struct ctl {
 extern int ctl_lfd;
 extern uint32_t n_ops;
 extern struct ctl ctl_conn[CTL_MAX];
-extern int n_ctl;
+extern uint8_t n_ctl;
 
 const char* state_name(uint32_t i);
 void ctl_init(void);
 void ctl_out(struct ctl* c, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
-void ctl_end(struct ctl* c, int ok, const char* fmt, ...) __attribute__((format(printf, 3, 4)));
+void ctl_end(struct ctl* c, bool ok, const char* fmt, ...) __attribute__((format(printf, 3, 4)));
 void ctl_feed(void);
 void ctl_pump(struct ctl* c);
 void ctl_read(struct ctl* c);

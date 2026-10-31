@@ -25,7 +25,7 @@ struct run {
 	int       out_fd;
 	int       ntf_fd;
 	uint32_t  live_pos;
-	long long restart_at;
+	int64_t   restart_at;
 	uint8_t   burst;
 	uint8_t   cg_killed;
 	uint8_t   stale_hold;
@@ -39,8 +39,8 @@ struct run {
 	uint8_t   op_restart;
 	uint16_t  tail_len;
 	uint16_t  line_len;
-	long long started;
-	long long op_at;
+	int64_t   started;
+	int64_t   op_at;
 	char      tail[TAIL_CAP];
 	char      line[LINE_CAP];
 };

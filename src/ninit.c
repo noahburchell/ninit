@@ -15,6 +15,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -53,18 +54,18 @@ uint8_t* released;
 uint32_t n_active, n_done, n_pending, n_up;
 uint32_t drain_left;
 uint32_t drain_rotor;
-int shutting_down;
+bool shutting_down;
 int null_fd = -1;
-long long boot_ms = -1;
-static long long boot_t0;
+int64_t boot_ms = -1;
+static int64_t boot_t0;
 
-long long now_ms(void) {
+int64_t now_ms(void) {
 	return mono_ms();
 }
 
 // the soonest restart delay, start timeout or control deadline among the live services, -1 for none
-static long long live_due(long long now) {
-	long long best = -1;
+static int64_t live_due(int64_t now) {
+	int64_t best = -1;
 	uint32_t k;
 
 	for(k = 0; k < n_live; k++) {
@@ -105,7 +106,7 @@ static void check_boot_done(void) {
 		log_warn("boot: %u service%s never started", n_pending, plural(n_pending));
 	}
 
-	log_note("boot: %u of %u services up in %lld ms", n_done, n_svc, boot_ms);
+	log_note("boot: %u of %u services up in %" PRId64 " ms", n_done, n_svc, boot_ms);
 }
 
 static void start_graph(void) {
@@ -193,8 +194,8 @@ int main(int argc, char** argv) {
 	struct pollfd* pfds;
 	uint32_t* pf_idx;
 	uint8_t* pf_kind;
-	int placeholder, degraded;
-	long long quiet_since;
+	bool placeholder, degraded;
+	int64_t quiet_since;
 
 	if(getpid() != 1) {
 		log_err("ninit must run as pid 1");
@@ -270,7 +271,7 @@ int main(int argc, char** argv) {
 
 	quiet_since = now_ms();
 	for(;;) {
-		long long wait;
+		int64_t wait;
 		nfds_t nfds = 1, k;
 		uint32_t start;
 		int rc, shell_fd, con_fd;
@@ -281,7 +282,7 @@ int main(int argc, char** argv) {
 		check_timeouts();
 		ctl_tick();
 		log_tick();
-		for(int c = n_ctl; c-- > 0;) {
+		for(uint8_t c = n_ctl; c-- > 0;) {
 			if(ctl_conn[c].out_at < ctl_conn[c].out_len
 			   || ctl_conn[c].listing || ctl_conn[c].done) {
 				ctl_pump(&ctl_conn[c]);
@@ -343,7 +344,7 @@ int main(int argc, char** argv) {
 			pfds[nfds].events = POLLIN;
 			pf_idx[nfds] = 0;
 			pf_kind[nfds++] = PF_LISTEN;
-			for(int c = 0; c < n_ctl; c++) {
+			for(uint8_t c = 0; c < n_ctl; c++) {
 				struct ctl* cc = &ctl_conn[c];
 
 				pfds[nfds].fd = cc->fd;
@@ -389,7 +390,7 @@ int main(int argc, char** argv) {
 		}
 
 		if(rc == 0) {
-			long long t = now_ms();
+			int64_t t = now_ms();
 
 			if(t - quiet_since >= STALL_MS) {
 				quiet_since = t;
@@ -450,7 +451,7 @@ int main(int argc, char** argv) {
 			} else if(pf_kind[k] == PF_NOTIFY) {
 				drain_notify(i, DRAIN_POLL_CHUNKS);
 			} else {
-				drain_out(i, DRAIN_POLL_CHUNKS, 1);
+				drain_out(i, DRAIN_POLL_CHUNKS, true);
 			}
 
 			if(live_has(i)) {
