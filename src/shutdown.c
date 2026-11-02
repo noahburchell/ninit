@@ -21,7 +21,6 @@
 #include <unistd.h>
 
 #define HWCLOCK_GRACE_MS 5000
-#define RO_PASSES	 3
 
 static void unescape_mount(char* s) {
 	char* w = s;
@@ -127,23 +126,9 @@ void remount_ro(void) {
 		}
 	}
 
-	for(uint8_t pass = 0; pass < RO_PASSES; pass++) {
-		size_t left = 0, k = n;
-
-		while(k--) {
-			if(!mps[k]) {
-				continue;
-			}
-
-			if(mount(NULL, mps[k], NULL, MS_REMOUNT | MS_RDONLY, NULL) == 0) {
-				mps[k] = NULL;
-			} else {
-				left++;
-			}
-		}
-
-		if(!left) {
-			break;
+	for(size_t k = n; k--;) {
+		if(mount(NULL, mps[k], NULL, MS_REMOUNT | MS_RDONLY, NULL) == 0) {
+			mps[k] = NULL;
 		}
 	}
 
@@ -188,12 +173,8 @@ void remount_ro(void) {
 		}
 	}
 
-	for(uint8_t pass = 0; pass < RO_PASSES; pass++) {
-		if(mount(NULL, "/", NULL, MS_REMOUNT | MS_RDONLY, NULL) == 0) {
-			break;
-		} else if(pass == RO_PASSES - 1) {
-			log_err("shutdown: /: remount read-only failed: %s", strerror(errno));
-		}
+	if(mount(NULL, "/", NULL, MS_REMOUNT | MS_RDONLY, NULL) < 0) {
+		log_err("shutdown: /: remount read-only failed: %s", strerror(errno));
 	}
 
 	free(mps);

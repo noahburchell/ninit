@@ -320,13 +320,13 @@ static void test_remount(void) {
 	n_mnts = n_sync = n_remount = 0;
 	add_mnt("/", -1, 0);
 	add_mnt("/proc", 0, 0);
-	add_mnt("/home", 2, 0);
+	add_mnt("/home", 0, 0);
 	add_mnt("/var", -1, 1);
-	add_mnt("/mnt/a b", 3, 0);
+	add_mnt("/mnt/a b", 1, 0);
 	add_mnt("/data", -1, 0);
 	logcap_begin();
 	remount_ro();
-	ok(mnts[1].ro && mnts[2].ro, "a busy mount is read-only by the third pass");
+	ok(mnts[1].ro && mnts[2].ro && n_remount == 9, "each mount is tried once, a stuck one once more after the sync");
 	ok(mnts[3].gone && logcap_count("WARN > shutdown: /var: remount read-only failed, unmounted") == 1,
 	   "one that stays writable is unmounted, with a warning");
 	ok(mnts[4].ro && n_sync == 1
@@ -348,7 +348,7 @@ static void test_remount(void) {
 	add_mnt("/data", 0, 0);
 	logcap_begin();
 	remount_ro();
-	ok(n_remount == 7 && !n_sync && !*logcap_text(), "a clean remount takes one pass, then / once more, quietly");
+	ok(n_remount == 7 && !n_sync && !*logcap_text(), "a clean table tries each mount once, then / once more, quietly");
 
 	unlink(path);
 	mounts_path = NULL;

@@ -19,6 +19,7 @@
 
 void log_init(void);
 void log_batch_begin(void);
+void log_unbatched(void);
 void log_reopen_console(void);
 void log_adopt_fd(int fd);
 void ninit_log(uint8_t level, const char* fmt, ...) __attribute__((format(printf, 2, 3)));

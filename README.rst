@@ -847,7 +847,7 @@ SIGUSR2          power off
 5. run ``hwclock --systohc --utc``, or ``hwclock --systohc --localtime`` if the third line of /etc/adjtime is LOCAL, killing it after 5 s. it runs with no signal blocked, default signal dispositions, oom_score_adj 0 and umask 022
 6. swapoff every active swap area
 7. remove the control socket
-8. sync, then remount every filesystem read-only, most recently mounted first, in up to 3 passes. a filesystem that stays writable is unmounted. if that fails, it is synced and remounted or unmounted once more, and otherwise detached. ``/`` is remounted read-only last
+8. sync, then remount every filesystem read-only, most recently mounted first. a filesystem that stays writable is unmounted. if that fails, it is synced and remounted or unmounted once more, and otherwise detached. ``/`` is remounted read-only last
 9. sync and call reboot(2) with the requested action
 
 step 2 follows every dependency, including those with deps: order. during shutdown services are not restarted, the emergency shell is not respawned, and further shutdown signals are ignored

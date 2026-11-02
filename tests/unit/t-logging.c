@@ -674,6 +674,31 @@ static void test_console_stall(void) {
 	log_batch_begin();
 	ninit_log(LOG_NOTE, "flush");
 	console_read(con, sizeof(con));
+
+	// unbatched, a spent batch no longer caps the wait, and no new batch is needed afterwards
+	console_fill(0);
+	log_batch_begin();
+	log_wait_until = mono_ms() + 30;
+	log_unbatched();
+	t0 = mono_ms();
+	ninit_log(LOG_NOTE, "unbatched one");
+	t1 = mono_ms();
+	ok(t1 - t0 >= LOG_WRITE_MS - 5 && t1 - t0 < LOG_WRITE_MS + 200,
+	   "an unbatched line waits its full %d ms after a spent batch (%lld)", LOG_WRITE_MS, t1 - t0);
+	t0 = mono_ms();
+	ninit_log(LOG_NOTE, "unbatched two");
+	t1 = mono_ms();
+	ok(t1 - t0 < 50, "a dead console still costs one wait, not one per line (%lld ms)", t1 - t0);
+	console_drain();
+	ninit_log(LOG_NOTE, "unbatched three");
+	n = console_read(con, sizeof(con));
+	ok(matches(con, "^\\[[0-9.]+\\] WARN > console: dropped 2 messages\n\\[[0-9.]+\\] NOTE > unbatched three\n$"),
+	   "once the console drains the next line arrives with no new batch");
+	if(!matches(con, "unbatched three")) {
+		tap_diag_str("console: ", con, n);
+	}
+
+	log_batch_begin();
 }
 
 // the console receives whole lines only

@@ -165,6 +165,12 @@ void log_batch_begin(void) {
 	log_stalled = false;
 }
 
+// every line waits its own LOG_WRITE_MS from here on, no loop is left for a batch to protect
+void log_unbatched(void) {
+	log_wait_until = INT64_MAX;
+	log_stalled = false;
+}
+
 void log_init(void) {
 	log_start = mono_ms();
 	log_color = isatty(log_fd);

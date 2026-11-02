@@ -325,7 +325,7 @@ is disabled
 .IP 7. 4
 the control socket is removed
 .IP 8. 4
-the filesystems are synced and remounted read-only, most recently mounted first, in up to 3 passes.
+the filesystems are synced and remounted read-only, most recently mounted first.
 a filesystem that remains writable is unmounted, and failing that, detached.
 .I /
 is remounted read-only last

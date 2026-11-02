@@ -328,6 +328,7 @@ void shutdown_system(int how, const char* what) {
 		wait_children(KILL_GRACE_MS);
 	}
 
+	log_unbatched();
 	console_front(true);
 	log_note("%s: saving the clock and disabling swap", what);
 	save_hwclock();
