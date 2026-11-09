@@ -18,6 +18,8 @@
 #define LOG_RING (128u << 10)
 
 void log_init(void);
+// ms since log_init, the clock of the stamps
+int64_t log_elapsed_ms(void);
 void log_batch_begin(void);
 void log_unbatched(void);
 void log_reopen_console(void);

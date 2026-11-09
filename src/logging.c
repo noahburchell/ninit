@@ -320,7 +320,7 @@ static int fitted(int ret, int at, size_t cap) {
 }
 
 // the same truncation as every deadline, so two stamps differ by exactly the ms between them
-static int64_t log_elapsed_ms(void) {
+int64_t log_elapsed_ms(void) {
 	int64_t ms = mono_ms() - log_start;
 
 	return ms < 0 ? 0 : ms;

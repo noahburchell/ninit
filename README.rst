@@ -660,7 +660,7 @@ startup is event driven. when a service becomes ready, each dependent whose prer
 
 while any service is starting, each 10 s in which nothing else happens produces ``WAIT NAME: still running after N s`` for every service still starting
 
-startup ends when no service is starting and no restart is pending. ninit then prints a summary: each failed and each skipped service, the number never started, and ``boot: N of M services up in T ms``
+startup ends when no service is starting and no restart is pending. ninit then prints a summary: each failed and each skipped service, the number never started, and ``boot: N of M services up in T ms``. T counts from the start of ninit, as the stamps do, so the summary line reads the same as its own stamp
 
 processes reparented to pid 1 are reaped
 

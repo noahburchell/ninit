@@ -57,7 +57,6 @@ uint32_t drain_rotor;
 bool shutting_down;
 int null_fd = -1;
 int64_t boot_ms = -1;
-static int64_t boot_t0;
 
 int64_t now_ms(void) {
 	return mono_ms();
@@ -100,7 +99,7 @@ static void check_boot_done(void) {
 		}
 	}
 
-	boot_ms = now_ms() - boot_t0;
+	boot_ms = log_elapsed_ms();
 	fail_summary(map, state);
 	if(n_pending) {
 		log_warn("boot: %u service%s never started", n_pending, plural(n_pending));
@@ -234,7 +233,6 @@ int main(int argc, char** argv) {
 	print_welcome();
 	ctl_init();
 	log_feed(ctl_feed);
-	boot_t0 = now_ms();
 
 	// the kernel passes unknown key=value boot parameters to init
 	why = getenv("ninit_graph");
