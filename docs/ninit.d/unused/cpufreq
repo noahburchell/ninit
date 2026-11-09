@@ -1,17 +1,7 @@
-#!/usr/bin/env lua
+#!/bin/bash
 #%depon: modules-load
 #%onfail: warn
-local governor = "schedutil"
-for cpu = 0, 4095 do
-	local path = "/sys/devices/system/cpu/cpu" .. cpu .. "/cpufreq/scaling_governor"
-	local f = io.open(path, "w")
-	if not f then
-		break
-	end
-	f:write(governor)
-	local ok, err = f:close()
-	if not ok then
-		io.stderr:write("cpufreq: ", path, ": ", err, "\n")
-		os.exit(1)
-	end
-end
+for f in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_governor; do
+	[ -e "$f" ] || break
+	echo schedutil > "$f" || { echo "cpufreq: $f: cannot set the governor" >&2; exit 1; }
+done

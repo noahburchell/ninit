@@ -172,8 +172,7 @@ static void start_one(struct checks* c, struct src* s, uint32_t i, const char* d
 	static char* const envp[] = { path, NULL };
 	size_t len = strlen(s->script), nl = strlen(s->name);
 	char mname[250];
-	char* argv[16];
-	const char* prog;
+	char* argv[5];
 	int sfd, efd;
 	pid_t pid;
 
@@ -213,7 +212,7 @@ static void start_one(struct checks* c, struct src* s, uint32_t i, const char* d
 		return;
 	}
 
-	prog = s->lang->check_argv(s, argv, sizeof(argv) / sizeof(*argv));
+	shell_check_argv(argv);
 	pid = fork();
 	if(pid < 0) {
 		die("fork: %s", strerror(errno));
@@ -231,7 +230,7 @@ static void start_one(struct checks* c, struct src* s, uint32_t i, const char* d
 		}
 
 		dup2(efd, 2);
-		execve(prog, argv, envp);
+		execve(NG_SHELL, argv, envp);
 		_exit(127);
 	}
 
@@ -240,8 +239,6 @@ static void start_one(struct checks* c, struct src* s, uint32_t i, const char* d
 }
 
 static void report(struct checks* c, struct src* srcs, uint32_t n, const char* dir) {
-	const char* what = NULL;
-
 	for(uint32_t i = 0; i < n; i++) {
 		if(!c->failed[i]) {
 			continue;
@@ -249,23 +246,13 @@ static void report(struct checks* c, struct src* srcs, uint32_t n, const char* d
 
 		print_failure(dir, srcs[i].name, c->failed[i]);
 		free(c->failed[i]);
-		if(c->late[i]) {
-			continue;
-		}
-
-		if(!what) {
-			what = srcs[i].interp;
-		} else if(strcmp(what, srcs[i].interp)) {
-			what = "";
-		}
 	}
 
 	free(c->failed);
 	free(c->late);
 	free(c->slot);
 	if(c->bad) {
-		die("%u service script%s failed the %s%ssyntax check", c->bad, plural(c->bad),
-		    what && *what ? what : "", what && *what ? " " : "");
+		die("%u service script%s failed the %s syntax check", c->bad, plural(c->bad), NG_SHELL);
 	}
 
 	if(c->unchecked) {
@@ -315,15 +302,12 @@ void check_syntax(struct src* srcs, uint32_t n, const char* dir) {
 	struct checks c = { .nslot = ncpu > 1 ? (uint32_t)ncpu : 1 };
 	struct sigaction dfl = { .sa_handler = SIG_DFL }, old_chld;
 	struct stat sh;
-	bool shell_ok = true;
 	int e;
 
-	// an interpreter #! names was found runnable when the file was read, the shell was not
 	if(sys_stat(NG_SHELL, &sh) < 0 || sys_exec_ok(NG_SHELL, &sh) < 0) {
-		fprintf(stderr, "ninitctl: warning: %s%s is not executable, "
-				"skipping the syntax check of shell scripts\n",
+		fprintf(stderr, "ninitctl: warning: %s%s is not executable, skipping the syntax check\n",
 			g_root_pfx, NG_SHELL);
-		shell_ok = false;
+		return;
 	}
 
 	if(c.nslot > 32) {
@@ -351,7 +335,7 @@ void check_syntax(struct src* srcs, uint32_t n, const char* dir) {
 			collect_one(&c);
 		}
 
-		if(!srcs[i].script || (srcs[i].lang == &lang_shell && !shell_ok)) {
+		if(!srcs[i].script) {
 			continue;
 		}
 

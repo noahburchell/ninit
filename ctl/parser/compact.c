@@ -1,6 +1,7 @@
 #include "parser.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #define CZ_DEPTH 32
@@ -350,6 +351,16 @@ static size_t cz_sub(const char* s, size_t i, size_t n, uint8_t d, struct cz_out
 	cz_copy(e, s, i, i + 2);
 
 	return sk_cmd(s, i + 2, n, d, e, true);
+}
+
+// a #% line after the header is a comment, the warning quotes it without its trailing blanks
+static void late_directive(const char* fname, str line) {
+	while(line.n && (line.p[line.n - 1] == ' ' || line.p[line.n - 1] == '\t' || line.p[line.n - 1] == '\r')) {
+		line.n--;
+	}
+
+	fprintf(stderr, "ninitctl: warning: %s/%s: '%.*s' follows a command, treating it as a comment\n",
+		g_dir, fname, (int)line.n, line.p);
 }
 
 static size_t sk_cmd(const char* s, size_t i, size_t n, uint8_t d, struct cz_out* e, bool nested) {

@@ -1,5 +1,4 @@
 #include "show.h"
-#include "../help/str.h"
 #include "../src/ngraph.h"
 
 #include <errno.h>
@@ -80,17 +79,9 @@ static void print_arg(const char* a) {
 	putchar('\'');
 }
 
-// what runs the script, the shell by its argv[0], an interpreter by its basename, or direct
+// what runs the script, the shell by its argv[0] or direct
 static const char* via_of(const void* map, uint32_t i) {
-	if(ng_direct(map, i)) {
-		return "direct";
-	}
-
-	if(ng_interp(map, i)) {
-		return path_base(ng_exec(map, i));
-	}
-
-	return NG_SHELL_ARGV0;
+	return ng_direct(map, i) ? "direct" : NG_SHELL_ARGV0;
 }
 
 int cmd_show(int argc, char** argv) {
@@ -288,21 +279,7 @@ int cmd_show(int argc, char** argv) {
 				       : " (default)",
 			       st->reset);
 
-			if(ng_interp(map, i)) {
-				const char* a = ng_exec(map, i);
-
-				printf("%s     %s runs", st->dim, st->vbar);
-				for(; *a; a += strlen(a) + 1) {
-					print_arg(a);
-				}
-
-				fputs(" SCRIPT", stdout);
-				for(a++; *a; a += strlen(a) + 1) {
-					print_arg(a);
-				}
-
-				printf("%s\n", st->reset);
-			} else if(ng_direct(map, i)) {
+			if(ng_direct(map, i)) {
 				const char* a = ng_exec(map, i);
 
 				printf("%s     %s execs", st->dim, st->vbar);

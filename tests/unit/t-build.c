@@ -50,15 +50,17 @@ static pid_t shim_waitpid(pid_t pid, int* st, int flags) {
 	return waitpid(pid, st, flags);
 }
 
+// the syntax check execs NG_SHELL, test_check stands a script of its own at this path
+#undef NG_SHELL
+#undef NG_SHELL_ARGV0
+#define NG_SHELL       "/tmp/ninit-t-build-check/fakesh"
+#define NG_SHELL_ARGV0 "fakesh"
+
 #define exit shim_exit
 #include "../../ctl/util.c"
 #include "../../ctl/parser/compact.c"
 #include "../../ctl/parser/directives.c"
-#include "../../ctl/parser/lang.c"
 #include "../../ctl/parser/shell.c"
-#include "../../ctl/parser/python.c"
-#include "../../ctl/parser/lua.c"
-#include "../../ctl/parser/perl.c"
 #include "../../ctl/output.c"
 #include "../../ctl/sources.c"
 #include "../../ctl/graph.c"
@@ -377,217 +379,6 @@ static void test_shebang(void) {
 	}
 }
 
-// an executable named NAME in DIR, standing in for an interpreter the host may lack
-static void fake_interp(const char* dir, const char* name) {
-	char path[512];
-	int fd;
-
-	snprintf(path, sizeof(path), "%s/%s", dir, name);
-	fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
-	if(fd >= 0) {
-		(void)!write(fd, "#!/bin/sh\nexit 0\n", 17);
-		close(fd);
-	}
-}
-
-static void test_languages(void) {
-	char dir[] = "/tmp/ninit-t-build-interp.XXXXXX", text[1024], want[512];
-	struct src_arg a;
-	struct shebang sb;
-	const char* line;
-	int rc;
-
-	ok(lang_python.claims(STR("python")) && lang_python.claims(STR("python3"))
-		   && lang_python.claims(STR("python3.14")),
-	   "python, python3 and python3.14 are python");
-	ok(!lang_python.claims(STR("python3-config")) && !lang_python.claims(STR("pythonw"))
-		   && !lang_python.claims(STR("pyth")),
-	   "python3-config, pythonw and pyth are not");
-	ok(lang_lua.claims(STR("lua")) && lang_lua.claims(STR("lua5.4")) && lang_lua.claims(STR("luajit"))
-		   && lang_lua.claims(STR("luajit-2.1")),
-	   "lua, lua5.4, luajit and luajit-2.1 are lua");
-	ok(!lang_lua.claims(STR("luac")) && !lang_lua.claims(STR("luarocks")), "luac and luarocks are not");
-	ok(lang_perl.claims(STR("perl")) && lang_perl.claims(STR("perl5.40.0")), "perl and perl5.40.0 are perl");
-	ok(!lang_perl.claims(STR("perldoc")) && !lang_perl.claims(STR("perl-x")), "perldoc and perl-x are not");
-
-	{
-		char b[] = "#!/usr/bin/python3\n#%type: oneshot\n# c\nprint(1)  # t\n\n";
-		size_t off = (size_t)(strstr(b, "print") - b), n = blank_header(NULL, b, strlen(b), off);
-
-		is_str(b, "\n\n\nprint(1)  # t\n\n", "header lines become empty lines, the body stays as written");
-		is_int(n, strlen(b), "and the returned length is the stored length");
-	}
-
-	{
-		static char name[] = "a\"b\\c";
-		struct src s = { .name = name, .interp = "/usr/bin/lua" };
-
-		lang_lua.exec_args(&s);
-		ok(s.exec_pre.n == 4 && s.exec_suf.n == 0 && !strcmp(s.exec_pre.v[0], "/usr/bin/lua")
-			   && !strcmp(s.exec_pre.v[1], "-e") && !strcmp(s.exec_pre.v[3], "-e"),
-		   "lua runs as INTERP -e CHUNK -e SCRIPT");
-		is_str(s.exec_pre.v[2], "io.stdout:setvbuf(\"line\") arg = { [0] = \"a\\\"b\\\\c\" }",
-		       "the lua chunk escapes the name");
-	}
-
-	{
-		static char name[] = "it's\\x";
-		struct src s = { .name = name, .interp = "/usr/bin/perl" };
-
-		lang_perl.exec_args(&s);
-		ok(s.exec_pre.n == 6 && s.exec_suf.n == 0 && !strcmp(s.exec_pre.v[3], "-e")
-			   && !strcmp(s.exec_pre.v[4], "#line 1") && !strcmp(s.exec_pre.v[5], "-e"),
-		   "perl runs as INTERP -e LINE -e '#line 1' -e SCRIPT");
-		is_str(s.exec_pre.v[2], "$| = 1; $0 = 'it\\'s\\\\x';", "the perl line escapes the name");
-	}
-
-	{
-		static char name[] = "svc";
-		struct src s = { .name = name, .interp = "/usr/bin/python3" };
-
-		strv_push(&s.iargs, "-X");
-		strv_push(&s.iargs, "dev");
-		lang_python.exec_args(&s);
-		ok(s.exec_pre.n == 7 && !strcmp(s.exec_pre.v[1], "-I") && !strcmp(s.exec_pre.v[2], "-B")
-			   && !strcmp(s.exec_pre.v[3], "-u") && !strcmp(s.exec_pre.v[4], "-X")
-			   && !strcmp(s.exec_pre.v[5], "dev") && !strcmp(s.exec_pre.v[6], "-c"),
-		   "python runs as INTERP -I -B -u #!-ARGS -c SCRIPT");
-		ok(s.exec_suf.n == 1 && !strcmp(s.exec_suf.v[0], "svc"), "with the name after the script");
-	}
-
-	g_dir = "/d";
-	line = "#!/usr/bin/env -S true -x  y";
-	ok(parse_shebang(str_c(line), &sb) && str_eq(sb.prog, STR("true")),
-	   "env -S names the program after its options");
-	{
-		char* p = resolve("svc", sb.prog);
-		char* slash = strrchr(p, '/');
-		char* real;
-
-		ok(p[0] == '/' && !strcmp(slash, "/true") && runnable(p), "env finds true in PATH");
-		*slash = '\0';
-		real = realpath(p, NULL);
-		ok(real && !strcmp(real, p), "in a directory without links, %s", p);
-		free(real);
-		free(p);
-	}
-
-	if(!mkdtemp(dir)) {
-		ok(0, "mkdtemp: %s", strerror(errno));
-		return;
-	}
-
-	fake_interp(dir, "python3");
-	fake_interp(dir, "lua5.4");
-	fake_interp(dir, "perl");
-
-	snprintf(text, sizeof(text), "#!%s/python3 -X dev\n#%%type: oneshot\n# c\nprint(1)\n", dir);
-	a.text = text;
-	rc = capture(call_parse, &a);
-	if(!ok(!rc && a.s.lang == &lang_python && !strncmp(a.s.interp, dir, strlen(dir)),
-	       "a #! line naming python selects python")) {
-		tap_diag("%s", errtext);
-	}
-
-	is_str(a.s.script, "\n\n\nprint(1)\n", "its header is blanked");
-	ok(a.s.exec_pre.n == 7 && a.s.exec_suf.n == 1, "the #! arguments reach its argv");
-	ok(a.s.stripped, "its script is stripped");
-
-	snprintf(text, sizeof(text), "#!%s/lua5.4\nprint(1) -- c\n", dir);
-	rc = capture(call_parse, &a);
-	ok(!rc && a.s.lang == &lang_lua, "a #! line naming lua5.4 selects lua");
-	is_str(a.s.script, "\nprint(1)\n", "and its comment is removed");
-	snprintf(text, sizeof(text), "#!%s/perl -w\nprint 1;\n", dir);
-	rc = capture(call_parse, &a);
-	ok(!rc && a.s.lang == &lang_perl && a.s.iargs.n == 1, "a #! line naming perl selects perl");
-
-	snprintf(text, sizeof(text), "#!%s/python3 -b -d -E -i -O -P -q -R -s -S -v\nprint(1)\n", dir);
-	rc = capture(call_parse, &a);
-	if(!ok(rc == 1001 && !strcmp(errtext, "ninitctl: /d/svc: 17 interpreter arguments, the maximum is 16\n"),
-	       "more than 16 interpreter arguments are refused")) {
-		tap_diag("%d %s", rc, errtext);
-	}
-
-	snprintf(text, sizeof(text), "#!%s/missing/python3\nprint(1)\n", dir);
-	rc = capture(call_parse, &a);
-	snprintf(want, sizeof(want), "ninitctl: /d/svc: %s/missing/python3: No such file or directory\n", dir);
-	if(!ok(rc == 1001 && !strcmp(errtext, want), "a missing interpreter fails the build")) {
-		tap_diag("%d %s", rc, errtext);
-	}
-
-	a.text = "#!/usr/bin/env python9.99\nprint(1)\n";
-	rc = capture(call_parse, &a);
-	if(!ok(rc == 1001 && strstr(errtext, "ninitctl: /d/svc: 'python9.99' is not in /"),
-	       "an interpreter env cannot find fails the build")) {
-		tap_diag("%d %s", rc, errtext);
-	}
-
-	a.text = "#!bin/python3\nprint(1)\n";
-	rc = capture(call_parse, &a);
-	if(!ok(rc == 1001 && !strcmp(errtext, "ninitctl: /d/svc: 'bin/python3' is not an absolute path\n"),
-	       "a relative interpreter path fails the build")) {
-		tap_diag("%d %s", rc, errtext);
-	}
-
-	{
-		static const struct {
-			const char* interp;
-			const char* args;
-			const char* word;
-			const char* why;
-		} v[] = {
-			{ "python3", "foo.py", "foo.py", ARG_SCRIPT },
-			{ "python3", "-m http.server", "-m", ARG_SCRIPT },
-			{ "python3", "-Bc pass", "-Bc", ARG_SCRIPT },
-			{ "python3", "-", "-", ARG_SCRIPT },
-			{ "python3", "-u --", "--", ARG_SCRIPT },
-			{ "python3", "-X dev -W", "-W", ARG_SCRIPT },
-			{ "python3", "--check-hash-based-pycs", "--check-hash-based-pycs", ARG_SCRIPT },
-			{ "python3", "-V", "-V", ARG_EXIT },
-			{ "python3", "--help-env", "--help-env", ARG_EXIT },
-			{ "python3", "-W error -X dev -Xutf8 --check-hash-based-pycs never -OO", NULL, NULL },
-			{ "lua5.4", "foo.lua", "foo.lua", ARG_SCRIPT },
-			{ "lua5.4", "-e x=1", "-e", ARG_CODE },
-			{ "lua5.4", "-E --", "--", ARG_SCRIPT },
-			{ "lua5.4", "-l", "-l", ARG_EXIT },
-			{ "lua5.4", "-b", "-b", ARG_SCRIPT },
-			{ "lua5.4", "-E -W -l string -lstring -j off -O3", NULL, NULL },
-			{ "perl", "foo.pl", "foo.pl", ARG_SCRIPT },
-			{ "perl", "-wle", "-wle", ARG_CODE },
-			{ "perl", "-x", "-x", ARG_SCRIPT },
-			{ "perl", "-I", "-I", ARG_SCRIPT },
-			{ "perl", "-c", "-c", ARG_EXIT },
-			{ "perl", "-dt", "-dt", ARG_EXIT },
-			{ "perl", "-n", "-n", ARG_LOOP },
-			{ "perl", "-F:", "-F:", ARG_LOOP },
-			{ "perl", "-wT -0777 -0xFF -l012 -CSDA -Mstrict -I /tmp -i.bak -d:Foo", NULL, NULL },
-		};
-
-		for(size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
-			snprintf(text, sizeof(text), "#!%s/%s %s\n:\n", dir, v[k].interp, v[k].args);
-			a.text = text;
-			rc = capture(call_parse, &a);
-			if(v[k].why) {
-				snprintf(want, sizeof(want), "ninitctl: /d/svc: #! argument '%s' %s\n",
-					 v[k].word, v[k].why);
-			}
-
-			if(!ok(v[k].why ? rc == 1001 && !strcmp(errtext, want) : !rc,
-			       "%s %s is %s", v[k].interp, v[k].args, v[k].why ? "refused" : "accepted")) {
-				tap_diag("%d %s", rc, errtext);
-			}
-		}
-	}
-
-	snprintf(text, sizeof(text), "%s/python3", dir);
-	unlink(text);
-	snprintf(text, sizeof(text), "%s/lua5.4", dir);
-	unlink(text);
-	snprintf(text, sizeof(text), "%s/perl", dir);
-	unlink(text);
-	rmdir(dir);
-}
-
 // the words of the direct argv joined by spaces, or an empty string
 static const char* direct_of(const struct src* s) {
 	static char buf[8192];
@@ -679,13 +470,13 @@ static void test_direct(void) {
 
 	memset(text, 'c', sizeof(text));
 	memcpy(text, "exec ", 5);
-	text[5 + NG_MAX_INTERP] = '\n';
-	text[6 + NG_MAX_INTERP] = '\0';
+	text[5 + NG_MAX_CMD] = '\n';
+	text[6 + NG_MAX_CMD] = '\0';
 	rc = capture(call_parse, &a);
 	ok(!rc && a.s.direct.n == 1, "a 255 byte command is direct");
-	text[5 + NG_MAX_INTERP] = 'c';
-	text[6 + NG_MAX_INTERP] = '\n';
-	text[7 + NG_MAX_INTERP] = '\0';
+	text[5 + NG_MAX_CMD] = 'c';
+	text[6 + NG_MAX_CMD] = '\n';
+	text[7 + NG_MAX_CMD] = '\0';
 	rc = capture(call_parse, &a);
 	ok(!rc && !a.s.direct.n, "a 256 byte command stays under the shell");
 
@@ -700,7 +491,7 @@ static void call_check(void* p) {
 	check_syntax(p, 1, "/d");
 }
 
-// an interpreter at DIR/NAME running BODY under sh
+// a shell at DIR/NAME running BODY under sh
 static void fake_script(char* path, size_t cap, const char* dir, const char* name, const char* body) {
 	int fd;
 
@@ -714,23 +505,23 @@ static void fake_script(char* path, size_t cap, const char* dir, const char* nam
 }
 
 static void test_check(void) {
-	char dir[] = "/tmp/ninit-t-build-check.XXXXXX", path[512], want[128];
+	static const char dir[] = "/tmp/ninit-t-build-check";
+	char path[512], want[128];
 	static char name[] = "svc";
-	struct src s = { .name = name, .lang = &lang_perl, .script = "print 1;\n" };
+	struct src s = { .name = name, .script = "print 1;\n" };
 	sigset_t chld;
 	long long t0;
 	int rc;
 
-	if(!mkdtemp(dir)) {
-		ok(0, "mkdtemp: %s", strerror(errno));
+	if(mkdir(dir, 0755) < 0 && errno != EEXIST) {
+		ok(0, "mkdir %s: %s", dir, strerror(errno));
 		return;
 	}
 
 	sigemptyset(&chld);
 	sigaddset(&chld, SIGCHLD);
 
-	fake_script(path, sizeof(path), dir, "perl", "exec sleep 10\n");
-	s.interp = path;
+	fake_script(path, sizeof(path), dir, "fakesh", "exec sleep 10\n");
 	t0 = mono_ms();
 	rc = capture(call_check, &s);
 	if(!ok(rc == 1001 && !strcmp(errtext, "ninitctl: /d/svc: the syntax check did not finish in 1 s\n"
@@ -743,7 +534,7 @@ static void test_check(void) {
 	sigprocmask(SIG_UNBLOCK, &chld, NULL);
 	signal(SIGCHLD, SIG_DFL);
 
-	fake_script(path, sizeof(path), dir, "perl", "echo 'syntax error at - line 1' >&2\nexit 255\n");
+	fake_script(path, sizeof(path), dir, "fakesh", "echo 'syntax error at - line 1' >&2\nexit 255\n");
 	signal(SIGCHLD, SIG_IGN);
 	rc = capture(call_check, &s);
 	if(!ok(rc == 1001 && strstr(errtext, "ninitctl: /d/svc: syntax error at - line 1\n")
@@ -755,7 +546,7 @@ static void test_check(void) {
 	sigprocmask(SIG_UNBLOCK, &chld, NULL);
 	signal(SIGCHLD, SIG_DFL);
 
-	fake_script(path, sizeof(path), dir, "perl", "exit 0\n");
+	fake_script(path, sizeof(path), dir, "fakesh", "exit 0\n");
 	signal(SIGCHLD, SIG_IGN);
 	rc = capture(call_check, &s);
 	ok(!rc && !*errtext, "and a check that passes leaves SIGCHLD as the caller set it");
@@ -808,7 +599,6 @@ int main(void) {
 	test_check();
 	test_helpers();
 	test_shebang();
-	test_languages();
 	test_direct();
 
 	return tap_done();

@@ -83,7 +83,7 @@ static int pid1_is_ninit(void) {
 	return !strcmp(buf, "ninit");
 }
 
-static void fallback(const char* name, char** argv) __attribute__((noreturn));
+[[noreturn]] static void fallback(const char* name, char** argv);
 
 static void fallback(const char* name, char** argv) {
 	char path[PATH_MAX + 128], arg0[64];

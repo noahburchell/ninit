@@ -1,5 +1,5 @@
 '\" t
-.TH NINIT.D 5 2026-09-30 "ninit @PACKAGE_VERSION@"
+.TH NINIT.D 5 2026-11-09 "ninit @PACKAGE_VERSION@"
 .SH NAME
 ninit.d \- ninit service directory, service files and compiled graph
 .SH SYNOPSIS
@@ -81,22 +81,21 @@ warns about it, except inside a quoted string, a here-document or a file stored 
 .PP
 a
 .B #!\&
-line is an ordinary comment unless it names python, lua or perl, see
-.BR "PYTHON, LUA AND PERL" .
-otherwise the file is executed by the configured interpreter whatever its first line and mode.
+line is an ordinary comment.
+the file is executed by the configured shell whatever its first line and mode.
 .B ninitctl init
 warns when the first line is a
 .B #!\&
-line naming any other interpreter, directly or through
+line naming another program, directly or through
 .BR env .
 .B #!/bin/sh
-draws no warning when the interpreter lexes like sh
+draws no warning when the shell lexes like sh
 .PP
 .B ninitctl init
 stores the script without its comments, indentation or trailing blanks, and with runs of blanks collapsed to one space.
 text inside quotes and here-documents is stored as written, and so is the rest of the file after a construct it cannot follow exactly, such as a line continuation inside a word.
-a removed line stays as an empty line, so line numbers in interpreter messages match the file.
-the stripper follows sh lexing and runs only when the interpreter is run as
+a removed line stays as an empty line, so line numbers in shell messages match the file.
+the stripper follows sh lexing and runs only when the shell is run as
 .BR sh ,
 .BR bash ,
 .BR dash ,
@@ -108,7 +107,7 @@ the stripper follows sh lexing and runs only when the interpreter is run as
 .B yash
 or
 .BR posh .
-for any other interpreter, such as zsh, the file is stored as written.
+for any other shell, such as zsh, the file is stored as written.
 a file containing a NUL byte is rejected
 .PP
 a stored script that is one line of the form
@@ -131,7 +130,7 @@ when the service starts and is passed as written in
 .BR argv[0] .
 a file that is neither ELF nor
 .B #!\&
-runs under the configured interpreter, as the shell runs it.
+runs under the configured shell, as the shell would run it.
 the process lacks the
 .B PWD
 and
@@ -253,7 +252,7 @@ which holds the write end of a pipe.
 data other than the newline is ignored.
 without
 .BR notify ,
-ready once the interpreter has been executed.
+ready once its command has been executed.
 up until its main process exits.
 .B ninitctl init
 warns about each daemon that has dependents and no
@@ -340,13 +339,11 @@ without its comments, and
 .I name
 is the service name, available as
 .BR $0 .
-a python, lua or perl service is executed as in
-.B "PYTHON, LUA AND PERL"
-instead, and a file whose stored script is one bare
+a file whose stored script is one bare
 .B exec
 line, see
 .BR "FILE FORMAT" ,
-as that command directly.
+is executed as that command directly.
 the process has:
 .IP \(bu 2
 a new session and no controlling terminal
@@ -422,139 +419,6 @@ and
 lines beginning with
 .B #
 are comments and a later assignment overrides an earlier one
-.SH PYTHON, LUA AND PERL
-the configured interpreter is the language of service files.
-python, lua and perl are an extra for the few services better written in one of them.
-a file whose
-.B #!\&
-line names
-.BR python ,
-.BR python3 ,
-.BR python3. N,
-.BR lua ,
-.BR lua N . N,
-.B luajit
-or a versioned
-.BR luajit ,
-.B perl
-or
-.BR perl N . N
-runs under that interpreter.
-it is named directly or through
-.BR env .
-.B ninitctl init
-resolves it when the graph is built, below the
-.B \-\-root
-directory if one is given, and stores its absolute path, ninit never runs
-.BR env ,
-so the options and
-.IB name = value
-words before the program, read as gnu and busybox
-.B env
-read them, have no effect.
-.B env
-is resolved through the
-.B PATH
-services run with, with the directory made canonical and the program keeping its own name.
-a missing or non-executable interpreter fails the build.
-the
-.B #!\&
-line of a file without commands, which runs nothing, is not read.
-the words after the interpreter are separate arguments, as
-.B env \-S
-splits them, and come before the script
-.PP
-the build fails on an argument that keeps the stored script from running.
-a letter counts inside a cluster of options:
-.PP
-.TS
-tab(|);
-l l.
-all|a word that is neither an option nor an option argument, \-, \-\-
-python|\-c, \-m, \-h, \-V, \-\-help, \-\-version, and \-W, \-X or
-\^|\-\-check\-hash\-based\-pycs without their argument
-lua|\-e, luajit \-b, and \-l or luajit \-j without their argument
-perl|\-e, \-E, \-x, \-c, \-h, \-u, \-v, \-V, \-d without a module,
-\^|\-n, \-p, \-a, \-F, and \-I without its argument
-.TE
-.PP
-the header, the
-.B #!\&
-line and directives included, is stored as empty lines.
-the rest is stripped as a shell script is: comments, trailing blanks and the indentation
-the language does not read are removed, runs of blanks become one space, and every line stays,
-so line numbers in interpreter messages match the file.
-strings are stored as written, and so is the rest of the file after a construct the stripper cannot follow exactly.
-a
-.B #%
-line after the header draws a warning in python and perl.
-python keeps the indentation of a line that begins a statement and stores f-strings whole.
-lua removes long comments and stores long strings as written.
-perl removes pod, keeps
-.B #line
-directives, and stores quote-like operators, regular expressions, here-documents and the text after
-.B __END__
-as written.
-in lua a
-.B #
-line is valid only in the header.
-each start executes, with
-.I args
-from the
-.B #!\&
-line:
-.PP
-.RS
-.nf
-\fIinterp\fR \-I \-B \-u \fIargs\fR \-c \fIscript name\fR
-\fIinterp args\fR \-e \(aqio.stdout:setvbuf("line") arg = { [0] = "\fIname\fR" }\(aq \-e \fIscript\fR
-\fIinterp args\fR \-e \(aq$| = 1; $0 = \(aq\(rs\(aq\(aq\fIname\fR\(aq\(rs\(aq\(aq;\(aq \-e \(aq#line 1\(aq \-e \fIscript\fR
-.fi
-.RE
-.PP
-for python, lua and perl.
-python sees the name in
-.BR sys.argv[1] ,
-lua in
-.B arg[0]
-and perl in
-.BR $0 .
-.B \-I
-keeps
-.IR / ,
-the working directory, off
-.B sys.path
-and ignores the
-.B PYTHON*
-variables,
-.B \-B
-keeps python from writing
-.I __pycache__
-directories as root.
-.BR \-u ,
-the lua line buffering and perl's
-.B $|
-hand output to ninit as it is written.
-the environment, descriptors, notify fd and readiness are those of
-.BR "EXECUTION ENVIRONMENT" .
-.PP
-the syntax check of
-.B ninitctl init
-compiles python with
-.B compile()
-and lua with
-.BR load() ,
-neither runs the script.
-python also looks up the module of each import at the top of the script,
-before any other statement, by its first name, and a missing one fails the build.
-.B perl \-c
-runs
-.B BEGIN
-blocks and
-.B use
-statements as it compiles, one that blocks is killed after 30 s and fails the build.
-the interpreter must exist at its path when the service starts, a failed exec prints
-.BI "ninit: exec " path ": errno " n
 .SH OUTPUT
 each line a service writes is logged as a
 .B NOTE
@@ -569,7 +433,7 @@ is written by
 the previous graph is kept as
 .IR depgraph.old .
 .BR ninit (8)
-loads a graph only if its version equals the one it was built with, currently 9,
+loads a graph only if its version equals the one it was built with, currently 10,
 and loads
 .I depgraph.old
 when
@@ -603,7 +467,7 @@ lB lB lB lB
 l n l l.
 offset|size|field|content
 0x00|4|magic|0x4744494e, the bytes NIDG
-0x04|4|version|9
+0x04|4|version|10
 0x08|4|crc32|crc32c of the file with this field 0
 0x0c|4|total_len|file size
 0x10|4|n_svc|services, at most 8192
@@ -628,7 +492,7 @@ l n l l.
 offset|size|field|content
 0x0|2|unmet|number of prerequisites
 0x2|1|type|0 oneshot, 1 daemon, 2 target
-0x3|1|flags|bits 1:0 onfail, bit 2 restart, bit 3 interpreter, bit 4 direct
+0x3|1|flags|bits 1:0 onfail, bit 2 restart, bit 3 direct
 0x4|2|n_desc|number of transitive dependents
 0x6|2|notify_fd|0 or 3 to 255
 0x8|4|script_off|string offset, 0xffffffff for a target
@@ -647,7 +511,7 @@ offset|size|field|content
 0x8|2|retry_ms|start-delay
 0xa|1|start_tries|start-tries, 0 for the type default
 0xb|1|pflags|bit 0 deps: order
-0xc|4|exec_off|string offset of the interpreter or direct argv, 0xffffffff without bit 3 or 4
+0xc|4|exec_off|string offset of the direct argv, 0xffffffff without bit 3
 .TE
 .PP
 the onfail field is 0 for warn, 1 for stop and 2 for shell.
@@ -661,12 +525,8 @@ up to but excluding
 of the dependent indices, ascending and each greater than
 .IR i .
 the string table holds NUL-terminated names and scripts.
-an interpreter argv is two lists of NUL-terminated strings, each ended by an empty string.
-the script is run by the first string of the first list, with the first list, the script and the second list as arguments.
-the first string is an absolute path of at most 255 bytes, the lists hold at most 16 strings and each string is at most 4096 bytes.
 a direct argv is one list of NUL-terminated strings ended by an empty string, the command and its arguments, which the service runs as its argv without the script.
 the command is at most 255 bytes and an absolute path when it contains a slash, the list holds at most 16 strings and each argument is at most 4096 bytes.
-bits 3 and 4 are never both set.
 unused bits and the reserved word are 0
 .SH LIMITS
 .TS
@@ -680,8 +540,6 @@ start-timeout, stop-timeout|24 h
 start-delay|65535 ms
 start-tries|250
 notify|3 to 255
-interpreter path|255 bytes
-interpreter arguments|16 of 4096 bytes
 direct exec command|255 bytes
 direct exec arguments|15 of 4096 bytes
 retained output|1024 bytes

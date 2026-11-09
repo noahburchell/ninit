@@ -1,9 +1,0 @@
-#!/usr/bin/env lua
--- crlf comment
-local x = 1   -- c
-if x then
-    print("crlf -- kept")
-end
-local y = [[a
-b]]
-print(#y)

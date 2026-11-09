@@ -5,23 +5,22 @@
 #include <assert.h>
 
 #define NG_MAGIC   0x4744494eu // 'NIDG'
-#define NG_VERSION 9u
+#define NG_VERSION 10u
 
 #define NG_TYPE_ONESHOT 0
 #define NG_TYPE_DAEMON	1
 #define NG_TYPE_TARGET	2
 
-// bits 1:0 the onfail policy, bit 2 restart after readiness, bit 3 run the script with the argv
-// of the policy record instead of the shell, bit 4 run that argv alone, the script is its exec line
+// bits 1:0 the onfail policy, bit 2 restart after readiness, bit 3 run the argv of the policy
+// record alone, without the shell, the script is the exec line it was read from
 #define NG_ONFAIL_MASK	0x03
 #define NG_ONFAIL_WARN	0
 #define NG_ONFAIL_STOP	1
 #define NG_ONFAIL_SHELL 2
 
 #define NG_FLAG_RESTART 0x04
-#define NG_FLAG_INTERP	0x08
-#define NG_FLAG_DIRECT	0x10
-#define NG_FLAG_MASK	(NG_ONFAIL_MASK | NG_FLAG_RESTART | NG_FLAG_INTERP | NG_FLAG_DIRECT)
+#define NG_FLAG_DIRECT	0x08
+#define NG_FLAG_MASK	(NG_ONFAIL_MASK | NG_FLAG_RESTART | NG_FLAG_DIRECT)
 
 #define NG_PF_ORDER_ONLY 0x01
 #define NG_PF_MASK	 0x01
@@ -29,9 +28,8 @@
 #define NG_NO_SCRIPT UINT32_MAX
 #define NG_NO_EXEC   UINT32_MAX
 
-// an interpreter argv is its path and at most NG_MAX_EXEC_ARGS strings around the script,
 // a direct argv is the command and its arguments, NG_MAX_EXEC_ARGS strings in all
-#define NG_MAX_INTERP	 255u
+#define NG_MAX_CMD	 255u
 #define NG_MAX_EXEC_ARGS 16u
 #define NG_MAX_EXEC_ARG	 4096u
 
@@ -190,16 +188,11 @@ static inline const char* ng_script(const void* m, uint32_t i) {
 	return ng_blob(m) + ng_svcs(m)[i].script_off;
 }
 
-static inline bool ng_interp(const void* m, uint32_t i) {
-	return ng_svcs(m)[i].flags & NG_FLAG_INTERP;
-}
-
 static inline bool ng_direct(const void* m, uint32_t i) {
 	return ng_svcs(m)[i].flags & NG_FLAG_DIRECT;
 }
 
-// with INTERP the strings before the script, an empty string, the strings after it, an empty
-// string, with DIRECT the command and its arguments, an empty string
+// the command and its arguments, each NUL-terminated, then an empty string
 static inline const char* ng_exec(const void* m, uint32_t i) {
 	return ng_blob(m) + ng_pol(m, i)->exec_off;
 }

@@ -8,8 +8,6 @@
 |---|---|---|---|
 | unit | `tests/unit/t-*.c` | nothing | graph verifier, crc32c, names, `/etc/locale.conf`, log ring and console, failure reporting, emergency shell state machine, `ninit-shutdown` argument handling, comment stripper, pid table, scheduler simulation, the swap, clock and remount steps of shutdown, graph loading and the descriptor limit of pid 1, the graph writes and link moves of `ninitctl`, signals and cleanup through the cgroup files |
 | ninitctl | `tests/ctl/*.test` | bash, coreutils | `init`, `show`, `add`, `del`, directives, ordering, limits, locking, `make tools-install`, the examples in `docs/ninit.d` against README 4.2 |
-| interpreters | `tests/ctl/interp.test`, `tests/ctl/interpargs.test`, `tests/qemu/interp.test` | python3, lua and perl, each part skips without its interpreter | `#!` selection, build time resolution, argv, syntax checks, `#!` arguments accepted and refused against the installed interpreters, and python, lua and perl services run by ninit |
-| strippers | `tests/ctl/strip.test`, `tests/unit/t-strip.c`, the corpus in `tests/strip` | python3, lua with luac, and perl, each part skips without its interpreter | every corpus script runs, exits and prints as its stripped text does, and the interpreter reads both alike: the tokens of python with their lines, the bytecode listing of `luac -l -l` and the op tree of `perl -MO=Concise`. of a script perl cannot compile only that counts, perl places an error by how far it read, which the removed blanks change. a corpus file named `crlf` is kept with lf line ends and read with crlf. `t-strip` mutates the corpus 100000 times per language for the structure of the result and 200 times against the interpreter, `NINIT_TEST_FUZZ=N` sets the second count and `NINIT_TEST_SEED=N` another sequence |
 | client | `tests/ctl/client.test` | `unshare(1)`, unprivileged user namespaces | the `ninitctl` client against a fake control socket in a private mount namespace |
 | qemu | `tests/qemu/*.test` | qemu, a static busybox, a kernel image | ninit as pid 1 of a virtual machine: boot, readiness, failures, restart, dependencies, control socket, output, shutdown, signals, emergency shell, cgroups, console stalls, the fallbacks for kernels without clone3, signalfd or cgroup2 |
 
@@ -63,7 +61,7 @@ each boot leaves `console.log` (the serial console without colour), `tap.log` (t
 
 ### guest layout
 
-the initramfs is `tests/qemu/base.cpio`, built once per build tree from `ninit`, `ninitctl`, `ninit-shutdown`, the configured shell and its libraries, busybox and `tests/qemu/guest.sh`, followed by the files of the scenario. `interp.test` adds python with the modules its startup loads, lua and perl to its scenario, at the paths `ninitctl init` resolves on the build system. ninit is started with `rdinit=/sbin/ninit`. the shared objects of a dynamically linked program are found with `ldd`, or with the loader itself for musl
+the initramfs is `tests/qemu/base.cpio`, built once per build tree from `ninit`, `ninitctl`, `ninit-shutdown`, the configured shell and its libraries, busybox and `tests/qemu/guest.sh`, followed by the files of the scenario. ninit is started with `rdinit=/sbin/ninit`. the shared objects of a dynamically linked program are found with `ldd`, or with the loader itself for musl
 
 ## writing tests
 

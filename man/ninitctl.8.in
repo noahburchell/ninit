@@ -1,5 +1,5 @@
 '\" t
-.TH NINITCTL 8 2026-09-30 "ninit @PACKAGE_VERSION@"
+.TH NINITCTL 8 2026-11-09 "ninit @PACKAGE_VERSION@"
 .SH NAME
 ninitctl \- compile, inspect and control the ninit service graph
 .SH SYNOPSIS
@@ -83,17 +83,13 @@ and
 .B del
 take
 .IP 2. 4
-parse every service file, resolve the python, lua or perl interpreter the
-.B #!\&
-line of a file with commands names, and strip the comments from a shell script when the interpreter lexes like sh, see
+parse every service file and strip its comments when the configured shell lexes like sh, see
 .BR ninit.d (5).
 the first error ends the command
 .IP 3. 4
-check every script, up to 32 in parallel, a shell script with
-.B "@ninit_shell@ \-n"
-and a python, lua or perl script as
-.BR ninit.d (5)
-describes, and report every syntax error, in service order.
+check every script with
+.BR "@ninit_shell@ \-n" ,
+up to 32 in parallel, and report every syntax error, in service order.
 bash checks with
 .B extglob
 on.
@@ -135,9 +131,7 @@ about a missing or empty
 .IR /etc/locale.conf ,
 about a
 .B #!\&
-line naming another interpreter, about an interpreter on another filesystem than
-.I /
-for a service without prerequisites, and about directives after the header
+line naming a program other than the shell, and about directives after the header
 .TP
 .B show
 verify a graph and print it as a table, followed by one of its longest dependency chains
@@ -255,12 +249,10 @@ build the graph for the system whose root directory is
 .IR root .
 .B init
 looks up
-.B #!\&
-interpreters and
 .I /etc/locale.conf
 below
 .I root
-as that system sees them, absolute links and
+as that system sees it, absolute links and
 .B ..\&
 included, and runs every syntax check chrooted into
 .IR root .
@@ -283,11 +275,7 @@ mode, marked
 .B (set)
 if the file sets any of them and
 .B (default)
-otherwise, for a python, lua or perl service the command
-.B ninit
-runs with
-.B SCRIPT
-standing for the script, for a bare
+otherwise, for a bare
 .B exec
 line the argv
 .B ninit
@@ -347,7 +335,7 @@ or
 .B via
 what runs the script: the configured shell by its
 .BR argv[0] ,
-a python, lua or perl interpreter by its basename, or
+or
 .B direct
 for a bare
 .B exec

@@ -53,7 +53,6 @@ graph, depgraph  the compiled form of the service directory, /etc/ninit.d/depgra
 - a c23 compiler, gcc 14 or later or clang 18 or later, and make
 - bash at /bin/bash, or the interpreter chosen with ``--with-shell``, when the first service starts
 - /bin/sh for the emergency shell
-- python, lua or perl only for a service file whose #! line names it, see `3.12`_
 - cgroup v2 for service containment. forking directly into a cgroup uses CLONE_INTO_CGROUP (linux 5.7). SIGKILL is delivered through cgroup.kill (linux 5.14). without cgroup v2 services are contained by process group only
 - optional: hwclock at shutdown, sulogin for ``--with-sulogin``, setcap for ``--with-shutdown-group``, dbus-send and elogind for ninit-shutdown run without root or that group
 
@@ -148,7 +147,7 @@ option                           effect
 
 there is no fallback to another shell. ``--with-shell`` also selects the interpreter ninitctl init uses for its syntax check. dash, for example, is ``--with-shell=/bin/dash --with-shell-name=dash``
 
-the interpreter must run ``-c SCRIPT NAME`` with ``$0`` set to NAME, and check a script read from stdin with ``-n``, as sh does. configure runs both and fails if either fails, which rules out lua, python and perl. it skips the check when cross compiling, when PATH is not executable on the build system, and when ``--with-shell-name`` is not the basename of PATH
+the interpreter must run ``-c SCRIPT NAME`` with ``$0`` set to NAME, and check a script read from stdin with ``-n``, as sh does. configure runs both and fails if either fails. it skips the check when cross compiling, when PATH is not executable on the build system, and when ``--with-shell-name`` is not the basename of PATH
 
 2.4 make targets
 ----------------
@@ -168,13 +167,13 @@ dist             build ninit-VERSION.tar.xz
 2.5 setup
 ---------
 
-1. write the service files into /etc/ninit.d, see `3`_, or start from the examples, see `3.11`_
+1. write your service files into /etc/ninit.d, see `3`_, or start from the examples in `3.11`_
 2. run ``ninitctl init -n`` and correct everything it reports
 3. run ``ninitctl init`` to write the graph
-4. add a boot entry with ``init=`` pointing at ninit and keep the existing entry as the default, see `5.1`_
+4. add a boot entry with ``init=`` pointing at ninit, see `5.1`_. keep your existing entry as the default until the new one boots
 5. after booting, run ``ninitctl log -e`` to list the warnings and failures of the boot
 
-steps 2 and 3 are repeated after every change to a service file
+repeat steps 2 and 3 after every change to a service file
 
 .. _3:
 
@@ -202,13 +201,13 @@ DIR/unused/ holds disabled services and is not read by ninitctl init. ninitctl d
 
 a service file is a shell script. its header is every line before the first line that is neither blank nor a comment. a directive is a header line of the form ``#%key: value``. whitespace around the key and the value is ignored
 
-the #! line is an ordinary comment unless it names python, lua or perl, see `3.12`_. otherwise the interpreter is the configured one, /bin/bash by default. the file does not need to be executable. ninitctl init warns when the first line of a file with commands is a #! line naming any other interpreter, directly or through env. ``#!/bin/sh`` draws no warning when the configured shell lexes like sh
+the #! line is an ordinary comment. the configured shell, /bin/bash by default, runs every service whatever the first line says, and the file does not need to be executable. ninitctl init warns when the first line of a file with commands is a #! line naming another program, directly or through env. ``#!/bin/sh`` draws no warning when the configured shell lexes like sh
 
 ninitctl init stores the script without its comments, indentation or trailing blanks, and with runs of blanks collapsed to one space. text inside quotes and here-documents is stored as written, and so is the rest of the file after a construct it cannot follow exactly, such as a line continuation inside a word. a removed line stays as an empty line, so line numbers in shell errors match the file
 
 the stripper follows sh lexing. it runs when ``--with-shell-name`` is sh, bash, dash, ash, ksh, mksh, oksh, loksh, yash or posh, the shells that lex like sh. for any other shell the file is stored as written. zsh, for one, reads ``(#i)`` as a glob flag where the stripper sees a comment
 
-a stored script that is one line of the form ``exec COMMAND [ARGUMENT]...`` is executed directly, without the shell, when every word consists of letters, digits and ``_ . / : , = + % @ -``, COMMAND does not begin with ``-`` and is an absolute path when it contains a slash, and the line has at most 16 words. the shell would execute such a line the same way, only its startup, about 300 us of cpu, is saved. a COMMAND without a slash is looked up in the PATH of `3.8`_ when the service starts and is passed as written in argv[0]. a file that is neither ELF nor #! runs under the configured shell, as the shell runs it. the process lacks the PWD and SHLVL variables the shell exports. a command that cannot be executed fails the service with status 127, or 126 when the file is found but may not be run, after printing ``ninit: exec COMMAND: errno N`` on its output. ``ninitctl show -v`` lists the argv of such a service after ``execs``. any other script keeps running under the shell. of the set in docs/ninit.d, the gettys, chronyd, cronie, cupsd, sddm, sysklogd and swap qualify
+a stored script that is one line of the form ``exec COMMAND [ARGUMENT]...`` runs directly, without the shell, when four conditions hold. every word consists of letters, digits and ``_ . / : , = + % @ -``. COMMAND does not begin with ``-``. COMMAND is an absolute path when it contains a slash. the line has at most 16 words. the shell would run such a line the same way, only its startup, about 300 us of cpu, is saved. a COMMAND without a slash is looked up in the PATH of `3.8`_ when the service starts and is passed as written in argv[0]. a file that is neither ELF nor #! runs under the configured shell, as the shell would run it. the process lacks the PWD and SHLVL variables the shell exports. a command that cannot be executed fails the service with status 127, or 126 when the file is found but may not be run, after printing ``ninit: exec COMMAND: errno N`` on its output. ``ninitctl show -v`` lists the argv of such a service after ``execs``. any other script keeps running under the shell. of the set in docs/ninit.d, the gettys, chronyd, cronie, cupsd, sddm, sysklogd and swap qualify
 
 a #% line after the header is not a directive. ninitctl init warns about it and treats it as a comment. lines inside a quoted string or a here-document are exempt from the warning, and so is a file stored as written
 
@@ -265,7 +264,7 @@ type                   commands   ready when
 =====================  =========  ========================================
 oneshot                required   the script exits with status 0
 daemon with notify: N  required   data containing a newline is written to fd N
-daemon without notify  required   the interpreter has been executed
+daemon without notify  required   its command has been executed
 target                 forbidden  all of its prerequisites are up
 =====================  =========  ========================================
 
@@ -347,7 +346,7 @@ when a daemon without restart exits after being ready, the console shows ``NAME:
 3.8 execution environment
 -------------------------
 
-each start runs ``/bin/bash -c SCRIPT NAME``, where SCRIPT is the file as stored by ninitctl init, see `3.2`_, so ``$0`` is the service name. a python, lua or perl service runs as in `3.12`_ instead, and a file whose stored script is one bare exec line runs as that command directly, see `3.2`_, with the same process attributes. the process has:
+each start runs ``/bin/bash -c SCRIPT NAME``, where SCRIPT is the file as stored by ninitctl init, see `3.2`_, so ``$0`` is the service name. a file whose stored script is one bare exec line runs as that command directly, see `3.2`_, with the same process attributes. the process has:
 
 - a new session and no controlling terminal
 - the cgroup /sys/fs/cgroup/ninit.services/svc-N, where N is the service's index in the graph, the # column of ninitctl show
@@ -437,13 +436,13 @@ service      function
 ===========  ========================================
 dhcpcd       dhcp client, an alternative to NetworkManager
 avahi        mdns and dns-sd
-random-seed  python. mixes the seed saved at the last boot into the kernel pool and saves a new one in /var/lib/misc/random-seed
-cpufreq      lua. sets the cpufreq governor of every cpu to schedutil
-issue        perl. writes /run/issue, which agetty shows at its next prompt, from PRETTY_NAME in /etc/os-release and the kernel release
+random-seed  mixes the seed saved at the last boot into the kernel pool and saves a new one in /var/lib/misc/random-seed
+cpufreq      sets the cpufreq governor of every cpu to schedutil
+issue        writes /run/issue, which agetty shows at its next prompt, from PRETTY_NAME in /etc/os-release and the kernel release
 udev-settle  waits until udev has processed every queued event. needed when /etc/fstab names devices that udev rules create, such as lvm or raid volumes. it places itself before mounts with depof, so enabling it requires no change to mounts
 ===========  ========================================
 
-to use the set, copy it, move the services whose programs are not installed to unused/, and build the graph:
+to use the set, copy it, move the services for programs you do not have to unused/, and build the graph:
 
 .. code:: sh
 
@@ -451,64 +450,6 @@ to use the set, copy it, move the services whose programs are not installed to u
    ninitctl del bluetooth cupsd sddm
    ninitctl add udev-settle
    ninitctl init -n
-
-.. _3.12:
-
-3.12 python, lua and perl
--------------------------
-
-the configured shell is the language of service files. python, lua and perl are an extra for the few services better written in one of them. a file whose #! line names one of these interpreters runs under it instead of the shell:
-
-========  ========================================
-language  #! interpreter
-========  ========================================
-python    python, python3, python3.N
-lua       lua, luaN.N, luajit and its versioned names
-perl      perl, perlN.N
-========  ========================================
-
-the interpreter is named directly, as in ``#!/usr/bin/python3``, or through env, as in ``#!/usr/bin/env lua``. ninitctl init resolves it once, when the graph is built, on the running system or below the ``--root`` directory of `4.1`_, and the graph holds its absolute path. ninit never runs env, so the options and NAME=VALUE words before the program, read as gnu and busybox env read them, have no effect. a path in the #! line is kept as written. env is resolved through the PATH services run with, see `3.8`_, with the directory made canonical and the program keeping its own name, so ``env python3`` is /usr/bin/python3 where /usr/sbin links to /usr/bin. an interpreter that does not exist or is not executable fails the build. the #! line of a file without commands, which runs nothing, is not read. the words after the interpreter are separate arguments, as ``env -S`` splits them, and come before the script
-
-the build fails on an argument that keeps the stored script from running. a letter counts inside a cluster of options, as in ``-Bc``:
-
-========  ========================================
-language  refused #! arguments
-========  ========================================
-all       a word that is neither an option nor an option argument, ``-``, ``--``
-python    ``-c``, ``-m``, ``-h``, ``-V``, ``--help``, ``--version``, and ``-W``, ``-X`` or ``--check-hash-based-pycs`` without their argument
-lua       ``-e``, luajit ``-b``, and ``-l`` or luajit ``-j`` without their argument
-perl      ``-e``, ``-E``, ``-x``, ``-c``, ``-h``, ``-u``, ``-v``, ``-V``, ``-d`` without a module, ``-n``, ``-p``, ``-a``, ``-F``, and ``-I`` without its argument
-========  ========================================
-
-the header, #! line and directives included, is stored as empty lines. the rest is stripped as `3.2`_ strips a shell script: comments, trailing blanks and the indentation the language does not read are removed, runs of blanks become one space, and every line stays, so line numbers in interpreter messages match the file. strings are stored as written, and so is the rest of the file after a construct the stripper cannot follow exactly. a #% line after the header draws the warning of `3.2`_ in python and perl. crlf line ends become lf outside strings and here-documents. per language:
-
-========  ========================================
-language  stripped
-========  ========================================
-python    the indentation of a line that begins a statement stays. f-strings are stored whole, their replacement fields included. a lone carriage return, which ends a line for python, stores the rest as written
-lua       long comments go with the lines they span. long strings and strings with ``\z`` are stored as written. a ``#`` line is valid only in the header, and a lone carriage return stores the rest as written
-perl      pod goes with the lines it spans, ``#line`` directives stay. quote-like operators, regular expressions, here-documents and the text after ``__END__`` or ``__DATA__`` are stored as written. a ``/``, ``<<`` or pod line after a bareword or a ``}``, which only perl can tell apart, stores the rest as written
-========  ========================================
-
-each start runs:
-
-========  ===============================================================================  ============================
-language  command                                                                          the service name
-========  ===============================================================================  ============================
-python    ``INTERP -I -B -u ARGS -c SCRIPT NAME``                                          sys.argv is ``['-c', NAME]``
-lua       ``INTERP ARGS -e 'io.stdout:setvbuf("line") arg = { [0] = "NAME" }' -e SCRIPT``  arg[0]
-perl      ``INTERP ARGS -e '$| = 1; $0 = '\''NAME'\'';' -e '#line 1' -e SCRIPT``           ``$0``
-========  ===============================================================================  ============================
-
-``-I`` keeps ``/``, the working directory, off sys.path and ignores the ``PYTHON*`` variables. ``-B`` keeps python from writing ``__pycache__`` directories as root. ``-u``, the lua line buffering and perl's ``$|`` hand output to ninit as it is written, so the log keeps pace with the service and a killed service leaves its last lines in the output tail. perl's ``#line 1`` restores the line numbers the first ``-e`` shifted. stdin is /dev/null and @ARGV is empty, so perl's ``<>`` reads nothing
-
-everything else in `3.8`_ applies: the environment, the descriptors, the notify fd and the cgroup. a daemon without notify is ready once its interpreter has been executed
-
-ninitctl init warns when the interpreter of a service without prerequisites is on another filesystem than /, such as a separate /usr. such a service starts before anything has mounted it, and its exec fails
-
-the syntax check of `4.1`_ compiles python through compile() and lua through load(), neither runs the script. python also looks up the module of each import at the top of the script, after the docstring and before any other statement, through importlib.util.find_spec() and only by its first name, which runs nothing. a missing one fails the build as ``no module named 'NAME'``. an import after another statement, inside ``try`` or ``if``, or after ``sys.path.insert()``, is not looked up. perl has no check that runs nothing, ``perl -c`` runs BEGIN blocks and ``use`` statements as it compiles. one that blocks is killed after 30 s and fails the build. ``--no-check`` skips every check
-
-the interpreter must exist at its path when the service starts. with /usr on its own filesystem, a service whose interpreter is under /usr needs to depend on the service that mounts it. when the exec fails the service prints ``ninit: exec PATH: errno N`` and fails
 
 4 compiling the graph
 =====================
@@ -537,15 +478,15 @@ option                  effect
 ``init`` performs, in order:
 
 1. take an exclusive flock on DIR. ``add`` and ``del`` take the same lock
-2. read and parse every service file, see `3`_, resolve the interpreter the #! line of a file with commands names, see `3.12`_, and strip the comments from a shell script. the first error stops the build
-3. check every script, up to 32 in parallel, a shell script with ``bash -n`` and the others as in `3.12`_. bash runs the check with extglob on, since ``-n`` never runs the shopt that would turn it on. every syntax error is reported with its service name and the failures print in service order. a check still running after 30 s is killed and reported as not finished. any error stops the build
+2. read and parse every service file, see `3`_, and strip its comments. the first error stops the build
+3. check every script with ``bash -n``, up to 32 in parallel. bash runs the check with extglob on, since ``-n`` never runs the shopt that would turn it on. every syntax error is reported with its service name and the failures print in service order. a check still running after 30 s is killed and reported as not finished. any error stops the build
 4. resolve depon and depof, merge duplicate edges, reject cycles
 5. order the services topologically. among the services ready to be placed, roots come first, then the service with the longest chain of dependents, then the first by name
 6. resolve the default onfail of each service and count its dependents
 7. build the image and verify it with the checks ninit applies at boot
 8. write it to a temporary file in the output directory and fsync it, hard link the current graph to a second temporary name and rename that over FILE.old, rename the new file over FILE, fsync the directory
 
-with ``--root``, the interpreters of `3.12`_ and /etc/locale.conf are looked up below ROOT as the system booted from it sees them, absolute links and ``..`` included, and every syntax check runs chrooted into ROOT. without CAP_SYS_CHROOT each check first enters a user namespace of its own, which grants it there, where the kernel allows unprivileged user namespaces. failing both, no script can be checked and the build requires ``--no-check``. DIR and FILE are paths on the running system. the lookup uses openat2, linux 5.6 or newer
+with ``--root``, /etc/locale.conf is looked up below ROOT as the system booted from it sees it, absolute links and ``..`` included, and every syntax check runs chrooted into ROOT. without CAP_SYS_CHROOT each check first enters a user namespace of its own, which grants it there, where the kernel allows unprivileged user namespaces. failing both, no script can be checked and the build requires ``--no-check``. DIR and FILE are paths on the running system. the lookup uses openat2, linux 5.6 or newer
 
 a failed build writes nothing and leaves the existing graph and FILE.old in place. if FILE or FILE.old exists and is not a graph, the build fails instead of replacing it. the output mode is 0644 less the umask, and less group or other read permission if any service file lacks it
 
@@ -571,7 +512,7 @@ the running ninit does not read the new graph. it takes effect at the next boot
 
    $ ninitctl show
    depgraph  /etc/ninit.d/depgraph
-   31 services, 33 edges, 8 roots, 5 levels, 4848 bytes, crc e21e3564
+   31 services, 33 edges, 8 roots, 5 levels, 4848 bytes, crc 5bd8cbf7
 
      #  service         type     via     lvl  kills  onfail  rdy  rst  depends on
      ─────────────────────────────────────────────────────────────────────────────────
@@ -616,7 +557,7 @@ column      meaning
 ``#``       index in the graph. the service's cgroup is svc-#
 service     name. roots are shown in green on a terminal
 type        oneshot, daemon or target
-via         what runs the script: the configured shell by its argv[0], a python, lua or perl interpreter by its basename, or direct for a bare exec line run without the shell, see `3.2`_
+via         what runs the script: the configured shell by its argv[0], or direct for a bare exec line run without the shell, see `3.2`_
 lvl         number of services in the longest prerequisite chain ending at this one, itself included
 kills       number of services that depend on it, directly or not. these are skipped if it fails
 onfail      effective failure policy
@@ -625,7 +566,7 @@ rst         yes for restart: always
 depends on  direct prerequisites
 ==========  ========================================
 
-the last line is one of the longest chains. ``-v`` adds under each service its effective start-timeout, stop-timeout, start-tries, start-delay and deps, marked ``(set)`` if any policy directive was given and ``(default)`` if not, for a python, lua or perl service the command ninit runs with SCRIPT standing for the script, see `3.12`_, and then its script as stored, without comments
+the last line is one of the longest chains. ``-v`` adds under each service its effective start-timeout, stop-timeout, start-tries, start-delay and deps, marked ``(set)`` if any policy directive was given and ``(default)`` if not, the argv of a bare exec line after ``execs``, and then its script as stored, without comments
 
 .. _4.3:
 
@@ -939,7 +880,7 @@ when the shell exits it is started again. ninit stops restarting it after 5 cons
 9 depgraph format
 =================
 
-a graph is loaded only if its version equals the NG_VERSION ninit was built with, defined in src/ngraph.h, currently 9. after upgrading ninit, run ``ninitctl init`` before rebooting. an older graph is refused. ninit then loads depgraph.old, which after an upgrade is as old unless ninitctl init ran twice, and the boot ends in the emergency shell when that is refused too
+a graph is loaded only if its version equals the NG_VERSION ninit was built with, defined in src/ngraph.h, currently 10. after upgrading ninit, run ``ninitctl init`` before rebooting. an older graph is refused. ninit then loads depgraph.old, which after an upgrade is as old unless ninitctl init ran twice, and the boot ends in the emergency shell when that is refused too
 
 ninit reads the whole graph into private read-only memory and verifies it before use. every offset and length is bounds checked, sections must not overlap, the checksum must match, every edge must point to a higher index, stored counts must agree with the edge list, names must be valid and unique, and every field must be in range. a graph that fails any check is not used. ninitctl show applies the same checks
 
@@ -985,7 +926,7 @@ offset  size  field       description
 ======  ====  ==========  ========================================
 0x0     2     unmet       number of prerequisites. 0 for roots and only for roots
 0x2     1     type        0 oneshot, 1 daemon, 2 target
-0x3     1     flags       bits 1:0 onfail, 0 warn, 1 stop, 2 shell. bit 2 restart. bit 3 interpreter, the script runs with the argv at exec_off instead of the configured shell. bit 4 direct, the argv at exec_off runs by itself and the script is the exec line it was read from. bits 3 and 4 are never both set. other bits 0
+0x3     1     flags       bits 1:0 onfail, 0 warn, 1 stop, 2 shell. bit 2 restart. bit 3 direct, the argv at exec_off runs by itself and the script is the exec line it was read from. other bits 0
 0x4     2     n_desc      number of dependents, direct or not
 0x6     2     notify_fd   0 for none, otherwise 3 to 255. daemons only
 0x8     4     script_off  string table offset of the script. 0xffffffff for a target
@@ -1002,12 +943,10 @@ offset  size  field        description
 0x8     2     retry_ms     start-delay
 0xa     1     start_tries  start-tries. 0 means 1 for a oneshot and 2 for a daemon
 0xb     1     pflags       bit 0 deps: order. other bits 0
-0xc     4     exec_off     string table offset of the interpreter argv when flags bit 3 is set, of the direct argv when bit 4 is set, otherwise 0xffffffff
+0xc     4     exec_off     string table offset of the direct argv when flags bit 3 is set, otherwise 0xffffffff
 ======  ====  ===========  ========================================
 
 services are stored in topological order, roots first at indices 0 to n_roots - 1. the dependents of service i are entries ``rdep_off[i]`` up to but not including ``rdep_off[i + 1]`` of the dependent indices, sorted ascending, each greater than i. the string table holds the NUL-terminated names and scripts and ends in a NUL
-
-an interpreter argv is two lists of NUL-terminated strings, each ended by an empty string. ninit runs the first string of the first list with the first list, the script and the second list as its arguments. the first string is an absolute path of at most 255 bytes, the lists hold at most 16 strings together and each string is at most 4096 bytes
 
 a direct argv is one list of NUL-terminated strings ended by an empty string, the command and its arguments. ninit runs it as the argv of the service, looking a command without a slash up in PATH. the command is at most 255 bytes and an absolute path when it contains a slash, the list holds at most 16 strings and each argument is at most 4096 bytes
 
@@ -1025,8 +964,6 @@ start-timeout, stop-timeout                       1 ms to 24 h
 start-delay                                       1 ms to 65535 ms
 start-tries                                       1 to 250
 notify                                            fd 3 to 255
-interpreter path from a #! line                   255 bytes
-interpreter arguments, those ninit adds included  16, of 4096 bytes each
 direct exec command                               255 bytes
 direct exec arguments                             15, of 4096 bytes each
 output kept per service                           1024 bytes

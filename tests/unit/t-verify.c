@@ -135,23 +135,17 @@ static void m_onfail(struct gb_img* g) {
 static void m_flags(struct gb_img* g) {
 	SVC(g, 5)->flags |= 0x20;
 }
-static void m_interp_noexec(struct gb_img* g) {
-	SVC(g, 1)->flags |= NG_FLAG_INTERP;
+static void m_flag4(struct gb_img* g) {
+	SVC(g, 5)->flags |= 0x10;
 }
 static void m_exec_noflag(struct gb_img* g) {
 	POL(g, 1)->exec_off = 0;
-}
-static void m_interp_target(struct gb_img* g) {
-	SVC(g, 4)->flags |= NG_FLAG_INTERP;
 }
 static void m_direct_noexec(struct gb_img* g) {
 	SVC(g, 1)->flags |= NG_FLAG_DIRECT;
 }
 static void m_direct_target(struct gb_img* g) {
 	SVC(g, 4)->flags |= NG_FLAG_DIRECT;
-}
-static void m_direct_interp(struct gb_img* g) {
-	SVC(g, 3)->flags |= NG_FLAG_DIRECT;
 }
 static void m_direct_empty(struct gb_img* g) {
 	gb_blob(g)[POL(g, 5)->exec_off] = '\0';
@@ -246,14 +240,10 @@ static const struct vcase vcases[] = {
 	{ "type 3", "unknown service type", m_type, 1 },
 	{ "onfail 3", "unknown onfail policy", m_onfail, 1 },
 	{ "flag bit 5", "unknown flag bits are set", m_flags, 1 },
-	{ "the interpreter flag without an argv", "exec offset out of range", m_interp_noexec, 1 },
-	{ "an argv without the interpreter flag", "exec offset set without the interpreter or direct flag",
-	  m_exec_noflag, 1 },
-	{ "a target with an interpreter", "a target has an interpreter", m_interp_target, 1 },
+	{ "flag bit 4", "unknown flag bits are set", m_flag4, 1 },
+	{ "an argv without the direct flag", "exec offset set without the direct flag", m_exec_noflag, 1 },
 	{ "the direct flag without an argv", "exec offset out of range", m_direct_noexec, 1 },
 	{ "a target with a direct argv", "a target has a direct argv", m_direct_target, 1 },
-	{ "the direct and interpreter flags together", "a service is both interpreted and direct",
-	  m_direct_interp, 1 },
 	{ "a direct argv without a command", "direct argv is empty", m_direct_empty, 1 },
 	{ "onfail warn with dependents", "onfail warn on a service that has dependents", m_warn_deps, 1 },
 	{ "restart on a oneshot", "only a daemon can be restarted", m_restart_type, 1 },
@@ -434,28 +424,23 @@ static const char* recheck(const void* map, size_t len) {
 			return "roots";
 		}
 
-		if(sv[i].flags & (NG_FLAG_INTERP | NG_FLAG_DIRECT)) {
+		if(sv[i].flags & NG_FLAG_DIRECT) {
 			uint32_t off = ng_pol(map, i)->exec_off, k = 0;
-			int lists = sv[i].flags & NG_FLAG_INTERP ? 2 : 1;
 
 			// the walk child_exec does
-			for(int list = 0; list < lists; list++) {
-				while(off < h->blob_len && ng_blob(map)[off]) {
-					const char* z = memchr(ng_blob(map) + off, 0, h->blob_len - off);
+			while(off < h->blob_len && ng_blob(map)[off]) {
+				const char* z = memchr(ng_blob(map) + off, 0, h->blob_len - off);
 
-					if(!z) {
-						return "an argument runs off the blob";
-					}
-
-					off = (uint32_t)(z - ng_blob(map)) + 1;
-					k++;
+				if(!z) {
+					return "an argument runs off the blob";
 				}
 
-				if(off >= h->blob_len) {
-					return "an argv runs off the blob";
-				}
+				off = (uint32_t)(z - ng_blob(map)) + 1;
+				k++;
+			}
 
-				off++;
+			if(off >= h->blob_len) {
+				return "an argv runs off the blob";
 			}
 
 			if(k > NG_MAX_EXEC_ARGS) {
@@ -467,130 +452,6 @@ static const char* recheck(const void* map, size_t len) {
 	return NULL;
 }
 
-// encodes PRE, an empty string, SUF, an empty string into BUF
-static size_t exec_enc(char* buf, const char* const* pre, size_t np, const char* const* suf, size_t ns) {
-	size_t at = 0;
-
-	for(size_t k = 0; k < np; k++) {
-		memcpy(buf + at, pre[k], strlen(pre[k]) + 1);
-		at += strlen(pre[k]) + 1;
-	}
-
-	buf[at++] = '\0';
-	for(size_t k = 0; k < ns; k++) {
-		memcpy(buf + at, suf[k], strlen(suf[k]) + 1);
-		at += strlen(suf[k]) + 1;
-	}
-
-	buf[at++] = '\0';
-
-	return at;
-}
-
-static const char* exec_verdict(const char* exec, size_t len) {
-	static char why[128];
-	struct gb_svc sv[1] = { GB_ONESHOT("a", "print(1)") };
-	struct gb_img g;
-	const char* r;
-
-	sv[0].exec = exec;
-	sv[0].exec_len = len;
-	g = gb_build(sv, 1, NULL, 0);
-	r = ng_verify(g.map, g.len);
-	snprintf(why, sizeof(why), "%s", r ? r : "");
-	free(g.map);
-
-	return r ? why : NULL;
-}
-
-static void test_verify_exec(void) {
-	static const char py[] = "/usr/bin/python3\0-I\0-B\0-u\0-c\0\0a\0";
-	static const char* const many[NG_MAX_EXEC_ARGS + 1] = {
-		"/bin/x",
-		"-a",
-		"-a",
-		"-a",
-		"-a",
-		"-a",
-		"-a",
-		"-a",
-		"-a",
-		"-a",
-		"-a",
-		"-a",
-		"-a",
-		"-a",
-		"-a",
-		"-a",
-		"-a",
-	};
-	static const char* const one[] = { "name" };
-	struct gb_svc sv[1] = { { .name = "a", .type = NG_TYPE_ONESHOT, .onfail = GB_DEFAULT, .script = "print(1)", GB_EXEC(py) } };
-	struct gb_img g = gb_build(sv, 1, NULL, 0);
-	char* buf = malloc(2 * NG_MAX_EXEC_ARG + 64);
-	char* big = malloc(NG_MAX_EXEC_ARG + 2);
-	const char* p;
-	const char* pre[2];
-	size_t n;
-
-	is_str(ng_verify(g.map, g.len), NULL, "a service with an interpreter argv verifies");
-	ok(ng_interp(g.map, 0), "the interpreter flag is returned");
-	p = ng_exec(g.map, 0);
-	is_str(p, "/usr/bin/python3", "the argv starts with the interpreter");
-	for(n = 0; *p; p += strlen(p) + 1) {
-		n++;
-	}
-
-	is_int(n, 5, "five strings come before the script");
-	is_str(p + 1, "a", "the service name comes after it");
-	free(g.map);
-
-	n = exec_enc(buf, many, NG_MAX_EXEC_ARGS, NULL, 0);
-	is_str(exec_verdict(buf, n), NULL, "16 interpreter arguments verify");
-	n = exec_enc(buf, many, NG_MAX_EXEC_ARGS - 1, one, 1);
-	is_str(exec_verdict(buf, n), NULL, "arguments after the script count toward the 16");
-	n = exec_enc(buf, many, NG_MAX_EXEC_ARGS + 1, NULL, 0);
-	is_str(exec_verdict(buf, n), "too many interpreter arguments", "17 arguments are refused");
-	n = exec_enc(buf, many, NG_MAX_EXEC_ARGS, one, 1);
-	is_str(exec_verdict(buf, n), "too many interpreter arguments",
-	       "17 counting the one after the script are refused");
-
-	n = exec_enc(buf, (const char* const[]){ "x", "-c" }, 2, NULL, 0);
-	is_str(exec_verdict(buf, n), "interpreter is not an absolute path", "a relative interpreter is refused");
-	n = exec_enc(buf, (const char* const[]){ "/bin/x" }, 1, NULL, 0);
-	is_str(exec_verdict(buf, n), NULL, "nothing but the interpreter verifies");
-	is_str(exec_verdict("/bin/x\0-c", sizeof("/bin/x\0-c")), "interpreter arguments run past the string table",
-	       "an argv without its empty strings is refused");
-	is_str(exec_verdict("/bin/x\0-c\0", sizeof("/bin/x\0-c\0")),
-	       "interpreter arguments run past the string table", "an argv without its second list is refused");
-
-	big[0] = '/';
-	memset(big + 1, 'p', NG_MAX_INTERP - 1);
-	big[NG_MAX_INTERP] = '\0';
-	pre[0] = big;
-	n = exec_enc(buf, pre, 1, NULL, 0);
-	is_str(exec_verdict(buf, n), NULL, "a 255 byte interpreter path verifies");
-	big[NG_MAX_INTERP] = 'p';
-	big[NG_MAX_INTERP + 1] = '\0';
-	n = exec_enc(buf, pre, 1, NULL, 0);
-	is_str(exec_verdict(buf, n), "interpreter path longer than the supported maximum",
-	       "a 256 byte interpreter path is refused");
-
-	pre[0] = "/bin/x";
-	pre[1] = big;
-	memset(big, 'a', NG_MAX_EXEC_ARG);
-	big[NG_MAX_EXEC_ARG] = '\0';
-	n = exec_enc(buf, pre, 2, NULL, 0);
-	is_str(exec_verdict(buf, n), NULL, "a 4096 byte argument verifies");
-	big[NG_MAX_EXEC_ARG] = 'a';
-	big[NG_MAX_EXEC_ARG + 1] = '\0';
-	n = exec_enc(buf, pre, 2, NULL, 0);
-	is_str(exec_verdict(buf, n), "interpreter argument longer than the supported maximum",
-	       "a 4097 byte argument is refused");
-	free(buf);
-	free(big);
-}
-
 static const char* direct_verdict(const char* exec, size_t len) {
 	static char why[128];
 	struct gb_svc sv[1] = { GB_DAEMON("a", "exec x") };
@@ -599,7 +460,6 @@ static const char* direct_verdict(const char* exec, size_t len) {
 
 	sv[0].exec = exec;
 	sv[0].exec_len = len;
-	sv[0].direct = 1;
 	g = gb_build(sv, 1, NULL, 0);
 	r = ng_verify(g.map, g.len);
 	snprintf(why, sizeof(why), "%s", r ? r : "");
@@ -651,7 +511,6 @@ static void test_verify_direct(void) {
 
 	is_str(ng_verify(g.map, g.len), NULL, "a service with a direct argv verifies");
 	ok(ng_direct(g.map, 5), "the direct flag is returned");
-	ok(!ng_interp(g.map, 5), "and is not the interpreter flag");
 	p = ng_exec(g.map, 5);
 	is_str(p, "agetty", "the argv starts with the command");
 	is_str(p + 7, "tty1", "its arguments follow");
@@ -674,13 +533,13 @@ static void test_verify_direct(void) {
 	is_str(direct_verdict("agetty", sizeof("agetty")), "direct arguments run past the string table",
 	       "a command alone without its empty string is refused");
 
-	memset(big, 'c', NG_MAX_INTERP);
-	big[NG_MAX_INTERP] = '\0';
+	memset(big, 'c', NG_MAX_CMD);
+	big[NG_MAX_CMD] = '\0';
 	w[0] = big;
 	n = direct_enc(buf, w, 1);
 	is_str(direct_verdict(buf, n), NULL, "a 255 byte command verifies");
-	big[NG_MAX_INTERP] = 'c';
-	big[NG_MAX_INTERP + 1] = '\0';
+	big[NG_MAX_CMD] = 'c';
+	big[NG_MAX_CMD + 1] = '\0';
 	n = direct_enc(buf, w, 1);
 	is_str(direct_verdict(buf, n), "command longer than the supported maximum", "a 256 byte command is refused");
 
@@ -743,7 +602,6 @@ static void test_verify_fuzz(void) {
 int main(void) {
 	test_verify_cases();
 	test_verify_edges();
-	test_verify_exec();
 	test_verify_direct();
 	test_verify_fuzz();
 

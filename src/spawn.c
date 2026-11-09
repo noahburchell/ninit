@@ -34,12 +34,12 @@ static_assert(sizeof(struct ninit_clone_args) == 88, "clone_args v2 is 88 bytes"
 
 static bool clone3_ok = true;
 
-// a direct command is at most NG_MAX_INTERP bytes below a directory of NG_PATH
-#define EXEC_PATH_MAX (sizeof(NG_PATH) + NG_MAX_INTERP)
+// a direct command is at most NG_MAX_CMD bytes below a directory of NG_PATH
+#define EXEC_PATH_MAX (sizeof(NG_PATH) + NG_MAX_CMD)
 
 static_assert(sizeof(NG_SHELL) <= EXEC_PATH_MAX + 1, "the exec failure message holds the shell path");
 
-static void child_exec(uint32_t i, int out_w, int ntf_w, const char* cg) __attribute__((noreturn));
+[[noreturn]] static void child_exec(uint32_t i, int out_w, int ntf_w, const char* cg);
 
 static size_t put_str(char* restrict dst, size_t at, const char* restrict s) {
 	while(*s) {
@@ -188,24 +188,7 @@ static void child_exec(uint32_t i, int out_w, int ntf_w, const char* cg) {
 	(void)!chdir("/");
 	umask(022);
 
-	if(ng_interp(map, i)) {
-		const char* p = ng_exec(map, i);
-		size_t k = 0;
-
-		for(; *p; p += strlen(p) + 1) {
-			argv[k++] = (char*)(uintptr_t)p;
-		}
-
-		argv[k++] = (char*)(uintptr_t)ng_script(map, i);
-		for(p++; *p; p += strlen(p) + 1) {
-			argv[k++] = (char*)(uintptr_t)p;
-		}
-
-		argv[k] = NULL;
-		prog = argv[0];
-		execve(prog, argv, envp);
-		err = errno;
-	} else if(ng_direct(map, i)) {
+	if(ng_direct(map, i)) {
 		const char* p = ng_exec(map, i);
 		size_t k = 1;
 

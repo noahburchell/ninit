@@ -7,7 +7,6 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 static void locale_note(void) {
@@ -27,30 +26,6 @@ static void locale_note(void) {
 			"ninitctl: for example: printf 'LANG=en_US.UTF-8\\n' > %s%s\n",
 			g_root_pfx, NG_LOCALE_CONF, fd < 0 ? "is missing" : "sets no locale variable",
 			NG_FALLBACK_LANG, g_root_pfx, NG_LOCALE_CONF);
-	}
-}
-
-// an interpreter on a filesystem of its own is there at boot only once something has mounted it
-static void interp_fs_note(const struct build* b) {
-	struct stat root, st;
-
-	if(sys_stat("/", &root) < 0) {
-		return;
-	}
-
-	for(uint32_t i = 0; i < b->n; i++) {
-		const struct src* s = &b->srcs[i];
-
-		if(!s->script || s->lang == &lang_shell || b->g.indeg[i]) {
-			continue;
-		}
-
-		if(sys_stat(s->interp, &st) == 0 && st.st_dev != root.st_dev) {
-			fprintf(stderr, "ninitctl: warning: %s/%s: %s%s is on another filesystem than %s/, "
-					"and the service has no prerequisite\n",
-				g_dir, s->name, g_root_pfx, s->interp,
-				g_root_pfx);
-		}
 	}
 }
 
@@ -142,7 +117,6 @@ int cmd_init(int argc, char** argv) {
 	order_graph(&b);
 	write_image(&b, out, dry, srclock);
 	fflush(stdout);
-	interp_fs_note(&b);
 	locale_note();
 
 	return 0;

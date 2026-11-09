@@ -1,4 +1,3 @@
-#include "lang.h"
 #include "parser.h"
 #include "../util.h"
 #include "../../src/ngraph.h"
@@ -123,8 +122,6 @@ void parse_src(struct src* s, const char* fname, char* body, size_t len) {
 	}
 
 	s->type = NG_TYPE_TARGET;
-	s->lang = &lang_shell;
-	s->interp = NG_SHELL;
 
 	while(line && *line) {
 		char* nl = strchr(line, '\n');
@@ -289,17 +286,11 @@ void parse_src(struct src* s, const char* fname, char* body, size_t len) {
 			    g_dir, fname, ng_typename(s->type));
 		}
 
-		// only a file with commands runs its #! interpreter, so only then must it exist
-		s->lang = lang_select(s, fname, (str){ body, len });
-		len = s->lang->store(s, body, len, line ? (size_t)(line - scratch) : len);
+		shebang_warn(fname, (str){ body, len });
+		len = shell_store(s, body, len, line ? (size_t)(line - scratch) : len);
 		if(len > NG_MAX_SCRIPT) {
 			die("%s/%s: script is %zu bytes%s, the maximum is %u", g_dir, fname, len,
 			    s->stripped ? " without comments" : "", NG_MAX_SCRIPT);
-		}
-
-		if(s->lang->exec_args) {
-			s->lang->exec_args(s);
-			check_exec_args(s, fname);
 		}
 
 		s->script = body;

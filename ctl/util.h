@@ -16,8 +16,8 @@ extern const char* g_root_pfx;
 
 struct stat;
 
-void die(const char* fmt, ...) __attribute__((format(printf, 1, 2), noreturn));
-void usage_die(const char* fmt, ...) __attribute__((format(printf, 1, 2), noreturn));
+[[noreturn]] void die(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+[[noreturn]] void usage_die(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 // a fresh block aliases nothing, so a store through it leaves every other load alone
 void* xmalloc(size_t n) __attribute__((malloc, returns_nonnull, alloc_size(1)));
 void* xrealloc(void* p, size_t n) __attribute__((returns_nonnull, alloc_size(2)));
