@@ -505,6 +505,25 @@ static const char* direct_problem(const char* blob, uint32_t blob_len, uint32_t 
 	}
 }
 
+// ridx is sorted within a service's dependents
+static bool rdep_has(const uint32_t* ridx, uint32_t lo, uint32_t hi, uint32_t x) {
+	while(lo < hi) {
+		uint32_t mid = lo + (hi - lo) / 2;
+
+		if(ridx[mid] == x) {
+			return true;
+		}
+
+		if(ridx[mid] < x) {
+			lo = mid + 1;
+		} else {
+			hi = mid;
+		}
+	}
+
+	return false;
+}
+
 static uint32_t name_hash(const char* s) {
 	uint32_t h = 2166136261u;
 
@@ -520,6 +539,8 @@ const char* ng_verify(const void* map, size_t len) {
 	const struct ng_svc* sv;
 	const uint32_t* roff;
 	const uint32_t* ridx;
+	const uint32_t* doff;
+	const uint32_t* didx;
 	const char* blob;
 	uint32_t n, m, i;
 
@@ -586,6 +607,14 @@ const char* ng_verify(const void* map, size_t len) {
 		return "policy table out of bounds";
 	}
 
+	if(!range_ok(h->off_dep_off, ((uint64_t)n + 1) * 4, h->total_len, 4)) {
+		return "prerequisite offsets out of bounds";
+	}
+
+	if(!range_ok(h->off_dep_idx, (uint64_t)m * 4, h->total_len, 4)) {
+		return "prerequisite indices out of bounds";
+	}
+
 	{
 		const struct ng_span sp[] = {
 			{ 0, sizeof(*h) },
@@ -593,6 +622,8 @@ const char* ng_verify(const void* map, size_t len) {
 			{ h->off_rdep_off, (uint64_t)h->off_rdep_off + ((uint64_t)n + 1) * 4 },
 			{ h->off_rdep_idx, (uint64_t)h->off_rdep_idx + (uint64_t)m * 4 },
 			{ h->off_pol, (uint64_t)h->off_pol + (uint64_t)n * sizeof(struct ng_pol) },
+			{ h->off_dep_off, (uint64_t)h->off_dep_off + ((uint64_t)n + 1) * 4 },
+			{ h->off_dep_idx, (uint64_t)h->off_dep_idx + (uint64_t)m * 4 },
 			{ h->off_blob, (uint64_t)h->off_blob + h->blob_len },
 		};
 
@@ -621,6 +652,7 @@ const char* ng_verify(const void* map, size_t len) {
 	if(roff[n] != m) {
 		return "rdep offsets do not end at n_edges";
 	}
+
 
 	for(i = 0; i < n; i++) {
 		const struct ng_svc* s = &sv[i];
@@ -803,6 +835,43 @@ const char* ng_verify(const void* map, size_t len) {
 		free(scratch);
 		if(bad) {
 			return bad;
+		}
+	}
+
+	// the prerequisite lists must be the dependent lists transposed
+	doff = ng_dep_off(map);
+	didx = ng_dep_idx(map);
+	if(n && doff[0] != 0) {
+		return "prerequisite offsets do not start at 0";
+	}
+
+	if(doff[n] != m) {
+		return "prerequisite offsets do not end at n_edges";
+	}
+
+	for(i = 0; i < n; i++) {
+		uint32_t j;
+
+		if(doff[i] > doff[i + 1] || doff[i + 1] > m) {
+			return "prerequisite offsets not monotonic";
+		}
+
+		if(doff[i + 1] - doff[i] != sv[i].unmet) {
+			return "unmet does not match the prerequisite list";
+		}
+
+		for(j = doff[i]; j < doff[i + 1]; j++) {
+			if(didx[j] >= i) {
+				return "prerequisite does not precede its dependent";
+			}
+
+			if(j > doff[i] && didx[j] <= didx[j - 1]) {
+				return "prerequisite indices are not sorted and unique";
+			}
+
+			if(!rdep_has(ridx, roff[didx[j]], roff[didx[j] + 1], i)) {
+				return "prerequisite list does not match the edge list";
+			}
 		}
 	}
 

@@ -34,12 +34,14 @@ void write_image(const struct build* b, const char* out, bool dry, int srclock) 
 	struct graph g = b->g;
 	uint32_t* order = b->order;
 	uint32_t n = b->n, m = b->m, nroots = b->nroots, i, j;
-	uint64_t hash = b->hash;
 	mode_t out_mode = b->out_mode;
 	const char* why;
 	struct blob blob = { 0 };
 	uint32_t* roff = xmalloc((n + 1) * sizeof(*roff));
 	uint32_t* ridx = xmalloc((m ? m : 1) * sizeof(*ridx));
+	uint32_t* doff = xmalloc((n + 1) * sizeof(*doff));
+	uint32_t* didx = xmalloc((m ? m : 1) * sizeof(*didx));
+	uint32_t* fill = xmalloc(n * sizeof(*fill));
 	uint32_t nw, vague = 0;
 	uint64_t* desc;
 	struct ng_svc* sv = xmalloc(n * sizeof(*sv));
@@ -58,6 +60,16 @@ void write_image(const struct build* b, const char* out, bool dry, int srclock) 
 
 	for(i = 0; i < m; i++) {
 		ridx[i] = edges[i].b;
+		doff[edges[i].b + 1]++;
+	}
+
+	for(i = 0; i < n; i++) {
+		doff[i + 1] += doff[i];
+	}
+
+	// the edges are sorted by prerequisite, so each list comes out ascending
+	for(i = 0; i < m; i++) {
+		didx[doff[edges[i].b] + fill[edges[i].b]++] = edges[i].a;
 	}
 
 	nw = (n + 63) / 64;
@@ -133,6 +145,8 @@ void write_image(const struct build* b, const char* out, bool dry, int srclock) 
 	total += (size_t)n * sizeof(struct ng_svc);
 	total += ((size_t)n + 1) * 4;
 	total += (size_t)m * 4;
+	total += ((size_t)n + 1) * 4;
+	total += (size_t)m * 4;
 	total += (size_t)n * sizeof(struct ng_pol);
 	total += blob.n;
 
@@ -145,7 +159,6 @@ void write_image(const struct build* b, const char* out, bool dry, int srclock) 
 	h->n_roots = nroots;
 	h->n_edges = m;
 	h->blob_len = blob.n;
-	h->srcs_hash = hash;
 
 	h->off_svc = (uint32_t)off;
 	memcpy(buf + off, sv, (size_t)n * sizeof(*sv));
@@ -157,6 +170,14 @@ void write_image(const struct build* b, const char* out, bool dry, int srclock) 
 
 	h->off_rdep_idx = (uint32_t)off;
 	memcpy(buf + off, ridx, (size_t)m * 4);
+	off += (size_t)m * 4;
+
+	h->off_dep_off = (uint32_t)off;
+	memcpy(buf + off, doff, ((size_t)n + 1) * 4);
+	off += ((size_t)n + 1) * 4;
+
+	h->off_dep_idx = (uint32_t)off;
+	memcpy(buf + off, didx, (size_t)m * 4);
 	off += (size_t)m * 4;
 
 	h->off_pol = (uint32_t)off;
@@ -173,7 +194,9 @@ void write_image(const struct build* b, const char* out, bool dry, int srclock) 
 		die("internal error: the built graph failed verification: %s", why);
 	}
 
-	if(dry) {
+	if(same_graph(out, buf, total, out_mode)) {
+		printf("%s: unchanged, %u services, %u edges, %u roots, %zu bytes\n", out, n, m, nroots, total);
+	} else if(dry) {
 		printf("%s: would write %u services, %u edges, %u roots, %zu bytes, "
 		       "mode %04o\n",
 		       out, n, m, nroots, total, (uint32_t)out_mode);

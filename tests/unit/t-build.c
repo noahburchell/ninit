@@ -144,6 +144,7 @@ static void test_parse_ms(void) {
 		{ "", "start-timeout: is not a duration" },
 		{ "-1", "start-timeout:-1 is not a duration" },
 		{ "-1s", "start-timeout:-1s is not a duration" },
+		{ "+1s", "start-timeout:+1s is not a duration" },
 		{ "s", "start-timeout:s is not a duration" },
 		{ "ten", "start-timeout:ten is not a duration" },
 		{ "1x", "start-timeout:1x has an unknown unit 'x', expected ms, s, m or h" },

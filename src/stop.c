@@ -134,53 +134,10 @@ static void wait_children(int64_t grace) {
 	}
 }
 
-static int build_prereqs(uint32_t** poff, uint32_t** pidx) {
-	const uint32_t* roff = ng_rdep_off(map);
-	const uint32_t* ridx = ng_rdep_idx(map);
-	uint32_t m = ((const struct ng_hdr*)map)->n_edges;
-	uint32_t* off = calloc((size_t)n_svc + 1, sizeof(*off));
-	uint32_t* idx = calloc(m ? m : 1, sizeof(*idx));
-	uint32_t* fill = calloc(n_svc, sizeof(*fill));
-	uint32_t i, k;
-
-	if(!off || !idx || !fill) {
-		free(off);
-		free(idx);
-		free(fill);
-		return -1;
-	}
-
-	for(i = 0; i < n_svc; i++) {
-		off[i + 1] = off[i] + ng_svcs(map)[i].unmet;
-	}
-
-	// ng_verify() proved this, but the graph is a live mapping
-	if(off[n_svc] != m) {
-		free(off);
-		free(idx);
-		free(fill);
-		return -1;
-	}
-
-	for(i = 0; i < n_svc; i++) {
-		for(k = roff[i]; k < roff[i + 1]; k++) {
-			uint32_t d = ridx[k];
-
-			idx[off[d] + fill[d]++] = i;
-		}
-	}
-
-	free(fill);
-	*poff = off;
-	*pidx = idx;
-
-	return 0;
-}
-
 static void stop_ordered(void) {
 	const uint32_t* roff;
-	uint32_t* off = NULL;
-	uint32_t* idx = NULL;
+	const uint32_t* off;
+	const uint32_t* idx;
 	uint32_t* waitc = NULL;
 	int64_t* stop_at = NULL;
 	int64_t deadline;
@@ -193,11 +150,8 @@ static void stop_ordered(void) {
 	}
 
 	roff = ng_rdep_off(map);
-	if(build_prereqs(&off, &idx) < 0) {
-		log_warn("shutdown: out of memory, stopping every service at once instead");
-		goto out;
-	}
-
+	off = ng_dep_off(map);
+	idx = ng_dep_idx(map);
 	waitc = calloc(n_svc, sizeof(*waitc));
 	stop_at = calloc(n_svc, sizeof(*stop_at));
 	st = calloc(n_svc, sizeof(*st));
@@ -308,8 +262,6 @@ static void stop_ordered(void) {
 		}
 	}
 out:
-	free(off);
-	free(idx);
 	free(waitc);
 	free(stop_at);
 	free(st);

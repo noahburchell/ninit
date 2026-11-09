@@ -74,57 +74,49 @@ done
 [ -f "$d/keep" ] && [ ! -e "$T/keep" ]
 t_ok $? "no name escapes the service directory"
 
-# symlinks keep their target
+# an absolute symlink moves, a relative one is refused since it would resolve elsewhere
 mkdir -p "$T/lib"
-printf ':\n' >"$T/lib/rel"
 printf ':\n' >"$T/lib/abs"
-ln -s ../lib/rel "$d/rel"
+printf ':\n' >"$T/lib/rel"
 ln -s "$T/lib/abs" "$d/abs"
+ln -s ../lib/rel "$d/rel"
 printf ':\n' >"$d/real"
 ln -s real "$d/sibling"
-before=$(readlink -f "$d/rel")
-"$NINITCTL" del -d "$d" rel abs sibling >/dev/null
-t_is "$(readlink "$d/unused/rel")" "../../lib/rel" "a relative link one level up is rewritten for unused/"
-t_is "$(readlink -f "$d/unused/rel")" "$before" "and resolves to the same file"
-t_is "$(readlink "$d/unused/abs")" "$T/lib/abs" "an absolute link is unchanged"
-t_is "$(readlink "$d/unused/sibling")" "../real" "a link to a sibling is rewritten"
-t_is "$(readlink -f "$d/unused/sibling")" "$(readlink -f "$d/real")" "and resolves to the same file"
-"$NINITCTL" add -d "$d" rel abs sibling >/dev/null
-t_is "$(readlink "$d/rel")" "../lib/rel" "add restores the original relative link"
-t_is "$(readlink "$d/sibling")" "real" "and the sibling link"
-t_is "$(readlink "$d/abs")" "$T/lib/abs" "and leaves the absolute one"
-
-printf ':\n' >"$d/unused/inner"
-ln -s inner "$d/unused/viainner"
-"$NINITCTL" add -d "$d" viainner >/dev/null
-t_is "$(readlink "$d/viainner")" "unused/inner" "a link to a file inside unused/ is rewritten on add"
-t_is "$(readlink -f "$d/viainner")" "$(readlink -f "$d/unused/inner")" "and resolves to the same file"
+run "$NINITCTL" del -d "$d" abs rel sibling
+t_is "$rc" 1 "del with a relative link among the names fails"
+t_is "$(readlink "$d/unused/abs")" "$T/lib/abs" "the absolute link is moved unchanged"
+t_has "$err" "ninitctl: rel: symlink target ../lib/rel is relative, use an absolute target" "the relative link is refused"
+t_has "$err" "ninitctl: sibling: symlink target real is relative, use an absolute target" "so is a link to a sibling"
+[ -L "$d/rel" ] && [ -L "$d/sibling" ]
+t_ok $? "and both stay where they were"
+run "$NINITCTL" add -d "$d" abs
+t_is "$(readlink "$d/abs")" "$T/lib/abs" "add moves the absolute link back"
+rm -f "$d/rel" "$d/sibling"
 
 long=$(printf 'l%.0s' {1..255})
-ln -s real "$d/$long"
+ln -s "$T/lib/abs" "$d/$long"
 run "$NINITCTL" del -d "$d" "$long"
 t_is "$rc" 0 "a link with a 255 byte name is moved"
-t_is "$(readlink "$d/unused/$long")" "../real" "and rewritten"
 "$NINITCTL" add -d "$d" "$long" >/dev/null
-t_is "$(readlink "$d/$long")" "real" "and back"
+t_is "$(readlink "$d/$long")" "$T/lib/abs" "and back"
 
 ln -s "$T/nowhere" "$d/dangling"
 run "$NINITCTL" del -d "$d" dangling
-t_is "$err" "ninitctl: dangling: not in $d" "a dangling link is not moved"
+t_is "$err" "ninitctl: dangling: symlink target $T/nowhere is missing" "a dangling link is not moved"
 
 # options and usage
 run "$NINITCTL" del -d "$d"
 t_is "$rc" 2 "del without names is a usage error"
-t_is "$err" "ninitctl: del needs at least one service name" "and says so"
+t_is "$err" "ninitctl: del needs at least one service name$t_hint" "and says so"
 run "$NINITCTL" add
 t_is "$rc" 2 "add without names is a usage error"
-t_is "$err" "ninitctl: add needs at least one service name" "and says so"
+t_is "$err" "ninitctl: add needs at least one service name$t_hint" "and says so"
 run "$NINITCTL" del -d
 t_is "$rc" 2 "-d without a directory is a usage error"
-t_is "$err" "ninitctl: del: -d needs a directory" "and says so"
+t_is "$err" "ninitctl: del: -d needs a directory$t_hint" "and says so"
 run "$NINITCTL" add -d "$d" -x a
 t_is "$rc" 2 "an unknown option is a usage error"
-t_is "$err" "ninitctl: add: unknown option '-x'" "and is named"
+t_is "$err" "ninitctl: add: unknown option '-x'$t_hint" "and is named"
 run "$NINITCTL" del -d "$d" -- -x
 t_is "$rc" 1 "after -- a leading dash is a name"
 t_is "$err" "ninitctl: -x: not in $d" "and is looked up"

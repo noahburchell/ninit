@@ -238,9 +238,7 @@ static void child_exited(uint32_t i, int status) {
 		drain_out(i, DRAIN_FINAL_CHUNKS, false);
 		close_fds(i);
 		if(state[i] == NG_ST_RUNNING) {
-			n_active--;
-			state[i] = NG_ST_PENDING;
-			n_pending++;
+			svc_mark_pending(i);
 		}
 
 		maybe_free(i);

@@ -315,6 +315,7 @@ static void test_compact_syntax(void) {
 }
 
 int main(void) {
+	g_dir = ".";
 	test_compact_corpus();
 	test_compact_fuzz();
 	test_compact_syntax();

@@ -42,6 +42,7 @@ void usage_die(const char* fmt, ...) {
 	vfprintf(stderr, fmt, ap);
 	va_end(ap);
 	fputc('\n', stderr);
+	fputs("try 'ninitctl --help' for more information\n", stderr);
 	exit(2);
 }
 

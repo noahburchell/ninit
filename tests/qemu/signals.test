@@ -94,18 +94,18 @@ else
 	t_skip "ctrl-alt-del: the kernel has no built-in AT keyboard driver"
 fi
 
-# a user without root goes through logind, which this guest lacks
+# a user outside the group that may signal pid 1 is refused, logind is never asked
 q_new non-root
 q_check <<'EOF'
 if command -v chpst >/dev/null; then
 	out=$(chpst -u nobody:nobody /sbin/poweroff 2>&1)
-	is "$?:$out" "1:poweroff: permission denied, must be run as root" "poweroff as a user without logind is refused"
+	is "$?:$out" "1:poweroff: cannot signal pid 1: Operation not permitted" "poweroff as a user outside the group is refused"
 	t0=$(now_ms)
 	out=$(chpst -u nobody:nobody /sbin/shutdown +5 2>&1)
-	is "$?:$out" "1:shutdown: permission denied, must be run as root" "shutdown +5 as a user is refused"
+	is "$?:$out" "1:shutdown: cannot signal pid 1: Operation not permitted" "shutdown +5 as a user is refused"
 	check "before it waits for TIME" test $(($(now_ms) - t0)) -lt $((5000 * T_SCALE))
 else
-	skip "poweroff as a user without logind is refused, busybox has no chpst"
+	skip "poweroff as a user outside the group is refused, busybox has no chpst"
 	skip "shutdown +5 as a user is refused, busybox has no chpst"
 fi
 out=$(/sbin/shutdown 2>&1)

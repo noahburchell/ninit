@@ -198,7 +198,7 @@ int main(int argc, char** argv) {
 	int64_t quiet_since;
 
 	if(getpid() != 1) {
-		log_err("ninit must run as pid 1");
+		fputs("ninit: must run as pid 1\n", stderr);
 		return 1;
 	}
 

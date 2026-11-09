@@ -1,4 +1,4 @@
-.TH NINIT-SHUTDOWN 8 2026-10-31 "ninit @PACKAGE_VERSION@"
+.TH NINIT-SHUTDOWN 8 2026-11-09 "ninit @PACKAGE_VERSION@"
 .SH NAME
 ninit-shutdown \- reboot, halt or power off a system running ninit
 .SH SYNOPSIS
@@ -52,21 +52,7 @@ and
 .BR reboot (2).
 the real user must be root
 .IP 3. 4
-if process 1 cannot be signalled, see NOTES, and
-.I time
-is in the future, call the
-.BR CanReboot ,
-.B CanHalt
-or
-.B CanPowerOff
-method of
-.B org.freedesktop.login1.Manager
-through
-.BR dbus\-send (1),
-and exit with status 1 unless it answers
-.B yes
-or
-.B challenge
+if process 1 cannot be signalled, see NOTES, exit with status 1 before any wait
 .IP 4. 4
 if
 .I time
@@ -76,24 +62,13 @@ and wait in the foreground.
 .B SIGINT
 cancels
 .IP 5. 4
-if process 1 can be signalled, send
+send
 .B SIGTERM
 (reboot),
 .B SIGUSR1
 (halt) or
 .B SIGUSR2
 (power off) to process 1
-.IP 6. 4
-otherwise, call the
-.BR Reboot ,
-.B Halt
-or
-.B PowerOff
-method of
-.B org.freedesktop.login1.Manager
-on the system bus through
-.BR dbus\-send (1),
-leaving the decision to elogind and polkit
 .SH OPTIONS
 .TP
 .B \-r
@@ -154,7 +129,9 @@ a request that could not be delivered, or a failure to execute
 .IB name .old
 .TP
 .B 2
-an invalid option or operand
+an invalid option or operand.
+the diagnostic is followed by
+.BI "try '" name " \-\-help' for more information"
 .SH FILES
 .TP
 .I /proc/1/comm
@@ -220,6 +197,12 @@ a copy of the binary carries neither.
 the notice on
 .I /dev/console
 needs write permission on it, which the capability does not give
+.PP
+.B ninit\-shutdown
+does not talk to logind or dbus.
+a user outside
+.I group
+cannot shut the system down without root
 .SH SEE ALSO
 .BR ninit (8),
 .BR ninitctl (8),

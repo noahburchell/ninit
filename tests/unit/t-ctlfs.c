@@ -21,7 +21,7 @@ static jmp_buf die_jb;
 
 // the call that fails, by name, after fail_after calls succeed, fail_times times or -1 for ever
 static const char* fail_call;
-static int fail_after, fail_times, n_symlink;
+static int fail_after, fail_times;
 
 static int failing(const char* call) {
 	if(!fail_call || strcmp(fail_call, call)) {
@@ -107,16 +107,6 @@ static int shim_rename(const char* a, const char* b) {
 	return rename(a, b);
 }
 
-static int shim_symlink(const char* a, const char* b) {
-	n_symlink++;
-	if(failing("symlink")) {
-		errno = EEXIST;
-		return -1;
-	}
-
-	return symlink(a, b);
-}
-
 // util.c is the first to include help/io.h, so its write_all takes the shim from here
 #define exit  shim_exit
 #define write shim_write
@@ -127,7 +117,6 @@ static int shim_symlink(const char* a, const char* b) {
 #define fsync	 shim_fsync
 #define link	 shim_link
 #define rename	 shim_rename
-#define symlink	 shim_symlink
 #include "../../ctl/output.c"
 #include "../../ctl/add.c"
 #undef mkostemp
@@ -136,7 +125,6 @@ static int shim_symlink(const char* a, const char* b) {
 #undef fsync
 #undef link
 #undef rename
-#undef symlink
 
 static char errtext[4096];
 
@@ -279,76 +267,8 @@ static void test_atomic(void) {
 	rmdir(dir);
 }
 
-// the entries of DIR made by relink for a temporary link
-static int tmp_links(const char* dir) {
-	DIR* d = opendir(dir);
-	struct dirent* e;
-	int n = 0;
-
-	while(d && (e = readdir(d))) {
-		n += !!strstr(e->d_name, ".ninitctl.");
-	}
-
-	if(d) {
-		closedir(d);
-	}
-
-	return n;
-}
-
-static void read_link(const char* path, char* buf, size_t cap) {
-	ssize_t n = readlink(path, buf, cap - 1);
-
-	buf[n > 0 ? n : 0] = '\0';
-}
-
-static void test_relink(void) {
-	char dir[] = "/tmp/ninit-t-ctlfs-link.XXXXXX", path[256], got[256], longt[4300];
-
-	if(!mkdtemp(dir)) {
-		abort();
-	}
-
-	snprintf(path, sizeof(path), "%s/svc", dir);
-	if(symlink("../shared/svc", path) < 0) {
-		abort();
-	}
-
-	ok(relink(path, "../shared/svc", 1), "a link moved up a directory is rewritten");
-	read_link(path, got, sizeof(got));
-	is_str(got, "shared/svc", "to point where it pointed before");
-
-	fail("symlink", 0, 3);
-	n_symlink = 0;
-	ok(relink(path, "shared/svc", 0) && n_symlink == 4, "a temporary name that exists is skipped for the next");
-	read_link(path, got, sizeof(got));
-	is_str(got, "../shared/svc", "and the link is rewritten");
-
-	fail("symlink", 0, -1);
-	n_symlink = 0;
-	ok(!relink(path, "../shared/svc", 1) && n_symlink == 1000, "after 1000 names that exist it gives up");
-	read_link(path, got, sizeof(got));
-	is_str(got, "../shared/svc", "and the link is unchanged");
-
-	fail("rename", 0, -1);
-	ok(!relink(path, "../shared/svc", 1), "a failed rename gives up");
-	fail(NULL, 0, 0);
-	ok(!tmp_links(dir), "and removes its temporary link");
-	read_link(path, got, sizeof(got));
-	is_str(got, "../shared/svc", "leaving the link unchanged");
-
-	memset(longt, 'x', sizeof(longt) - 1);
-	longt[sizeof(longt) - 1] = '\0';
-	n_symlink = 0;
-	ok(!relink(path, longt, 0) && !n_symlink, "a target too long to rewrite gives up before any link is made");
-
-	unlink(path);
-	rmdir(dir);
-}
-
 int main(void) {
 	test_atomic();
-	test_relink();
 
 	return tap_done();
 }

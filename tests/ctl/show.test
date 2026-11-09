@@ -134,7 +134,7 @@ t_is "$err" "ninitctl: $T/text: bad magic" "a text file is refused"
 : >"$T/empty"
 run "$NINITCTL" show "$T/empty"
 t_is "$rc" 1 "an empty file is refused"
-t_is "$err" "ninitctl: $T/empty: not a regular file" "as not a regular file"
+t_is "$err" "ninitctl: $T/empty: is empty" "as empty"
 
 run "$NINITCTL" show "$T/missing"
 t_is "$rc" 1 "a missing file is refused"
@@ -142,9 +142,9 @@ t_is "$err" "ninitctl: open $T/missing: No such file or directory" "with the ope
 
 run "$NINITCTL" show -x "$g"
 t_is "$rc" 2 "an unknown option is a usage error"
-t_is "$err" "ninitctl: show: unexpected argument '-x'" "and is named"
+t_is "$err" "ninitctl: show: unexpected argument '-x'$t_hint" "and is named"
 run "$NINITCTL" show -f
-t_is "$rc:$err" "2:ninitctl: show: -f needs a file" "-f without a file is a usage error"
+t_is "$rc:$err" "2:ninitctl: show: -f needs a file$t_hint" "-f without a file is a usage error"
 
 run "$NINITCTL" show "$T"
 t_is "$rc:$err" "1:ninitctl: $T: not a regular file" "a directory is refused"

@@ -170,6 +170,34 @@ void write_atomic(const char* path, const void* buf, size_t len, mode_t mode, in
 	}
 }
 
+// the graph on disk already, byte for byte and with the mode this build would give it
+bool same_graph(const char* path, const void* buf, size_t len, mode_t mode) {
+	struct stat st;
+	char* cur;
+	mode_t um;
+	bool same;
+	int fd = open(path, O_RDONLY | O_CLOEXEC);
+
+	if(fd < 0) {
+		return false;
+	}
+
+	um = umask(0);
+	umask(um);
+	if(fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) || (uint64_t)st.st_size != len
+	   || (st.st_mode & 07777) != (mode & ~um)) {
+		close(fd);
+		return false;
+	}
+
+	cur = xmalloc(len);
+	same = read_full(fd, cur, len) == (ssize_t)len && !memcmp(cur, buf, len);
+	close(fd);
+	free(cur);
+
+	return same;
+}
+
 // the basename of OUT when OUT is in DIR, the scan then knows the output and its .old by name
 str output_base(const char* dir, const char* out) {
 	char outdir[4096];

@@ -506,15 +506,17 @@ static void rep_flush(void) {
 	key = rep_key();
 	p = prefix(buf, sizeof(buf), tag_plain[key & ~LOG_NOCON], rep_ms);
 	if(rep_len == 1) {
-		n = snprintf(buf + p, sizeof(buf) - (size_t)p, "last message repeated %" PRIu32 " times\n",
-			     rep_count);
+		n = fitted(snprintf(buf + p, sizeof(buf) - (size_t)p, "last message repeated %" PRIu32 " times\n",
+				    rep_count),
+			   p, sizeof(buf));
 	} else {
-		n = snprintf(buf + p, sizeof(buf) - (size_t)p, "last %u messages repeated %" PRIu32 " times\n",
-			     rep_len, rep_count);
+		n = fitted(snprintf(buf + p, sizeof(buf) - (size_t)p, "last %u messages repeated %" PRIu32 " times\n",
+				    rep_len, rep_count),
+			   p, sizeof(buf));
 	}
 
 	rep_count = 0;
-	log_out(key, rep_ms, buf, p, p + n);
+	log_out(key, rep_ms, buf, p, n);
 }
 
 static void rep_break(void) {

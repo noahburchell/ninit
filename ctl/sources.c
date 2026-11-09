@@ -33,7 +33,6 @@ void read_sources(struct build* b, str out_base) {
 	const char* why;
 	struct dirent** ents;
 	struct src* srcs;
-	uint64_t hash = 0xcbf29ce484222325ull;
 	mode_t out_mode = 0644;
 	uint32_t n;
 	int ne, k;
@@ -44,7 +43,7 @@ void read_sources(struct build* b, str out_base) {
 	}
 
 	if((uint32_t)ne > NG_MAX_SVC + 4) {
-		die("%d entries in %s, the maximum is %u", ne, dir, NG_MAX_SVC);
+		die("%d entries in %s, the maximum is %u services", ne, dir, NG_MAX_SVC);
 	}
 
 	srcs = xmalloc((size_t)ne * sizeof(*srcs));
@@ -124,17 +123,6 @@ void read_sources(struct build* b, str out_base) {
 			continue;
 		}
 
-		for(const char* p = ents[k]->d_name; *p; p++) {
-			hash = (hash ^ (unsigned char)*p) * 0x100000001b3ull;
-		}
-
-		hash = (hash ^ 0) * 0x100000001b3ull;
-		for(size_t q = 0; q < len; q++) {
-			hash = (hash ^ (unsigned char)buf[q]) * 0x100000001b3ull;
-		}
-
-		hash = (hash ^ 0) * 0x100000001b3ull;
-
 		parse_src(&srcs[n++], ents[k]->d_name, buf, len);
 	}
 
@@ -148,6 +136,5 @@ void read_sources(struct build* b, str out_base) {
 
 	b->srcs = srcs;
 	b->n = n;
-	b->hash = hash;
 	b->out_mode = out_mode;
 }

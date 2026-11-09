@@ -29,14 +29,9 @@ static struct {
 	char exec_path[PATH_MAX + 128];
 	char exec_argv[8][64];
 	int exec_argc;
-	int fork_ret, forks;
-	int wait_status, wait_eintr;
-	char lp_args[12][96];
-	int lp_argc;
 	unsigned long long slept;
 	unsigned sleep_calls, sleep_short;
 	time_t now;
-	const char* can;
 } sh;
 
 static jmp_buf exit_jb;
@@ -138,45 +133,6 @@ static int shim_execv(const char* path, char* const argv[]) {
 	return -1;
 }
 
-static pid_t shim_fork(void) {
-	sh.forks++;
-	if(sh.fork_ret < 0) {
-		errno = EAGAIN;
-	}
-
-	return sh.fork_ret;
-}
-
-static int shim_execlp(const char* file, const char* arg, ...) {
-	va_list ap;
-	const char* a;
-
-	sh.lp_argc = 0;
-	snprintf(sh.lp_args[sh.lp_argc++], sizeof(sh.lp_args[0]), "%s", file);
-	va_start(ap, arg);
-	for(a = arg; a && sh.lp_argc < 12; a = va_arg(ap, const char*)) {
-		snprintf(sh.lp_args[sh.lp_argc++], sizeof(sh.lp_args[0]), "%s", a);
-	}
-
-	va_end(ap);
-	errno = ENOENT;
-
-	return -1;
-}
-
-static pid_t shim_waitpid(pid_t pid, int* st, int flags) {
-	(void)flags;
-	if(sh.wait_eintr) {
-		sh.wait_eintr--;
-		errno = EINTR;
-		return -1;
-	}
-
-	*st = sh.wait_status;
-
-	return pid;
-}
-
 [[noreturn]] static void shim_exit(int code) {
 	longjmp(exit_jb, 1000 + code);
 }
@@ -198,19 +154,6 @@ static unsigned shim_sleep(unsigned s) {
 	sh.slept += s - left;
 
 	return left;
-}
-
-// the pipe holds what dbus-send would print for a Can method
-static int shim_pipe2(int fd[2], int flags) {
-	if(pipe2(fd, flags) < 0) {
-		return -1;
-	}
-
-	if(sh.can) {
-		(void)!write(fd[1], sh.can, strlen(sh.can));
-	}
-
-	return 0;
 }
 
 static uid_t shim_getuid(void) {
@@ -254,9 +197,6 @@ static time_t shim_time(time_t* t) {
 #define open	 shim_open
 #define readlink shim_readlink
 #define execv	 shim_execv
-#define fork	 shim_fork
-#define execlp	 shim_execlp
-#define waitpid	 shim_waitpid
 #define exit	 shim_exit
 #define _exit	 shim__exit
 #define sleep	 shim_sleep
@@ -265,7 +205,6 @@ static time_t shim_time(time_t* t) {
 #define setuid	 shim_setuid
 #define setgid	 shim_setgid
 #define time	 shim_time
-#define pipe2	 shim_pipe2
 int shutdown_main(int argc, char** argv);
 #include "../../tools/shutdown.c"
 #undef main
@@ -275,9 +214,6 @@ int shutdown_main(int argc, char** argv);
 #undef open
 #undef readlink
 #undef execv
-#undef fork
-#undef execlp
-#undef waitpid
 #undef exit
 #undef _exit
 #undef sleep
@@ -286,7 +222,6 @@ int shutdown_main(int argc, char** argv);
 #undef setuid
 #undef setgid
 #undef time
-#undef pipe2
 
 static char out[8192], err[8192], con[1024];
 
@@ -304,7 +239,6 @@ static void reset(void) {
 	memset(&sh, 0, sizeof(sh));
 	sh.comm = "ninit\n";
 	sh.self = "/usr/sbin/ninit-shutdown";
-	sh.fork_ret = 4242;
 	// 12:00:30 on the first day of the epoch, read in UTC
 	sh.now = 12 * 3600 + 30;
 }
@@ -439,7 +373,7 @@ static void test_errors(void) {
 	rc = run("shutdown", NULL);
 	is_int(rc, 2, "shutdown without TIME is a usage error");
 	has_str(err, "shutdown: missing time operand\n", "and says why");
-	has_str(err, "usage: shutdown [OPTION]... TIME\n", "and prints the usage");
+	has_str(err, "try 'shutdown --help' for more information\n", "and points at --help");
 	is_int(sh.kills, 0, "and signals nothing");
 
 	reset();
@@ -473,7 +407,7 @@ static void test_errors(void) {
 	rc = run("reboot", "-x", NULL);
 	is_int(rc, 2, "an unknown option is a usage error");
 	has_str(err, "reboot: unrecognized option '-x'\n", "and is named");
-	has_str(err, "usage: reboot [OPTION]...\n", "with the usage on stderr");
+	has_str(err, "try 'reboot --help' for more information\n", "with the --help hint");
 
 	reset();
 	rc = run("shutdown", "-c", NULL);
@@ -688,113 +622,23 @@ static void test_delegate(void) {
 }
 
 static void test_user(void) {
-	static const struct {
-		const char* argv0;
-		const char* method;
-	} v[] = {
-		{ "poweroff", "org.freedesktop.login1.Manager.PowerOff" },
-		{ "reboot", "org.freedesktop.login1.Manager.Reboot" },
-		{ "halt", "org.freedesktop.login1.Manager.Halt" },
-	};
-	static const char* const refused[] = { "   no", "   na", "", "   yesno" };
 	int rc;
-
-	for(size_t k = 0; k < sizeof(v) / sizeof(*v); k++) {
-		reset();
-		sh.probe_errno = EPERM;
-		sh.fork_ret = 0;
-		rc = run(v[k].argv0, NULL);
-		is_int(rc, 2127, "the dbus-send child exits 127 when it cannot exec");
-		ok(sh.lp_argc == 7 && !strcmp(sh.lp_args[0], "dbus-send")
-			   && !strcmp(sh.lp_args[1], "dbus-send") && !strcmp(sh.lp_args[2], "--system")
-			   && !strcmp(sh.lp_args[3], "--dest=org.freedesktop.login1")
-			   && !strcmp(sh.lp_args[4], "/org/freedesktop/login1")
-			   && !strcmp(sh.lp_args[5], v[k].method),
-		   "%s as a user calls %s", v[k].argv0, v[k].method);
-		ok(!sh.kills, "%s as a user does not signal pid 1", v[k].argv0);
-	}
-
-	reset();
-	sh.probe_errno = EPERM;
-	sh.fork_ret = 0;
-	run("reboot", NULL);
-	ok(sh.lp_argc == 7 && !strcmp(sh.lp_args[6], "boolean:true"),
-	   "dbus-send requests an interactive authorization check");
-
-	reset();
-	sh.probe_errno = EPERM;
-	sh.wait_status = 0;
-	sh.wait_eintr = 2;
-	rc = run("reboot", NULL);
-	is_int(rc, 0, "logind accepting the request is success");
-	is_int(sh.kills, 0, "and pid 1 is left alone");
-
-	reset();
-	sh.probe_errno = EPERM;
-	sh.wait_status = 1 << 8;
-	rc = run("reboot", NULL);
-	is_int(rc, 1, "logind refusing is a failure");
-	has_str(err, "reboot: permission denied, must be run as root\n", "reported as permission denied");
-
-	reset();
-	sh.probe_errno = EPERM;
-	sh.fork_ret = -1;
-	rc = run("reboot", NULL);
-	is_int(rc, 1, "a fork failure falls back to permission denied");
-
-	reset();
-	sh.probe_errno = EPERM;
-	sh.fork_ret = 0;
-	rc = run("shutdown", "+5", NULL);
-	ok(rc == 2127 && sh.lp_argc == 7 && !strcmp(sh.lp_args[3], "--print-reply=literal")
-		   && !strcmp(sh.lp_args[6], "org.freedesktop.login1.Manager.CanPowerOff"),
-	   "shutdown +5 as a user asks logind CanPowerOff");
-	ok(!sh.slept && !*con, "before it waits or broadcasts");
-
-	for(size_t k = 0; k < sizeof(refused) / sizeof(*refused); k++) {
-		reset();
-		sh.probe_errno = EPERM;
-		sh.can = refused[k];
-		rc = run("shutdown", "+5", NULL);
-		ok(rc == 1 && !sh.slept && !*con && sh.forks == 1, "the answer '%s' refuses at once", refused[k] + strspn(refused[k], " "));
-	}
-
-	has_str(err, "shutdown: permission denied, must be run as root\n", "as permission denied");
-
-	reset();
-	sh.probe_errno = EPERM;
-	sh.can = "   yes";
-	sh.wait_status = 1 << 8;
-	rc = run("shutdown", "+5", NULL);
-	ok(rc == 1 && !sh.slept && sh.forks == 1, "a failed question refuses at once");
-
-	reset();
-	sh.probe_errno = EPERM;
-	sh.can = "   yes";
-	rc = run("shutdown", "-r", "+5", NULL);
-	ok(rc == 0 && sh.slept == 300 && sh.forks == 2, "yes waits 300 s, then makes the request");
-	reset();
-	sh.probe_errno = EPERM;
-	sh.can = "   challenge";
-	rc = run("shutdown", "+1", NULL);
-	ok(rc == 0 && sh.slept == 60 && sh.forks == 2, "so does challenge, polkit decides when the request is made");
-
-	reset();
-	sh.probe_errno = EPERM;
-	run("reboot", NULL);
-	is_int(sh.forks, 1, "without TIME nothing is asked first");
 
 	reset();
 	sh.uid = 1000;
 	expect_signal(run("poweroff", NULL), SIGUSR2, "a user who may signal pid 1 sends the signal");
-	ok(sh.probes == 1 && !sh.forks, "after one probe, without dbus-send");
+	is_int(sh.probes, 1, "after one probe");
 
 	reset();
 	sh.uid = 1000;
-	sh.can = "   no";
 	rc = run("shutdown", "-r", "+5", NULL);
-	ok(rc == 0 && sh.slept == 300 && !sh.forks && sh.kills == 1 && sh.kill_sig == SIGTERM,
-	   "such a user waits for TIME without asking logind");
+	ok(rc == 0 && sh.slept == 300 && sh.kills == 1 && sh.kill_sig == SIGTERM, "such a user waits for TIME, then signals");
+
+	reset();
+	sh.probe_errno = EPERM;
+	rc = run("shutdown", "+5", NULL);
+	ok(rc == 1 && !sh.slept && !*con && !sh.kills, "a user who may not signal pid 1 is refused before waiting");
+	has_str(err, "shutdown: cannot signal pid 1: Operation not permitted\n", "with the kill error");
 
 	reset();
 	sh.kill_errno = EPERM;
@@ -810,12 +654,16 @@ static void test_usage(void) {
 	rc = run("shutdown", "--help", NULL);
 	is_int(rc, 0, "--help exits 0");
 	has_str(out, "usage: shutdown [OPTION]... TIME\n", "shutdown's usage names TIME");
-	has_str(out, "TIME is now, +MINUTES or HH:MM\n", "and its forms");
+	has_str(out, "TIME is now, +MINUTES or HH:MM, RUNLEVEL is 0, 6 or q\n", "and its forms");
 	is_int(sh.kills, 0, "--help does nothing else");
 
 	reset();
 	run("reboot", "--help", NULL);
-	has_str(out, "usage: reboot [OPTION]...\n", "reboot's usage has no TIME");
+	has_str(out, "usage: reboot [OPTION]... [TIME]\n", "reboot's usage has TIME optional");
+
+	reset();
+	run("telinit", "--help", NULL);
+	has_str(out, "usage: telinit [OPTION]... RUNLEVEL\n", "telinit's usage names RUNLEVEL");
 
 	reset();
 	run("ninit-shutdown", "--help", NULL);

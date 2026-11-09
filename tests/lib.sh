@@ -13,6 +13,8 @@ esac
 # what show prints in the via column for a bare exec line, README 3.2
 t_direct=${t_strips:+direct}
 t_direct=${t_direct:-$NINIT_SHELL_NAME}
+# README 4.4, a usage error of ninitctl ends with the --help hint
+t_hint=$'\ntry \'ninitctl --help\' for more information'
 
 NINITCTL=$top_builddir/ninitctl
 NINIT=$top_builddir/ninit

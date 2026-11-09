@@ -152,10 +152,17 @@ t_is "$(stat -c %a "$d/depgraph")" 644 "the graph is mode 0644 under umask 022"
 t_ok $? "a first build leaves no depgraph.old"
 first=$(ino "$d/depgraph")
 build "$d" --no-check
-t_is "$(ino "$d/depgraph.old")" "$first" "a rebuild hard links the previous graph to depgraph.old"
-t_unlike "$(ls -A "$d")" '\.depgraph\.' "no temporary file is left behind"
-cmp -s "$d/depgraph" "$d/depgraph.old"
+t_like "$out" "^$d/depgraph: unchanged, 2 services, 1 edges, 1 roots, [0-9]+ bytes$" "an unchanged directory is reported as unchanged"
+t_is "$(ino "$d/depgraph")" "$first" "and the graph is not rewritten"
+[ ! -e "$d/depgraph.old" ]
+t_ok $? "so no depgraph.old appears"
+run "$NINITCTL" init -d "$d" -o "$T/again" --no-check
+cmp -s "$d/depgraph" "$T/again"
 t_ok $? "an unchanged directory rebuilds byte for byte"
+put "$d" b '#%depon: a\n:\n:\n'
+build "$d" --no-check
+t_is "$(ino "$d/depgraph.old")" "$first" "a rebuild after a change hard links the previous graph to depgraph.old"
+t_unlike "$(ls -A "$d")" '\.depgraph\.' "no temporary file is left behind"
 
 second=$(ino "$d/depgraph")
 put "$d" c '#%depon: ghost\n:\n'
@@ -173,9 +180,15 @@ t_is "$(stat -c %a "$d/depgraph")" 640 "a service file without other read drops 
 chmod 600 "$d/a"
 build "$d" --no-check
 t_is "$(stat -c %a "$d/depgraph")" 600 "a service file without group read drops group read too"
+put "$d" b '#%depon: a\n:\n:\n:\n'
 build "$d" --no-check -n
 t_like "$out" "^$d/depgraph: would write 2 services, 1 edges, 1 roots, [0-9]+ bytes, mode 0600$" \
 	"-n reports the size and the mode it would write"
+build "$d" --no-check -n
+t_like "$out" "^$d/depgraph: would write 2 services" "and leaves the graph as it was"
+build "$d" --no-check
+build "$d" --no-check -n
+t_like "$out" "^$d/depgraph: unchanged, 2 services" "-n reports an unchanged graph as unchanged"
 chmod 644 "$d/a"
 
 d=$T/dry

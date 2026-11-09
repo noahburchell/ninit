@@ -433,7 +433,7 @@ is written by
 the previous graph is kept as
 .IR depgraph.old .
 .BR ninit (8)
-loads a graph only if its version equals the one it was built with, currently 10,
+loads a graph only if its version equals the one it was built with, currently 11,
 and loads
 .I depgraph.old
 when
@@ -455,6 +455,8 @@ header|8|64
 service table|8|16 \(mu n_svc
 dependent offsets|4|4 \(mu (n_svc + 1)
 dependent indices|4|4 \(mu n_edges
+prerequisite offsets|4|4 \(mu (n_svc + 1)
+prerequisite indices|4|4 \(mu n_edges
 policy table|4|16 \(mu n_svc
 string table|1|blob_len
 .TE
@@ -467,7 +469,7 @@ lB lB lB lB
 l n l l.
 offset|size|field|content
 0x00|4|magic|0x4744494e, the bytes NIDG
-0x04|4|version|10
+0x04|4|version|11
 0x08|4|crc32|crc32c of the file with this field 0
 0x0c|4|total_len|file size
 0x10|4|n_svc|services, at most 8192
@@ -479,8 +481,9 @@ offset|size|field|content
 0x28|4|off_rdep_idx|dependent indices offset
 0x2c|4|off_blob|string table offset
 0x30|4|off_pol|policy table offset
-0x34|4|reserved|0
-0x38|8|srcs_hash|fnv-1a of the sources, not checked
+0x34|4|off_dep_off|prerequisite offsets offset
+0x38|4|off_dep_idx|prerequisite indices offset
+0x3c|4|reserved|0
 .TE
 .PP
 service record:
@@ -524,6 +527,15 @@ up to but excluding
 .BI rdep_off[ i +1]
 of the dependent indices, ascending and each greater than
 .IR i .
+the prerequisites of service
+.I i
+are entries
+.BI dep_off[ i ]
+up to but excluding
+.BI dep_off[ i +1]
+of the prerequisite indices, ascending and each less than
+.IR i .
+the two lists hold the same edges.
 the string table holds NUL-terminated names and scripts.
 a direct argv is one list of NUL-terminated strings ended by an empty string, the command and its arguments, which the service runs as its argv without the script.
 the command is at most 255 bytes and an absolute path when it contains a slash, the list holds at most 16 strings and each argument is at most 4096 bytes.

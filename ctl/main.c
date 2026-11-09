@@ -3,12 +3,13 @@
 #include "ctl.h"
 #include "del.h"
 #include "show.h"
+#include "util.h"
 
 #include "../src/ngraph.h"
 #include <stdio.h>
 #include <string.h>
 
-static void usage(FILE* f) {
+static void usage(void) {
 	fputs("usage: ninitctl COMMAND [OPTION]...\n"
 	      "\n"
 	      "configuration commands:\n"
@@ -30,7 +31,7 @@ static void usage(FILE* f) {
 	      "DIR defaults to " NG_DEFAULT_DIR ", FILE to " NG_DEFAULT_FILE "\n"
 	      "with --root, DIR defaults to ROOT" NG_DEFAULT_DIR "\n"
 	      "a rebuilt depgraph takes effect on the next boot\n",
-	      f);
+	      stdout);
 }
 
 static bool takes_value(const char* a) {
@@ -68,17 +69,16 @@ int main(int argc, char** argv) {
 	size_t v;
 
 	if(argc < 2) {
-		usage(stderr);
-		return 2;
+		usage_die("missing command");
 	}
 
 	if(!strcmp(argv[1], "-h") || !strcmp(argv[1], "--help") || !strcmp(argv[1], "help")) {
-		usage(stdout);
+		usage();
 		return 0;
 	}
 
 	if(wants_help(rest, args)) {
-		usage(stdout);
+		usage();
 		return 0;
 	}
 
@@ -104,8 +104,5 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	fprintf(stderr, "ninitctl: unknown command '%s'\n", argv[1]);
-	usage(stderr);
-
-	return 2;
+	usage_die("unknown command '%s'", argv[1]);
 }

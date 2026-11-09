@@ -1,4 +1,5 @@
 #include "show.h"
+#include "util.h"
 #include "../src/ngraph.h"
 
 #include <errno.h>
@@ -90,11 +91,8 @@ int cmd_show(int argc, char** argv) {
 	const struct style* st;
 	const struct ng_hdr* h;
 	const struct ng_svc* sv;
-	const uint32_t* roff;
-	const uint32_t* ridx;
-	uint32_t* doff = NULL;
-	uint32_t* didx = NULL;
-	uint32_t* fill = NULL;
+	const uint32_t* doff;
+	const uint32_t* didx;
 	uint32_t* level = NULL;
 	uint32_t* chain = NULL;
 	uint32_t n, m, i, j, wname = 7, wvia = 3, maxlvl = 0, deepest = 0;
@@ -107,8 +105,7 @@ int cmd_show(int argc, char** argv) {
 	for(k = 0; k < argc; k++) {
 		if(!strcmp(argv[k], "-f") || !strcmp(argv[k], "--file")) {
 			if(++k == argc) {
-				fprintf(stderr, "ninitctl: show: %s needs a file\n", argv[k - 1]);
-				return 2;
+				usage_die("show: %s needs a file", argv[k - 1]);
 			}
 
 			path = argv[k];
@@ -117,8 +114,7 @@ int cmd_show(int argc, char** argv) {
 		} else if(argv[k][0] != '-') {
 			path = argv[k];
 		} else {
-			fprintf(stderr, "ninitctl: show: unexpected argument '%s'\n", argv[k]);
-			return 2;
+			usage_die("show: unexpected argument '%s'", argv[k]);
 		}
 	}
 
@@ -129,8 +125,14 @@ int cmd_show(int argc, char** argv) {
 		return 1;
 	}
 
-	if(fstat(fd, &sb) < 0 || !S_ISREG(sb.st_mode) || sb.st_size <= 0) {
+	if(fstat(fd, &sb) < 0 || !S_ISREG(sb.st_mode)) {
 		fprintf(stderr, "ninitctl: %s: not a regular file\n", path);
+		close(fd);
+		return 1;
+	}
+
+	if(sb.st_size <= 0) {
+		fprintf(stderr, "ninitctl: %s: is empty\n", path);
 		close(fd);
 		return 1;
 	}
@@ -153,32 +155,15 @@ int cmd_show(int argc, char** argv) {
 
 	h = map;
 	sv = ng_svcs(map);
-	roff = ng_rdep_off(map);
-	ridx = ng_rdep_idx(map);
+	doff = ng_dep_off(map);
+	didx = ng_dep_idx(map);
 	n = h->n_svc;
 	m = h->n_edges;
 
-	doff = calloc(n + 2, sizeof(*doff));
-	didx = calloc(m ? m : 1, sizeof(*didx));
-	fill = calloc(n + 1, sizeof(*fill));
 	level = calloc(n, sizeof(*level));
-	if(!doff || !didx || !fill || !level) {
+	if(!level) {
 		fprintf(stderr, "ninitctl: out of memory\n");
 		goto out;
-	}
-
-	for(i = 0; i < m; i++) {
-		doff[ridx[i] + 1]++;
-	}
-
-	for(i = 0; i < n; i++) {
-		doff[i + 1] += doff[i];
-	}
-
-	for(i = 0; i < n; i++) {
-		for(j = roff[i]; j < roff[i + 1]; j++) {
-			didx[doff[ridx[j]] + fill[ridx[j]]++] = i;
-		}
 	}
 
 	for(i = 0; i < n; i++) {
@@ -347,9 +332,6 @@ int cmd_show(int argc, char** argv) {
 out:
 	free(chain);
 	free(level);
-	free(fill);
-	free(didx);
-	free(doff);
 	if(map != MAP_FAILED) {
 		munmap(map, maplen);
 	}

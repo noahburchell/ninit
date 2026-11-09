@@ -14,7 +14,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/reboot.h>
-#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -46,20 +45,32 @@ static const uint32_t act_rb[] = {
 	[ACT_HALT] = RB_HALT_SYSTEM,
 };
 
-static void usage(const char* me, FILE* f) {
-	fprintf(f,
-		"usage: %s [OPTION]...%s\n"
-		"\n"
-		"  -r         reboot\n"
-		"  -h, -P     power off\n"
-		"  -H         halt without powering off\n"
-		"  -f         reboot directly, without signalling pid 1\n"
-		"  -c         report how to cancel a pending shutdown\n"
-		"      --help display this help and exit\n"
-		"\n"
-		"TIME is now, +MINUTES or HH:MM\n"
-		"reboot, poweroff and halt accept the same options\n",
-		me, strcmp(path_base(me), "shutdown") && strcmp(path_base(me), "ninit-shutdown") ? "" : " TIME");
+// shutdown requires a time, poweroff, reboot and halt take one, telinit takes a runlevel
+static const char* operand(const char* me) {
+	if(!strcmp(me, "shutdown") || !strcmp(me, "ninit-shutdown")) {
+		return " TIME";
+	}
+
+	return strcmp(me, "telinit") ? " [TIME]" : " RUNLEVEL";
+}
+
+static void usage(const char* me) {
+	printf("usage: %s [OPTION]...%s\n"
+	       "\n"
+	       "  -r         reboot\n"
+	       "  -h, -P     power off\n"
+	       "  -H         halt without powering off\n"
+	       "  -f         reboot directly, without signalling pid 1\n"
+	       "  -c         report how to cancel a pending shutdown\n"
+	       "      --help display this help and exit\n"
+	       "\n"
+	       "TIME is now, +MINUTES or HH:MM, RUNLEVEL is 0, 6 or q\n"
+	       "reboot, poweroff and halt accept the same options\n",
+	       me, operand(me));
+}
+
+static void try_help(const char* me) {
+	fprintf(stderr, "try '%s --help' for more information\n", me);
 }
 
 static int pid1_is_ninit(void) {
@@ -186,98 +197,6 @@ static int64_t parse_when(const char* s) {
 	return -1;
 }
 
-static int try_logind(enum act a) {
-	static const char* const method[] = {
-		[ACT_REBOOT] = "org.freedesktop.login1.Manager.Reboot",
-		[ACT_POWEROFF] = "org.freedesktop.login1.Manager.PowerOff",
-		[ACT_HALT] = "org.freedesktop.login1.Manager.Halt",
-	};
-	pid_t pid, got;
-	int st = -1;
-
-	pid = fork();
-	if(pid < 0) {
-		return -1;
-	}
-
-	if(pid == 0) {
-		execlp("dbus-send", "dbus-send", "--system",
-		       "--dest=org.freedesktop.login1", "/org/freedesktop/login1",
-		       method[a], "boolean:true", (char*)NULL);
-		_exit(127);
-	}
-
-	while((got = waitpid(pid, &st, 0)) < 0 && errno == EINTR)
-		;
-	if(got != pid) {
-		return -1;
-	}
-
-	return WIFEXITED(st) && WEXITSTATUS(st) == 0 ? 0 : -1;
-}
-
-// a user waits for TIME only after logind says the request can be made
-static bool logind_can(enum act a) {
-	static const char* const method[] = {
-		[ACT_REBOOT] = "org.freedesktop.login1.Manager.CanReboot",
-		[ACT_POWEROFF] = "org.freedesktop.login1.Manager.CanPowerOff",
-		[ACT_HALT] = "org.freedesktop.login1.Manager.CanHalt",
-	};
-	char buf[32];
-	char* w;
-	size_t len = 0;
-	ssize_t n;
-	pid_t pid, got;
-	int p[2], st = -1;
-
-	if(pipe2(p, O_CLOEXEC) < 0) {
-		return false;
-	}
-
-	pid = fork();
-	if(pid < 0) {
-		close(p[0]);
-		close(p[1]);
-		return false;
-	}
-
-	if(pid == 0) {
-		dup2(p[1], 1);
-		execlp("dbus-send", "dbus-send", "--system", "--print-reply=literal",
-		       "--dest=org.freedesktop.login1", "/org/freedesktop/login1",
-		       method[a], (char*)NULL);
-		_exit(127);
-	}
-
-	close(p[1]);
-	while(len < sizeof(buf) - 1) {
-		n = read(p[0], buf + len, sizeof(buf) - 1 - len);
-		if(n < 0 && errno == EINTR) {
-			continue;
-		}
-
-		if(n <= 0) {
-			break;
-		}
-
-		len += (size_t)n;
-	}
-
-	close(p[0]);
-	buf[len] = '\0';
-	while((got = waitpid(pid, &st, 0)) < 0 && errno == EINTR)
-		;
-	if(got != pid || !WIFEXITED(st) || WEXITSTATUS(st)) {
-		return false;
-	}
-
-	w = buf + strspn(buf, " \t\n");
-	w[strcspn(w, " \t\n")] = '\0';
-
-	// challenge leaves the decision to polkit when the request is made
-	return !strcmp(w, "yes") || !strcmp(w, "challenge");
-}
-
 static void warn_console(const char* me, enum act a, int64_t secs) {
 	char msg[160];
 	int fd = open("/dev/console", O_WRONLY | O_NOCTTY | O_CLOEXEC);
@@ -310,7 +229,7 @@ int main(int argc, char** argv) {
 	const char* me = argc > 0 && argv[0] ? path_base(argv[0]) : "ninit-shutdown";
 	enum act act;
 	int64_t when = 0;
-	bool is_shutdown, is_telinit, force = false, have_when = false, privileged;
+	bool is_shutdown, is_telinit, force = false, have_when = false;
 	int k;
 
 	// another init gets its own tool with every argument, whatever ninit would make of them
@@ -335,7 +254,7 @@ int main(int argc, char** argv) {
 		const char* a = argv[k];
 
 		if(!strcmp(a, "--help")) {
-			usage(me, stdout);
+			usage(me);
 			return 0;
 		} else if(!strcmp(a, "-r")) {
 			act = ACT_REBOOT;
@@ -359,7 +278,7 @@ int main(int argc, char** argv) {
 			}
 		} else if(a[0] == '-' && a[1]) {
 			fprintf(stderr, "%s: unrecognized option '%s'\n", me, a);
-			usage(me, stderr);
+			try_help(me);
 			return 2;
 		} else if(is_telinit) {
 			if(!strcmp(a, "0")) {
@@ -370,6 +289,7 @@ int main(int argc, char** argv) {
 				return 0;
 			} else {
 				fprintf(stderr, "%s: unknown runlevel '%s', expected 0 or 6\n", me, a);
+				try_help(me);
 				return 2;
 			}
 
@@ -378,6 +298,7 @@ int main(int argc, char** argv) {
 			when = parse_when(a);
 			if(when < 0) {
 				fprintf(stderr, "%s: invalid time '%s'\n", me, a);
+				try_help(me);
 				return 2;
 			}
 
@@ -387,12 +308,13 @@ int main(int argc, char** argv) {
 
 	if(is_telinit && !have_when) {
 		fprintf(stderr, "%s: missing runlevel operand\n", me);
+		try_help(me);
 		return 2;
 	}
 
 	if(is_shutdown && !have_when) {
 		fprintf(stderr, "%s: missing time operand\n", me);
-		usage(me, stderr);
+		try_help(me);
 		return 2;
 	}
 
@@ -409,9 +331,8 @@ int main(int argc, char** argv) {
 	}
 
 	// signal 0 checks the permission alone, root, setuid root and cap_kill pass alike
-	privileged = kill(1, 0) == 0;
-	if(when > 0 && !privileged && !logind_can(act)) {
-		fprintf(stderr, "%s: permission denied, must be run as root\n", me);
+	if(kill(1, 0) < 0) {
+		fprintf(stderr, "%s: cannot signal pid 1: %s\n", me, strerror(errno));
 		return 1;
 	}
 
@@ -425,15 +346,6 @@ int main(int argc, char** argv) {
 
 			when -= (int64_t)(s - sleep(s));
 		}
-	}
-
-	if(!privileged) {
-		if(try_logind(act) == 0) {
-			return 0;
-		}
-
-		fprintf(stderr, "%s: permission denied, must be run as root\n", me);
-		return 1;
 	}
 
 	if(kill(1, act_signal[act]) < 0) {

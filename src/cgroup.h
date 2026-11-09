@@ -1,13 +1,11 @@
 #pragma once
 
-#include "ngraph.h"
-
 #include <stddef.h>
 #include <stdint.h>
 
 #define CG_BASE	    "/sys/fs/cgroup"
 #define CG_DIR	    CG_BASE "/ninit.services"
-#define CG_PATH_MAX (sizeof(CG_DIR) + NG_MAX_NAME + 24)
+#define CG_PATH_MAX sizeof(CG_DIR "/svc-4294967295/cgroup.events")
 
 extern bool cg_ok;
 

@@ -107,7 +107,10 @@ verify the result with the checks
 .B ninit
 applies at boot
 .IP 8. 4
-write it to a temporary file and
+compare it with
+.IR file .
+an identical graph with the mode the build would give it is left in place and reported as unchanged.
+otherwise write it to a temporary file and
 .BR fsync (2)
 it, link the existing graph to a second temporary name and rename that to
 .IB file .old\c
@@ -398,7 +401,9 @@ failure, including a failure reported by
 and an unreachable control socket
 .TP
 .B 2
-usage error
+usage error.
+the diagnostic is followed by
+.B try 'ninitctl \-\-help' for more information
 .SH FILES
 .TP
 .I @ninit_svcdir@

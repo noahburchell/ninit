@@ -1,4 +1,5 @@
 #include "ctl.h"
+#include "util.h"
 #include "../help/io.h"
 #include "../src/nctl.h"
 #include "../src/ngraph.h"
@@ -354,13 +355,11 @@ int cmd_ctl(const char* verb, int argc, char** argv) {
 		}
 
 		if(!endopts && argv[k][0] == '-' && argv[k][1]) {
-			fprintf(stderr, "ninitctl: %s: unknown option '%s'\n", verb, argv[k]);
-			return 2;
+			usage_die("%s: unknown option '%s'", verb, argv[k]);
 		}
 
 		if(name) {
-			fprintf(stderr, "ninitctl: %s takes at most one service name\n", verb);
-			return 2;
+			usage_die("%s takes at most one service name", verb);
 		}
 
 		name = argv[k];
@@ -368,18 +367,15 @@ int cmd_ctl(const char* verb, int argc, char** argv) {
 
 	if(!name && strcmp(verb, "status") && strcmp(verb, "resume")
 	   && strcmp(verb, "reload") && strcmp(verb, "log")) {
-		fprintf(stderr, "ninitctl: %s needs a service name\n", verb);
-		return NCTL_EXIT_USAGE;
+		usage_die("%s needs a service name", verb);
 	}
 
 	if(name && (!strcmp(verb, "resume") || !strcmp(verb, "reload") || !strcmp(verb, "log"))) {
-		fprintf(stderr, "ninitctl: %s takes no arguments\n", verb);
-		return NCTL_EXIT_USAGE;
+		usage_die("%s takes no arguments", verb);
 	}
 
 	if(boot && (errors || watch)) {
-		fprintf(stderr, "ninitctl: log: '-t' excludes '-e' and '-w'\n");
-		return NCTL_EXIT_USAGE;
+		usage_die("log: '-t' excludes '-e' and '-w'");
 	}
 
 	if(watch) {
@@ -393,8 +389,7 @@ int cmd_ctl(const char* verb, int argc, char** argv) {
 	at = (size_t)snprintf(line, sizeof(line), "%s%s%s\n", verb, name ? " " : "",
 			      name ? name : "");
 	if(at >= sizeof(line)) {
-		fprintf(stderr, "ninitctl: %s: name is too long\n", verb);
-		return NCTL_EXIT_USAGE;
+		usage_die("%s: name is too long", verb);
 	}
 
 	fd = ctl_connect();

@@ -55,7 +55,7 @@ static uint32_t parse_ms(const char* val, const char* fname, const char* key) {
 
 	errno = 0;
 	v = strtoull(val, &end, 10);
-	if(*val == '-' || errno || end == val) {
+	if(*val == '-' || *val == '+' || errno || end == val) {
 		die("%s/%s: %s:%s is not a duration", g_dir, fname, key, val);
 	}
 
@@ -116,10 +116,7 @@ void parse_src(struct src* s, const char* fname, char* body, size_t len) {
 
 	memcpy(scratch, body, len + 1);
 
-	s->name = strdup(fname);
-	if(!s->name) {
-		die("out of memory");
-	}
+	s->name = xstrndup(fname, strlen(fname));
 
 	s->type = NG_TYPE_TARGET;
 
@@ -198,7 +195,7 @@ void parse_src(struct src* s, const char* fname, char* body, size_t len) {
 
 			errno = 0;
 			fd = strtoull(val, &end, 10);
-			if(*val == '-' || errno || end == val || *end
+			if(*val == '-' || *val == '+' || errno || end == val || *end
 			   || fd < NG_NOTIFY_MIN || fd > NG_NOTIFY_MAX) {
 				die("%s/%s: notify:%s must be between %u and %u",
 				    g_dir, fname, val, NG_NOTIFY_MIN, NG_NOTIFY_MAX);
@@ -224,7 +221,7 @@ void parse_src(struct src* s, const char* fname, char* body, size_t len) {
 
 			errno = 0;
 			t = strtoull(val, &end, 10);
-			if(*val == '-' || errno || end == val || *end
+			if(*val == '-' || *val == '+' || errno || end == val || *end
 			   || t < 1 || t > NG_MAX_TRIES) {
 				die("%s/%s: start-tries:%s must be between 1 and %u",
 				    g_dir, fname, val, NG_MAX_TRIES);

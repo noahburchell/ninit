@@ -34,7 +34,6 @@ struct build {
 	struct graph g;
 	uint32_t*    order;
 	uint32_t     nroots;
-	uint64_t     hash;
 	mode_t       out_mode;
 };
 
@@ -48,3 +47,4 @@ bool graph_image(const char* path);
 void refuse_nongraph(const char* path);
 int lock_dir(const char* path);
 void write_atomic(const char* path, const void* buf, size_t len, mode_t mode, int held);
+bool same_graph(const char* path, const void* buf, size_t len, mode_t mode);

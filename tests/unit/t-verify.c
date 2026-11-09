@@ -138,6 +138,31 @@ static void m_flags(struct gb_img* g) {
 static void m_flag4(struct gb_img* g) {
 	SVC(g, 5)->flags |= 0x10;
 }
+static void m_dep_off_oob(struct gb_img* g) {
+	HDR(g)->off_dep_off = HDR(g)->total_len;
+}
+static void m_dep_idx_align(struct gb_img* g) {
+	HDR(g)->off_dep_idx += 2;
+}
+static void m_dep_start(struct gb_img* g) {
+	gb_doff(g)[0] = 1;
+}
+static void m_dep_end(struct gb_img* g) {
+	gb_doff(g)[6] = 5;
+}
+static void m_dep_count(struct gb_img* g) {
+	gb_doff(g)[3] = 2;
+}
+static void m_dep_after(struct gb_img* g) {
+	gb_didx(g)[0] = 2;
+}
+static void m_dep_unsorted(struct gb_img* g) {
+	gb_didx(g)[1] = 2;
+	gb_didx(g)[2] = 1;
+}
+static void m_dep_wrong(struct gb_img* g) {
+	gb_didx(g)[1] = 0;
+}
 static void m_exec_noflag(struct gb_img* g) {
 	POL(g, 1)->exec_off = 0;
 }
@@ -261,6 +286,14 @@ static const struct vcase vcases[] = {
 	{ "policy flag bit 1", "unknown policy flag bits are set", m_pflags, 1 },
 	{ "unmet not the in-degree", "unmet does not match the in-degree of the edge list",
 	  m_unmet_mismatch, 1 },
+	{ "prerequisite offsets past the end", "prerequisite offsets out of bounds", m_dep_off_oob, 1 },
+	{ "misaligned prerequisite indices", "prerequisite indices out of bounds", m_dep_idx_align, 1 },
+	{ "prerequisite offsets starting at 1", "prerequisite offsets do not start at 0", m_dep_start, 1 },
+	{ "prerequisite offsets ending early", "prerequisite offsets do not end at n_edges", m_dep_end, 1 },
+	{ "a prerequisite count unlike unmet", "unmet does not match the prerequisite list", m_dep_count, 1 },
+	{ "a prerequisite after its dependent", "prerequisite does not precede its dependent", m_dep_after, 1 },
+	{ "unsorted prerequisites", "prerequisite indices are not sorted and unique", m_dep_unsorted, 1 },
+	{ "a prerequisite without its edge", "prerequisite list does not match the edge list", m_dep_wrong, 1 },
 	{ "two services named alike", "two services share a name", m_dup_name, 1 },
 };
 
@@ -290,8 +323,8 @@ static void test_verify_edges(void) {
 	is_str(ng_verify(g.map, 0), "shorter than header", "0 bytes is shorter than the header");
 
 	odd = aligned_alloc(8, gb_align8(g.len) + 16);
-	memcpy(odd + 4, g.map, g.len);
-	is_str(ng_verify(odd + 4, g.len), "image is not aligned for the header",
+	memcpy(odd + 2, g.map, g.len);
+	is_str(ng_verify(odd + 2, g.len), "image is not aligned for the header",
 	       "a misaligned image is refused before it is read");
 	free(odd);
 
@@ -396,6 +429,8 @@ static const char* recheck(const void* map, size_t len) {
 	const struct ng_svc* sv = ng_svcs(map);
 	const uint32_t* roff = ng_rdep_off(map);
 	const uint32_t* ridx = ng_rdep_idx(map);
+	const uint32_t* doff = ng_dep_off(map);
+	const uint32_t* didx = ng_dep_idx(map);
 	uint32_t n = h->n_svc, i, j;
 
 	if(h->total_len != len) {
@@ -417,6 +452,16 @@ static const char* recheck(const void* map, size_t len) {
 		for(j = roff[i]; j < roff[i + 1]; j++) {
 			if(ridx[j] <= i || ridx[j] >= n) {
 				return "edge out of order";
+			}
+		}
+
+		if(doff[i] > doff[i + 1] || doff[i + 1] > h->n_edges) {
+			return "prerequisite offsets";
+		}
+
+		for(j = doff[i]; j < doff[i + 1]; j++) {
+			if(didx[j] >= i) {
+				return "prerequisite out of order";
 			}
 		}
 

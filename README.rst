@@ -54,7 +54,7 @@ graph, depgraph  the compiled form of the service directory, /etc/ninit.d/depgra
 - bash at /bin/bash, or the interpreter chosen with ``--with-shell``, when the first service starts
 - /bin/sh for the emergency shell
 - cgroup v2 for service containment. forking directly into a cgroup uses CLONE_INTO_CGROUP (linux 5.7). SIGKILL is delivered through cgroup.kill (linux 5.14). without cgroup v2 services are contained by process group only
-- optional: hwclock at shutdown, sulogin for ``--with-sulogin``, setcap for ``--with-shutdown-group``, dbus-send and elogind for ninit-shutdown run without root or that group
+- optional: hwclock at shutdown, sulogin for ``--with-sulogin``, setcap for ``--with-shutdown-group``
 
 1.4 scope
 ---------
@@ -78,15 +78,17 @@ ninit is packaged in the nburch overlay:
    emaint sync --repo nburch
    emerge --ask sys-apps/ninit
 
-========  =====================
-use flag  configure option
-========  =====================
+========  ========================================
+use flag  effect
+========  ========================================
 hardened  ``--enable-hardened``
 quiet     ``--enable-quiet``
 sulogin   ``--with-sulogin``
 busybox   ``--with-busybox``
 debug     ``--enable-debug``
-========  =====================
+power     the power group may shut down, see `7.3`_. on by default
+tools     ``make tools-install``, see `7.3`_. on by default
+========  ========================================
 
 CFLAGS and LDFLAGS from make.conf are used as described in `2.2`_. continue at `2.5`_
 
@@ -484,13 +486,13 @@ option                  effect
 5. order the services topologically. among the services ready to be placed, roots come first, then the service with the longest chain of dependents, then the first by name
 6. resolve the default onfail of each service and count its dependents
 7. build the image and verify it with the checks ninit applies at boot
-8. write it to a temporary file in the output directory and fsync it, hard link the current graph to a second temporary name and rename that over FILE.old, rename the new file over FILE, fsync the directory
+8. compare it with FILE. when the two are identical and FILE has the mode the build would give it, nothing is written. otherwise write it to a temporary file in the output directory and fsync it, hard link the current graph to a second temporary name and rename that over FILE.old, rename the new file over FILE, fsync the directory
 
 with ``--root``, /etc/locale.conf is looked up below ROOT as the system booted from it sees it, absolute links and ``..`` included, and every syntax check runs chrooted into ROOT. without CAP_SYS_CHROOT each check first enters a user namespace of its own, which grants it there, where the kernel allows unprivileged user namespaces. failing both, no script can be checked and the build requires ``--no-check``. DIR and FILE are paths on the running system. the lookup uses openat2, linux 5.6 or newer
 
 a failed build writes nothing and leaves the existing graph and FILE.old in place. if FILE or FILE.old exists and is not a graph, the build fails instead of replacing it. the output mode is 0644 less the umask, and less group or other read permission if any service file lacks it
 
-on success ``init`` prints ``FILE: N services, E edges, R roots, B bytes``. ``-n`` prints ``FILE: would write`` followed by the same figures and the mode
+on success ``init`` prints ``FILE: N services, E edges, R roots, B bytes``, or ``FILE: unchanged,`` and the same figures when the graph on disk already matches. ``-n`` prints ``FILE: would write`` followed by the figures and the mode, or the same ``unchanged`` line
 
 ``init`` warns about:
 
@@ -512,7 +514,7 @@ the running ninit does not read the new graph. it takes effect at the next boot
 
    $ ninitctl show
    depgraph  /etc/ninit.d/depgraph
-   31 services, 33 edges, 8 roots, 5 levels, 4848 bytes, crc 5bd8cbf7
+   31 services, 33 edges, 8 roots, 5 levels, 5108 bytes, crc 81031318
 
      #  service         type     via     lvl  kills  onfail  rdy  rst  depends on
      ─────────────────────────────────────────────────────────────────────────────────
@@ -588,7 +590,7 @@ status  meaning
 ======  ========================================
 0       success
 1       failure, including a failure reported by ninit
-2       usage error
+2       usage error. the diagnostic is followed by ``try 'ninitctl --help' for more information``
 ======  ========================================
 
 this applies to every ninitctl command
@@ -824,16 +826,15 @@ option                                      effect
 ``--help``                                  print usage
 ==========================================  ========================================
 
-TIME is ``now``, ``+MINUTES``, or ``HH:MM`` in local time, meaning its next occurrence. operands after TIME, such as a message, are ignored
+TIME is ``now``, ``+MINUTES``, or ``HH:MM`` in local time, meaning its next occurrence. operands after TIME, such as a message, are ignored. an invalid option or operand prints the diagnostic, then ``try 'NAME --help' for more information``, and exits 2
 
 ninit-shutdown performs, in order:
 
 1. if /proc/1/comm is readable and is not ninit, execute NAME.old from its own directory with the same arguments
 2. with ``-f``, sync and call reboot(2). the real user must be root
-3. if pid 1 cannot be signalled and TIME is in the future, call org.freedesktop.login1.Manager.CanPowerOff, CanReboot or CanHalt through ``dbus-send --system``. unless the answer is yes or challenge, exit with ``permission denied`` before waiting
+3. if pid 1 cannot be signalled, exit with ``cannot signal pid 1: Operation not permitted``, before any wait
 4. if TIME is in the future, print a notice on /dev/console and wait in the foreground. ctrl-c cancels
-5. if pid 1 can be signalled, send the signal from `7.1`_ to pid 1
-6. otherwise, call org.freedesktop.login1.Manager.PowerOff, Reboot or Halt through ``dbus-send --system``, leaving the decision to elogind and polkit. if that fails, exit with ``permission denied``
+5. send the signal from `7.1`_ to pid 1
 
 .. code:: sh
 
@@ -850,7 +851,13 @@ whether pid 1 can be signalled is decided by kill(2) with signal 0. root, a setu
    chmod 0710 /sbin/ninit-shutdown
    setcap cap_kill=ep /sbin/ninit-shutdown
 
-linux has no common name for such a group. bsd uses operator, arch and slackware ship power
+ninit-shutdown never talks to logind or dbus. if you are not root, you need to be in the group that may signal pid 1. on gentoo the power use flag, on by default, creates the power group and installs ninit-shutdown with cap_kill for it. add yourself and log in again:
+
+.. code:: sh
+
+   gpasswd -a USER power
+
+anywhere else, pick a group and run the three commands above as root. your desktop then powers off through this group, not through polkit, and the same works from a tty. linux has no common name for such a group, bsd uses operator, arch and slackware ship power
 
 .. _8:
 
@@ -880,22 +887,24 @@ when the shell exits it is started again. ninit stops restarting it after 5 cons
 9 depgraph format
 =================
 
-a graph is loaded only if its version equals the NG_VERSION ninit was built with, defined in src/ngraph.h, currently 10. after upgrading ninit, run ``ninitctl init`` before rebooting. an older graph is refused. ninit then loads depgraph.old, which after an upgrade is as old unless ninitctl init ran twice, and the boot ends in the emergency shell when that is refused too
+a graph is loaded only if its version equals the NG_VERSION ninit was built with, defined in src/ngraph.h, currently 11. after upgrading ninit, run ``ninitctl init`` before rebooting. an older graph is refused. ninit then loads depgraph.old, which after an upgrade is as old, and the boot ends in the emergency shell when that is refused too
 
 ninit reads the whole graph into private read-only memory and verifies it before use. every offset and length is bounds checked, sections must not overlap, the checksum must match, every edge must point to a higher index, stored counts must agree with the edge list, names must be valid and unique, and every field must be in range. a graph that fails any check is not used. ninitctl show applies the same checks
 
 all integers are in host byte order. ninitctl writes the sections in the order below. ninit locates them through the offsets in the header
 
-=================  =========  ===============
-section            alignment  size in bytes
-=================  =========  ===============
-header             8          64
-service table      8          16 × n_svc
-dependent offsets  4          4 × (n_svc + 1)
-dependent indices  4          4 × n_edges
-policy table       4          16 × n_svc
-string table       1          blob_len
-=================  =========  ===============
+====================  =========  ===============
+section               alignment  size in bytes
+====================  =========  ===============
+header                8          64
+service table         8          16 × n_svc
+dependent offsets     4          4 × (n_svc + 1)
+dependent indices     4          4 × n_edges
+prerequisite offsets  4          4 × (n_svc + 1)
+prerequisite indices  4          4 × n_edges
+policy table          4          16 × n_svc
+string table          1          blob_len
+====================  =========  ===============
 
 header:
 
@@ -915,8 +924,9 @@ offset  size  field         description
 0x28    4     off_rdep_idx  offset of the dependent indices
 0x2c    4     off_blob      offset of the string table
 0x30    4     off_pol       offset of the policy table
-0x34    4     reserved      0
-0x38    8     srcs_hash     64-bit fnv-1a of the source files' names and contents in name order. not checked
+0x34    4     off_dep_off   offset of the prerequisite offsets
+0x38    4     off_dep_idx   offset of the prerequisite indices
+0x3c    4     reserved      0
 ======  ====  ============  ========================================
 
 service record:
@@ -946,7 +956,7 @@ offset  size  field        description
 0xc     4     exec_off     string table offset of the direct argv when flags bit 3 is set, otherwise 0xffffffff
 ======  ====  ===========  ========================================
 
-services are stored in topological order, roots first at indices 0 to n_roots - 1. the dependents of service i are entries ``rdep_off[i]`` up to but not including ``rdep_off[i + 1]`` of the dependent indices, sorted ascending, each greater than i. the string table holds the NUL-terminated names and scripts and ends in a NUL
+services are stored in topological order, roots first at indices 0 to n_roots - 1. the dependents of service i are entries ``rdep_off[i]`` up to but not including ``rdep_off[i + 1]`` of the dependent indices, sorted ascending, each greater than i. the prerequisites of service i are entries ``dep_off[i]`` up to but not including ``dep_off[i + 1]`` of the prerequisite indices, sorted ascending, each less than i. the two lists hold the same edges. the string table holds the NUL-terminated names and scripts and ends in a NUL
 
 a direct argv is one list of NUL-terminated strings ended by an empty string, the command and its arguments. ninit runs it as the argv of the service, looking a command without a slash up in PATH. the command is at most 255 bytes and an absolute path when it contains a slash, the list holds at most 16 strings and each argument is at most 4096 bytes
 

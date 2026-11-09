@@ -5,7 +5,7 @@
 #include <assert.h>
 
 #define NG_MAGIC   0x4744494eu // 'NIDG'
-#define NG_VERSION 10u
+#define NG_VERSION 11u
 
 #define NG_TYPE_ONESHOT 0
 #define NG_TYPE_DAEMON	1
@@ -101,8 +101,9 @@ struct ng_hdr {
 	uint32_t off_rdep_idx;
 	uint32_t off_blob;
 	uint32_t off_pol;
+	uint32_t off_dep_off;
+	uint32_t off_dep_idx;
 	uint32_t reserved;
-	uint64_t srcs_hash;
 };
 
 struct ng_pol {
@@ -141,6 +142,14 @@ static inline const uint32_t* ng_rdep_off(const void* m) {
 
 static inline const uint32_t* ng_rdep_idx(const void* m) {
 	return (const void*)((const char*)m + ((const struct ng_hdr*)m)->off_rdep_idx);
+}
+
+static inline const uint32_t* ng_dep_off(const void* m) {
+	return (const void*)((const char*)m + ((const struct ng_hdr*)m)->off_dep_off);
+}
+
+static inline const uint32_t* ng_dep_idx(const void* m) {
+	return (const void*)((const char*)m + ((const struct ng_hdr*)m)->off_dep_idx);
 }
 
 static inline const char* ng_blob(const void* m) {

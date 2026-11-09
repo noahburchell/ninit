@@ -51,6 +51,9 @@ static inline struct gb_img gb_build(const struct gb_svc* sv, uint32_t n,
 	uint32_t* ridx = calloc(m ? m : 1, sizeof(*ridx));
 	uint32_t* indeg = calloc(n ? n : 1, sizeof(*indeg));
 	uint32_t* fill = calloc(n ? n : 1, sizeof(*fill));
+	uint32_t* doff = calloc((size_t)n + 1, sizeof(*doff));
+	uint32_t* didx = calloc(m ? m : 1, sizeof(*didx));
+	uint32_t* dfill = calloc(n ? n : 1, sizeof(*dfill));
 	uint8_t* reach = calloc((size_t)n * n + 1, 1);
 	size_t blob_len = 0, off, total;
 	struct ng_hdr* h;
@@ -84,6 +87,22 @@ static inline struct gb_img gb_build(const struct gb_svc* sv, uint32_t n,
 		qsort(ridx + roff[i], roff[i + 1] - roff[i], sizeof(*ridx), gb_cmp_u32);
 	}
 
+	for(i = 0; i < m; i++) {
+		doff[e[i].b + 1]++;
+	}
+
+	for(i = 0; i < n; i++) {
+		doff[i + 1] += doff[i];
+	}
+
+	for(i = 0; i < m; i++) {
+		didx[doff[e[i].b] + dfill[e[i].b]++] = e[i].a;
+	}
+
+	for(i = 0; i < n; i++) {
+		qsort(didx + doff[i], doff[i + 1] - doff[i], sizeof(*didx), gb_cmp_u32);
+	}
+
 	for(i = n; i-- > 0;) {
 		for(j = roff[i]; j < roff[i + 1]; j++) {
 			reach[(size_t)i * n + ridx[j]] = 1;
@@ -98,7 +117,7 @@ static inline struct gb_img gb_build(const struct gb_svc* sv, uint32_t n,
 	}
 
 	total = sizeof(struct ng_hdr) + (size_t)n * sizeof(struct ng_svc)
-		+ ((size_t)n + 1) * 4 + (size_t)m * 4 + (size_t)n * sizeof(struct ng_pol) + blob_len;
+		+ 2 * (((size_t)n + 1) * 4 + (size_t)m * 4) + (size_t)n * sizeof(struct ng_pol) + blob_len;
 	buf = aligned_alloc(8, gb_align8(total) + 8);
 	memset(buf, 0, gb_align8(total) + 8);
 	h = (struct ng_hdr*)(void*)buf;
@@ -118,6 +137,12 @@ static inline struct gb_img gb_build(const struct gb_svc* sv, uint32_t n,
 	off += ((size_t)n + 1) * 4;
 	h->off_rdep_idx = (uint32_t)off;
 	memcpy(buf + off, ridx, (size_t)m * 4);
+	off += (size_t)m * 4;
+	h->off_dep_off = (uint32_t)off;
+	memcpy(buf + off, doff, ((size_t)n + 1) * 4);
+	off += ((size_t)n + 1) * 4;
+	h->off_dep_idx = (uint32_t)off;
+	memcpy(buf + off, didx, (size_t)m * 4);
 	off += (size_t)m * 4;
 	h->off_pol = (uint32_t)off;
 	off += (size_t)n * sizeof(struct ng_pol);
@@ -173,6 +198,9 @@ static inline struct gb_img gb_build(const struct gb_svc* sv, uint32_t n,
 	free(ridx);
 	free(indeg);
 	free(fill);
+	free(doff);
+	free(didx);
+	free(dfill);
 	free(reach);
 	img.map = buf;
 	img.len = total;
@@ -212,6 +240,14 @@ static inline uint32_t* gb_roff(struct gb_img* g) {
 
 static inline uint32_t* gb_ridx(struct gb_img* g) {
 	return (uint32_t*)(void*)((char*)g->map + gb_hdr(g)->off_rdep_idx);
+}
+
+static inline uint32_t* gb_doff(struct gb_img* g) {
+	return (uint32_t*)(void*)((char*)g->map + gb_hdr(g)->off_dep_off);
+}
+
+static inline uint32_t* gb_didx(struct gb_img* g) {
+	return (uint32_t*)(void*)((char*)g->map + gb_hdr(g)->off_dep_idx);
 }
 
 static inline char* gb_blob(struct gb_img* g) {

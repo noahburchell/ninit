@@ -1,10 +1,10 @@
 #include "add.h"
+#include "util.h"
 #include "../src/ngraph.h"
 
 #include <errno.h>
 #include <sys/file.h>
 #include <fcntl.h>
-#include <inttypes.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
@@ -47,51 +47,6 @@ static void print_rebuild_hint(const char* dir, bool custom) {
 	fputs("'\n", stdout);
 }
 
-static bool relink(const char* path, const char* target, bool enable) {
-	char fixed[4200], tmp[4200];
-	const char* slash = strrchr(path, '/');
-	int dl = slash ? (int)(slash - path + 1) : 0;
-	int n;
-
-	if(enable) {
-		if(!strncmp(target, "../", 3)) {
-			n = snprintf(fixed, sizeof(fixed), "%s", target + 3);
-		} else {
-			n = snprintf(fixed, sizeof(fixed), "%s/%s", SVC_UNUSED, target);
-		}
-	} else {
-		n = snprintf(fixed, sizeof(fixed), "../%s", target);
-	}
-
-	if(n < 0 || (size_t)n >= sizeof(fixed)) {
-		return false;
-	}
-
-	// a temporary name made from the service name could pass NAME_MAX
-	for(uint16_t t = 0;; t++) {
-		n = snprintf(tmp, sizeof(tmp), "%.*s.ninitctl.%d.%" PRIu16 ".tmp", dl, path,
-			     (int)getpid(), t);
-		if(n < 0 || (size_t)n >= sizeof(tmp)) {
-			return false;
-		}
-
-		if(symlink(fixed, tmp) == 0) {
-			break;
-		}
-
-		if(errno != EEXIST || t == 999) {
-			return false;
-		}
-	}
-
-	if(rename(tmp, path) < 0) {
-		unlink(tmp);
-		return false;
-	}
-
-	return true;
-}
-
 static bool join(char* out, size_t cap, const char* dir, const char* name) {
 	size_t dl = strlen(dir), nl = strlen(name);
 
@@ -123,29 +78,24 @@ int svc_move(int argc, char** argv, bool enable) {
 			endopts = k + 1;
 		} else if(!strcmp(argv[k], "-d") || !strcmp(argv[k], "--dir")) {
 			if(++k == argc) {
-				fprintf(stderr, "ninitctl: %s: %s needs a directory\n",
-					verb, argv[k - 1]);
-				return 2;
+				usage_die("%s: %s needs a directory", verb, argv[k - 1]);
 			}
 
 			dir = argv[k];
 			custom_dir = true;
 		} else if(argv[k][0] == '-') {
-			fprintf(stderr, "ninitctl: %s: unknown option '%s'\n", verb, argv[k]);
-			return 2;
+			usage_die("%s: unknown option '%s'", verb, argv[k]);
 		} else {
 			names++;
 		}
 	}
 
 	if(!names) {
-		fprintf(stderr, "ninitctl: %s needs at least one service name\n", verb);
-		return 2;
+		usage_die("%s needs at least one service name", verb);
 	}
 
 	if(!join(unused, sizeof(unused), dir, SVC_UNUSED)) {
-		fprintf(stderr, "ninitctl: %s: directory path is too long\n", verb);
-		return 2;
+		usage_die("%s: directory path is too long", verb);
 	}
 
 	if(!enable && mkdir(unused, 0755) < 0 && errno != EEXIST) {
@@ -170,7 +120,6 @@ int svc_move(int argc, char** argv, bool enable) {
 		const char* why;
 		struct stat st, lst;
 		char target[4096];
-		size_t link_len;
 
 		if(!endopts || k < endopts) {
 			if(!strcmp(name, "--")) {
@@ -203,10 +152,17 @@ int svc_move(int argc, char** argv, bool enable) {
 			continue;
 		}
 
-		// symlinks are followed
+		// symlinks are followed, a dangling one is named for what it is
 		if(stat(from, &st) < 0) {
-			fprintf(stderr, "ninitctl: %s: not in %s\n", name,
-				enable ? unused : dir);
+			if(lstat(from, &lst) == 0 && S_ISLNK(lst.st_mode)) {
+				ssize_t ln = readlink(from, target, sizeof(target) - 1);
+
+				target[ln > 0 ? ln : 0] = '\0';
+				fprintf(stderr, "ninitctl: %s: symlink target %s is missing\n", name, target);
+			} else {
+				fprintf(stderr, "ninitctl: %s: not in %s\n", name, enable ? unused : dir);
+			}
+
 			bad++;
 			continue;
 		}
@@ -218,7 +174,6 @@ int svc_move(int argc, char** argv, bool enable) {
 			continue;
 		}
 
-		link_len = 0;
 		if(lstat(from, &lst) == 0 && S_ISLNK(lst.st_mode)) {
 			ssize_t ln = readlink(from, target, sizeof(target) - 1);
 
@@ -230,8 +185,11 @@ int svc_move(int argc, char** argv, bool enable) {
 			}
 
 			target[ln] = '\0';
+			// from the other directory it would point somewhere else
 			if(target[0] != '/') {
-				link_len = (size_t)ln;
+				fprintf(stderr, "ninitctl: %s: symlink target %s is relative, use an absolute target\n", name, target);
+				bad++;
+				continue;
 			}
 		}
 
@@ -249,12 +207,6 @@ int svc_move(int argc, char** argv, bool enable) {
 
 			bad++;
 			continue;
-		}
-
-		if(link_len && !relink(to, target, enable)) {
-			fprintf(stderr, "ninitctl: %s: moved, but its symlink was not updated\n",
-				name);
-			bad++;
 		}
 
 		printf("%s %s\n", enable ? "added" : "removed", name);

@@ -5,7 +5,7 @@
 
 run "$NINITCTL"
 t_is "$rc" 2 "no command is a usage error"
-t_has "$err" "usage: ninitctl COMMAND [OPTION]..." "and prints the usage on stderr"
+t_is "$err" "ninitctl: missing command$t_hint" "and says so, with the --help hint"
 t_is "$out" "" "and nothing on stdout"
 
 for h in help -h --help; do
@@ -38,21 +38,21 @@ t_unlike "$out" "usage:" "-h after -- is a name"
 run "$NINITCTL" stat
 t_is "$rc" 2 "an unknown command is a usage error"
 t_has "$err" "ninitctl: unknown command 'stat'" "and is named"
-t_has "$err" "usage: ninitctl" "followed by the usage"
+t_has "$err" "try 'ninitctl --help' for more information" "followed by the --help hint"
 
 run "$NINITCTL" init -x
 t_is "$rc" 2 "init with an unknown argument is a usage error"
-t_is "$err" "ninitctl: init: unexpected argument '-x'" "and is named"
+t_is "$err" "ninitctl: init: unexpected argument '-x'$t_hint" "and is named"
 run "$NINITCTL" init -d
-t_is "$rc$err" "2ninitctl: init: -d needs a directory" "init -d without a value"
+t_is "$rc$err" "2ninitctl: init: -d needs a directory$t_hint" "init -d without a value"
 run "$NINITCTL" init --dir
-t_is "$rc$err" "2ninitctl: init: --dir needs a directory" "init --dir without a value"
+t_is "$rc$err" "2ninitctl: init: --dir needs a directory$t_hint" "init --dir without a value"
 run "$NINITCTL" init -d "$T" -o
-t_is "$rc$err" "2ninitctl: init: -o needs a file" "init -o without a value"
+t_is "$rc$err" "2ninitctl: init: -o needs a file$t_hint" "init -o without a value"
 run "$NINITCTL" init -d "$T" extra
-t_is "$rc$err" "2ninitctl: init: unexpected argument 'extra'" "init with an operand"
+t_is "$rc$err" "2ninitctl: init: unexpected argument 'extra'$t_hint" "init with an operand"
 run "$NINITCTL" init --root
-t_is "$rc$err" "2ninitctl: init: --root needs a directory" "init --root without a value"
+t_is "$rc$err" "2ninitctl: init: --root needs a directory$t_hint" "init --root without a value"
 run "$NINITCTL" init --root "$T/none"
 t_is "$rc$err" "1ninitctl: open $T/none: No such file or directory" "init --root with a missing directory"
 run "$NINITCTL" init --root -h
@@ -60,27 +60,27 @@ t_is "$rc$err" "1ninitctl: open -h: No such file or directory" "-h as the value 
 
 for v in start stop restart; do
 	run "$NINITCTL" "$v"
-	t_is "$rc$err" "2ninitctl: $v needs a service name" "$v without a name"
+	t_is "$rc$err" "2ninitctl: $v needs a service name$t_hint" "$v without a name"
 	run "$NINITCTL" "$v" a b
-	t_is "$rc$err" "2ninitctl: $v takes at most one service name" "$v with two names"
+	t_is "$rc$err" "2ninitctl: $v takes at most one service name$t_hint" "$v with two names"
 	run "$NINITCTL" "$v" -q a
-	t_is "$rc$err" "2ninitctl: $v: unknown option '-q'" "$v with an unknown option"
+	t_is "$rc$err" "2ninitctl: $v: unknown option '-q'$t_hint" "$v with an unknown option"
 done
 for v in resume reload log; do
 	run "$NINITCTL" "$v" x
-	t_is "$rc$err" "2ninitctl: $v takes no arguments" "$v with an argument"
+	t_is "$rc$err" "2ninitctl: $v takes no arguments$t_hint" "$v with an argument"
 done
 run "$NINITCTL" status a b
-t_is "$rc$err" "2ninitctl: status takes at most one service name" "status with two names"
+t_is "$rc$err" "2ninitctl: status takes at most one service name$t_hint" "status with two names"
 run "$NINITCTL" status -e
-t_is "$rc$err" "2ninitctl: status: unknown option '-e'" "-e belongs to log only"
+t_is "$rc$err" "2ninitctl: status: unknown option '-e'$t_hint" "-e belongs to log only"
 run "$NINITCTL" log -x
-t_is "$rc$err" "2ninitctl: log: unknown option '-x'" "log with an unknown option"
+t_is "$rc$err" "2ninitctl: log: unknown option '-x'$t_hint" "log with an unknown option"
 for o in -w -e; do
 	run "$NINITCTL" log -t "$o"
-	t_is "$rc$err" "2ninitctl: log: '-t' excludes '-e' and '-w'" "log -t with $o"
+	t_is "$rc$err" "2ninitctl: log: '-t' excludes '-e' and '-w'$t_hint" "log -t with $o"
 done
 run "$NINITCTL" start "$(head -c 5000 /dev/zero | tr '\0' n)"
-t_is "$rc$err" "2ninitctl: start: name is too long" "a name that does not fit a request"
+t_is "$rc$err" "2ninitctl: start: name is too long$t_hint" "a name that does not fit a request"
 
 t_done

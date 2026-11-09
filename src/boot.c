@@ -237,9 +237,5 @@ void load_locale(void) {
 
 	if(n) {
 		n_locale = n;
-		return;
 	}
-
-	snprintf(env_locale[0], NG_LOCALE_LEN, "LANG=%s", NG_FALLBACK_LANG);
-	n_locale = 1;
 }
