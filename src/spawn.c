@@ -274,7 +274,8 @@ int launch(uint32_t i) {
 	r->line_len = 0;
 	r->hup = 0;
 	r->timedout = 0;
-	r->starting = 1;
+	// set once there is a process, a launch that fails has nothing to time out
+	r->starting = 0;
 	// a daemon that reports nothing is at least held until the shell execs
 	r->ntf_exec = ng_svcs(map)[i].type == NG_TYPE_DAEMON && !ng_notify(map, i);
 
@@ -333,6 +334,7 @@ int launch(uint32_t i) {
 
 	r->pid = pid;
 	r->pgid = pid;
+	r->starting = 1;
 	pid_put(pid, i);
 	r->out_fd = out[0];
 	r->ntf_fd = ntf[0];

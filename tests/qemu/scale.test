@@ -31,4 +31,14 @@ q_import
 q_poweroff_ok
 q_has "NOTE > shutdown: stopping 101 services in dependency order" "the daemons are stopped in order"
 q_lacks "did not stop in order" "within the 30 s limit"
+# 41 levels of services that have already exited lie under the daemons
+if [ -z "$Q_QUIET" ]; then
+	at() {
+		q_log | grep -F -m1 -- "$1" | sed -E 's/^\[ *([0-9]+\.[0-9]+)\].*/\1/'
+	}
+	gap=$(awk -v a="$(at 'shutdown: stopping')" -v b="$(at 'sending SIGTERM to all processes')" 'BEGIN { printf "%d", (b - a) * 1000 }')
+	t_ok $((gap >= 1000 * Q_SCALE)) "the ordered stop does not wait a drain interval per level ($gap ms)"
+else
+	t_skip "the ordered stop does not wait a drain interval per level, not on a quiet console"
+fi
 t_done

@@ -290,8 +290,14 @@ int log_pending_fd(void) {
 
 // called when the console is writable. a wakeup that writes nothing gives up the line
 void log_flush(void) {
-	ssize_t n = log_push(log_pend + pend_at, pend_len - pend_at, false);
+	ssize_t n;
 
+	// a line logged since the wakeup was requested has written the remainder already
+	if(!pend_len) {
+		return;
+	}
+
+	n = log_push(log_pend + pend_at, pend_len - pend_at, false);
 	if(n > 0) {
 		pend_at += (size_t)n;
 	}

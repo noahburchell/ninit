@@ -770,6 +770,8 @@ static void test_console_partial(void) {
 	ok(matches(con, "^\\[[0-9.]+\\] NOTE > p{80}\n\\[[0-9.]+\\] NOTE > after pending\n$"),
 	   "the remainder precedes the later line");
 	is_int(log_dropped, 0, "nothing was dropped");
+	log_flush();
+	is_int(log_dropped, 0, "a writable wakeup with nothing left pending drops nothing");
 
 	// a writable wakeup that writes nothing abandons the rest of the line
 	con_budget = 3;

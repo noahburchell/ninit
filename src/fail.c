@@ -490,6 +490,9 @@ static pid_t emerg_spawn(int con, bool vt, int barrier, bool auth) {
 	execve("/bin/sh", argv, envp);
 	errs[1] = errno;
 	(void)!write(barrier, errs, sizeof(errs));
+	// the exit of a session leader hangs up its terminal, which discards the output
+	// pid 1 has queued on a serial console
+	tcdrain(STDERR_FILENO);
 	_exit(EMERG_NOEXEC);
 }
 

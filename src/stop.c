@@ -180,6 +180,7 @@ static void stop_ordered(void) {
 		struct pollfd p = { .fd = sfd, .events = POLLIN };
 		struct signalfd_siginfo si;
 		int64_t now = now_ms(), next = deadline;
+		bool settled = false;
 
 		for(i = 0; i < n_svc; i++) {
 			if(st[i] == 2 || waitc[i]) {
@@ -215,12 +216,14 @@ static void stop_ordered(void) {
 		reap();
 		drain_output();
 
-		for(i = 0; i < n_svc; i++) {
+		// a prerequisite has the lower index, descending settles a whole chain in one pass
+		for(i = n_svc; i-- > 0;) {
 			if(st[i] == 2 || waitc[i] || !svc_gone(i)) {
 				continue;
 			}
 
 			st[i] = 2;
+			settled = true;
 			left--;
 			for(k = off[i]; k < off[i + 1]; k++) {
 				if(waitc[idx[k]]) {
@@ -243,6 +246,11 @@ static void stop_ordered(void) {
 
 			log_warn("shutdown: %u service%s did not stop in order", stuck, plural(stuck));
 			break;
+		}
+
+		// what a settled service released is signalled now, not after the drain interval
+		if(settled) {
+			continue;
 		}
 
 		if(next > now + SHUTDOWN_DRAIN_MS) {

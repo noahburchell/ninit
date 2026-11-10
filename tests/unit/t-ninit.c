@@ -257,6 +257,21 @@ static void test_sim_restart_backoff(void) {
 
 	ok(inv_ok("timeout respawn"), "the counters agree after timed out respawns");
 
+	// a respawn that cannot fork has no process to wait on
+	sim_load(sv, 1, NULL, 0);
+	i = svc_by("r");
+	sim_ready(i);
+	sim_exit_svc(i, 1 << 8);
+	sim_fork_fail = 1;
+	sim_advance(150);
+	sim_fork_fail = 0;
+	ok(runs[i].pid <= 0 && runs[i].restart_at, "a respawn that cannot fork is scheduled again");
+	ok(!runs[i].starting, "and is not starting without a process");
+	sim_advance(300);
+	sim_ready(i);
+	is_str(st_of("r"), "up", "it comes up once fork works again");
+	ok(inv_ok("fork respawn"), "the counters agree after a failed respawn");
+
 	// a respawn that is never ready was never up, 12 s of starting does not reset the delay
 	sim_load(slow, 1, NULL, 0);
 	i = svc_by("slow");
