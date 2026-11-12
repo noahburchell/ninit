@@ -158,7 +158,7 @@ if needed
 and
 .B del
 never replace an existing file.
-a relative symbolic link is rewritten to resolve to the same target from its new location.
+a relative symbolic link is refused, from its new location it would resolve to a different target.
 neither command rebuilds the graph
 .SH RUNTIME COMMANDS
 .TP

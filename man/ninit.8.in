@@ -299,7 +299,10 @@ independent services stop in parallel.
 this step ends after 30 s
 .IP 3. 4
 every process is sent
-.BR SIGTERM .
+.BR SIGTERM ,
+then
+.B SIGCONT
+so that a stopped process acts on it.
 .B ninit
 waits up to 5 s for all of them to exit
 .IP 4. 4
@@ -317,7 +320,10 @@ if the third line of
 .I /etc/adjtime
 is
 .BR LOCAL ,
-and killed after 5 s
+and killed after 5 s.
+an
+.B hwclock
+that fails is logged as a warning, a missing one is not
 .IP 6. 4
 every swap area in
 .I /proc/swaps

@@ -18,7 +18,6 @@
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <termios.h>
-#include <time.h>
 #include <unistd.h>
 
 #define NG_KDGKBTYPE   0x4B33
@@ -287,7 +286,7 @@ enum emerg_state {
 static pid_t emerg_pid = -1;
 static int emerg_bar = -1;
 static int64_t emerg_conf_at;
-static struct timespec emerg_at;
+static int64_t emerg_at;
 static uint8_t emerg_fast;
 static uint8_t emerg_fail;
 static bool emerg_gone;
@@ -616,13 +615,12 @@ static int emerg_start(void) {
 		return -1;
 	}
 
-	clock_gettime(CLOCK_MONOTONIC, &emerg_at);
-
+	emerg_at = mono_ms();
 	emerg_pid = pid;
 	emerg_conf = EMERG_EXEC_UNKNOWN;
 	fcntl(bar[0], F_SETFL, O_NONBLOCK);
 	emerg_bar = bar[0];
-	emerg_conf_at = mono_ms() + EMERG_EXEC_MS;
+	emerg_conf_at = emerg_at + EMERG_EXEC_MS;
 
 	return 0;
 }
@@ -707,7 +705,7 @@ bool fail_emergency_reaped(pid_t pid, int status) {
 
 	fail_emergency_report();
 	emerg_bar_close();
-	ms = mono_ms_since(&emerg_at);
+	ms = mono_ms() - emerg_at;
 	fail_describe(status, how, sizeof(how));
 
 	if(ms >= EMERG_FAST_MS) {

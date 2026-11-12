@@ -136,7 +136,7 @@ static void shim_sync(void) {
 
 // hwclock never runs, its pid only answers waitpid and kill
 static const pid_t hw_pid = 4200000;
-static int hw_exits, hw_killed, hw_forks, fork_fail;
+static int hw_exits, hw_killed, hw_forks, hw_status, fork_fail;
 
 static pid_t shim_fork(void) {
 	if(fork_fail) {
@@ -158,7 +158,7 @@ static pid_t shim_waitpid(pid_t pid, int* st, int flags) {
 		return 0;
 	}
 
-	*st = 0;
+	*st = hw_status;
 
 	return pid;
 }
@@ -367,6 +367,24 @@ static void test_hwclock(void) {
 	t0 = fake_ms;
 	save_hwclock();
 	ok(hw_forks == 1 && !hw_killed && fake_ms == t0 && !*logcap_text(), "an hwclock that exits is waited for");
+
+	hw_status = 1 << 8;
+	logcap_begin();
+	save_hwclock();
+	ok(logcap_count("WARN > shutdown: hwclock exited with status 1, the clock is not saved") == 1,
+	   "one that exits with a failure is reported");
+
+	hw_status = SIGSEGV;
+	logcap_begin();
+	save_hwclock();
+	ok(logcap_count("WARN > shutdown: hwclock was killed by signal 11, the clock is not saved") == 1,
+	   "and so is one a signal ended");
+
+	hw_status = 127 << 8;
+	logcap_begin();
+	save_hwclock();
+	ok(!*logcap_text(), "status 127, no hwclock to run, is not");
+	hw_status = 0;
 
 	hw_exits = 0;
 	logcap_begin();

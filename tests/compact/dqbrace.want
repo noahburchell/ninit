@@ -1,0 +1,5 @@
+
+echo "${x:-'a  b'}"
+
+echo "${x:-don't}"   # kept
+echo it\'s } "a   b" "c   d"   # kept

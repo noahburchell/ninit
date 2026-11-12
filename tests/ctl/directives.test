@@ -147,7 +147,7 @@ else
 		"show -v lists the script as written"
 fi
 
-refuse "a directive without a colon" "directive without a key: #%type daemon" $'#%type daemon\n:\n'
+refuse "a directive without a colon" "directive without a colon: #%type daemon" $'#%type daemon\n:\n'
 refuse "an unknown key" "unknown directive 'restart-delay'" $'#%restart-delay: 1s\n:\n'
 refuse "an uppercase key" "unknown directive 'Type'" $'#%Type: daemon\n:\n'
 refuse "an unknown type" "unknown type:service" $'#%type: service\n:\n'

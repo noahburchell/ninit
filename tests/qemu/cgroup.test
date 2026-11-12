@@ -22,6 +22,11 @@ bash -c 'trap "" TERM; exec sleep 1000' &
 echo $! >/run/hard.child
 exec sleep 1000
 EOF
+q_svc tenant <<'EOF'
+#%type: daemon
+#%stop-timeout: 20s
+exec sleep 1000
+EOF
 q_svc failing <<'EOF'
 #%start-tries: 1
 sleep 1000 &
@@ -52,6 +57,7 @@ q_check <<'EOF'
 st_is daemon up
 st_is lefty up
 st_is hard up
+st_is tenant up
 st_is failing failed
 st_is orphans up
 st_is probed up
@@ -113,6 +119,19 @@ hchild=$(cat /run/hard.child)
 out=$(ninitctl stop hard)
 is "$?:$out" "0:hard stopped after SIGKILL" "a child ignoring SIGTERM keeps the service from stopping until SIGKILL"
 check "SIGKILL reaches every process in the cgroup" test ! -e /proc/$hchild
+
+# the last process of a stopping service is a child of the checker, pid 1 gets no SIGCHLD for it
+tcg=$(cg_of "$(idx_of tenant)")
+bash -c 'trap "sleep 0.5; exit 0" TERM; echo $$ >"$0/cgroup.procs" && touch /run/lodger.in; while :; do sleep 0.05; done' "$tcg" &
+lodger=$!
+check "a process of another parent joins the service cgroup" wait_for 2000 test -e /run/lodger.in
+t0=$(now_ms)
+out=$(ninitctl stop tenant)
+rc=$?
+t1=$(now_ms)
+is "$rc:$out" "0:tenant stopped" "stop waits for a process that is no child of pid 1"
+ok $(((t1 - t0) >= 2000 * T_SCALE)) "and ends when the cgroup empties, before stop-timeout ($((t1 - t0)) ms)"
+wait $lodger
 
 check "a failed start kills what the attempt left behind" wait_for 2000 test ! -e /proc/$(cat /run/failing.child)
 

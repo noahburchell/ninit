@@ -163,7 +163,12 @@ static void svc_release(uint32_t i) {
 			}
 
 			if(ng_svcs(map)[d].type == NG_TYPE_TARGET) {
+				// a deps:order target stays released while it is down
 				if(released[d]) {
+					if(state[d] == NG_ST_DONE) {
+						svc_set_up(d, true);
+					}
+
 					continue;
 				}
 
@@ -216,12 +221,16 @@ static void svc_reclaim(uint32_t i) {
 				continue;
 			}
 
-			if(!released[d] || ng_order_only(map, d)) {
+			if(!released[d]) {
+				continue;
+			}
+
+			svc_set_up(d, false);
+			if(ng_order_only(map, d)) {
 				continue;
 			}
 
 			released[d] = 0;
-			svc_set_up(d, false);
 			rqueue[rt++] = d;
 		}
 	}

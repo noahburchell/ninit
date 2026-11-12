@@ -1,0 +1,5 @@
+# a quote pair inside a quoted expansion reads the same in every shell
+echo "${x:-'a  b'}"   # stripped
+# a lone quote there is text to sh and opens a string in bash
+echo "${x:-don't}"   # kept
+echo it\'s } "a   b" "c   d"   # kept

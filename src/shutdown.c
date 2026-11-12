@@ -215,14 +215,14 @@ void stop_swap(void) {
 	free(buf);
 }
 
-static bool wait_pid_ms(pid_t pid, int64_t ms) {
+static bool wait_pid_ms(pid_t pid, int64_t ms, int* st) {
 	int64_t deadline = now_ms() + ms;
-	int st;
 
+	*st = 0;
 	for(;;) {
 		struct pollfd p = { .fd = sfd, .events = POLLIN };
 		struct signalfd_siginfo si;
-		pid_t r = waitpid(pid, &st, WNOHANG);
+		pid_t r = waitpid(pid, st, WNOHANG);
 		int64_t left;
 
 		if(r == pid || (r < 0 && errno != EINTR)) {
@@ -275,6 +275,7 @@ void save_hwclock(void) {
 	static char* const envp[] = { path, NULL };
 	char* const argv[] = { arg0, arg1, rtc_local() ? local : utc, NULL };
 	pid_t pid = fork();
+	int st;
 
 	if(pid < 0) {
 		return;
@@ -294,12 +295,19 @@ void save_hwclock(void) {
 		_exit(127);
 	}
 
-	if(wait_pid_ms(pid, HWCLOCK_GRACE_MS)) {
+	if(wait_pid_ms(pid, HWCLOCK_GRACE_MS, &st)) {
+		// 127 is the child without an hwclock to run
+		if(WIFSIGNALED(st)) {
+			log_warn("shutdown: hwclock was killed by signal %d, the clock is not saved", WTERMSIG(st));
+		} else if(WEXITSTATUS(st) && WEXITSTATUS(st) != 127) {
+			log_warn("shutdown: hwclock exited with status %d, the clock is not saved", WEXITSTATUS(st));
+		}
+
 		return;
 	}
 
 	log_warn("shutdown: hwclock did not exit in %d s, killing it",
 		 HWCLOCK_GRACE_MS / 1000);
 	kill(pid, SIGKILL);
-	wait_pid_ms(pid, KILL_GRACE_MS);
+	wait_pid_ms(pid, KILL_GRACE_MS, &st);
 }

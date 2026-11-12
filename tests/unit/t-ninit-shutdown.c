@@ -406,7 +406,7 @@ static void test_errors(void) {
 	reset();
 	rc = run("reboot", "-x", NULL);
 	is_int(rc, 2, "an unknown option is a usage error");
-	has_str(err, "reboot: unrecognized option '-x'\n", "and is named");
+	has_str(err, "reboot: unknown option '-x'\n", "and is named");
 	has_str(err, "try 'reboot --help' for more information\n", "with the --help hint");
 
 	reset();
@@ -486,6 +486,7 @@ static void test_time(void) {
 	sh.now = 12 * 3600 + 59;
 	run("shutdown", "12:01", NULL);
 	has_str(con, "in 1 second\r\n", "one second is singular");
+	has_str(out, "shutdown: poweroff in 1 second\n", "on standard output too");
 
 	reset();
 	run("shutdown", "+0", NULL);

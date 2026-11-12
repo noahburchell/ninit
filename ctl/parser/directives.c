@@ -151,7 +151,7 @@ void parse_src(struct src* s, const char* fname, char* body, size_t len) {
 
 		colon = strchr(key, ':');
 		if(!colon) {
-			die("%s/%s: directive without a key: #%%%s", g_dir, fname, key);
+			die("%s/%s: directive without a colon: #%%%s", g_dir, fname, key);
 		}
 
 		*colon = '\0';

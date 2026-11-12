@@ -516,6 +516,14 @@ static inline const char* invariants(void) {
 			return "a service is up without being done";
 		}
 
+		if(ng_svcs(map)[i].type == NG_TYPE_TARGET && up[i] && unmet[i]) {
+			return "a target is up while a prerequisite it waits on is down";
+		}
+
+		if(state[i] == NG_ST_RUNNING && runs[i].pid <= 0 && !runs[i].stale_pid && !runs[i].restart_at) {
+			return "a service is starting with no process and no retry pending";
+		}
+
 		if(runs[i].pid > 0) {
 			struct sim_child* c = kid_of(runs[i].pid);
 			bool stale;

@@ -26,7 +26,7 @@ struct cz_out {
 
 static size_t sk_cmd(const char* s, size_t i, size_t n, uint8_t d, struct cz_out* e, bool nested);
 static size_t sk_dq(const char* s, size_t i, size_t n, uint8_t d);
-static size_t sk_brace(const char* s, size_t i, size_t n, uint8_t d);
+static size_t sk_brace(const char* s, size_t i, size_t n, uint8_t d, bool dq);
 static size_t sk_pair(const char* s, size_t i, size_t n, uint8_t d, char open, char close, uint32_t depth);
 
 static bool cz_meta(char c) {
@@ -125,7 +125,7 @@ static size_t sk_dollar(const char* s, size_t i, size_t n, uint8_t d, bool dq) {
 		case '(':
 			return s[i + 2] == '(' ? sk_pair(s, i + 3, n, d, '(', ')', 2) : sk_cmd(s, i + 2, n, d, NULL, true);
 		case '{':
-			return sk_brace(s, i + 2, n, d);
+			return sk_brace(s, i + 2, n, d, dq);
 		case '\'':
 			return dq ? i + 1 : sk_esc(s, i + 2, n, '\'');
 		case '"':
@@ -164,12 +164,36 @@ static size_t sk_dq(const char* s, size_t i, size_t n, uint8_t d) {
 	return i < n ? i + 1 : n;
 }
 
-static size_t sk_brace(const char* s, size_t i, size_t n, uint8_t d) {
+static size_t sk_brace(const char* s, size_t i, size_t n, uint8_t d, bool dq) {
 	if(++d > CZ_DEPTH) {
 		return n;
 	}
 
 	while(i < n && s[i] != '}') {
+		// in double quotes bash pairs this quote and a posix shell takes it as text,
+		// the two agree only when nothing between the pair means anything to either
+		if(dq && s[i] == '\'') {
+			const char* q = memchr(s + i + 1, '\'', n - i - 1);
+
+			if(!q) {
+				return n;
+			}
+
+			for(const char* p = s + i + 1; p < q; p++) {
+				if(*p == '}' || *p == '"' || *p == '\\' || *p == '`' || *p == '$') {
+					return n;
+				}
+			}
+
+			i = (size_t)(q - s) + 1;
+			continue;
+		}
+
+		if(dq && s[i] == '$' && s[i + 1] == '{') {
+			i = sk_brace(s, i + 2, n, d, true);
+			continue;
+		}
+
 		i = sk_quoted(s, i, n, d, false);
 	}
 

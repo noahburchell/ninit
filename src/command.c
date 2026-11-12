@@ -109,6 +109,10 @@ static void svc_op_stop(uint32_t i, bool restart) {
 
 		// it exited on its own so nothing else will hand its dependents back
 		go_down(i);
+		if(state[i] == NG_ST_RUNNING) {
+			svc_mark_pending(i);
+		}
+
 		svc_op_done(i, true, "already stopped");
 		return;
 	}
@@ -134,6 +138,9 @@ void ctl_tick(void) {
 		// a oneshot that left processes behind has no main process whose exit takes it down
 		if(gone && (r->op == SVC_OP_TERM || r->op == SVC_OP_KILL)) {
 			go_down(i);
+			if(state[i] == NG_ST_RUNNING) {
+				svc_mark_pending(i);
+			}
 		}
 
 		switch(r->op) {

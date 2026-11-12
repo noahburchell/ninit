@@ -52,10 +52,7 @@ void service_failed(uint32_t i, int status) {
 	r->starting = 0;
 
 	svc_abandon(i);
-	if(live_has(i) && !r->stale_pid && r->op == SVC_OP_NONE) {
-		live_del(i);
-	}
-
+	maybe_free(i);
 	if(shutting_down) {
 		return;
 	}
@@ -250,9 +247,7 @@ static void child_exited(uint32_t i, int status) {
 
 		r->starting = 0;
 		if(state[i] == NG_ST_DONE && !shutting_down) {
-			if(r->timedout) {
-				status = FAIL_ST_TIMEOUT;
-			} else if(r->hup) {
+			if(r->hup) {
 				status = hup_status(status);
 			}
 
@@ -282,11 +277,6 @@ static void child_exited(uint32_t i, int status) {
 	if(shutting_down) {
 		close_fds(i);
 		maybe_free(i);
-		return;
-	}
-
-	if(r->timedout) {
-		service_failed(i, FAIL_ST_TIMEOUT);
 		return;
 	}
 

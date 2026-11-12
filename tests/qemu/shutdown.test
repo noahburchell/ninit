@@ -45,6 +45,13 @@ echo $! >/sys/fs/cgroup/cgroup.procs
 echo $! >/run/escapee.pid
 exec sleep 1000
 EOF
+q_svc frozen <<'EOF'
+#%type: daemon
+bash -c 'trap "echo FROZEN got TERM >/dev/console; exit 0" TERM; kill -STOP $$' &
+echo $! >/sys/fs/cgroup/cgroup.procs
+echo $! >/run/frozen.pid
+exec sleep 1000
+EOF
 q_file /sbin/hwclock 755 <<'EOF'
 #!/bin/bash
 while read -r k v; do
@@ -59,10 +66,12 @@ q_file /etc/adjtime <<'EOF'
 LOCAL
 EOF
 q_check <<'EOF'
-for s in s1 s2 s3 p1 p2 lone stubborn again leftover escapee; do
+for s in s1 s2 s3 p1 p2 lone stubborn again leftover escapee frozen; do
 	st_is $s up
 done
 check "the escaped process left the service cgroup" grep -qx "0::/" /proc/$(cat /run/escapee.pid)/cgroup
+check "the frozen process left the service cgroup" grep -qx "0::/" /proc/$(cat /run/frozen.pid)/cgroup
+check "and is stopped" wait_for 2000 grep -q '^State:[[:space:]]*T' /proc/$(cat /run/frozen.pid)/status
 # halt and reboot requested during the poweroff are ignored, the sender outlives the checker
 late_signals() {
 	setsid bash -c 'trap "" TERM; kill -USR2 1; sleep 0.5; kill -USR1 1; kill -TERM 1' &
@@ -83,6 +92,7 @@ q_lacks "again: exited" "a restart: always daemon is not restarted during shutdo
 q_has "poweroff: sending SIGKILL to all processes" "a process outside every service that ignores SIGTERM is killed"
 q_order "poweroff: sending SIGTERM to all processes" "poweroff: sending SIGKILL to all processes" \
 	"SIGKILL follows SIGTERM to all processes"
+q_has "FROZEN got TERM" "a stopped process is continued and acts on SIGTERM"
 q_has "HWCLOCK --systohc --localtime" "hwclock keeps local time when /etc/adjtime says LOCAL"
 q_has "blocked 0000000000000000 oom 0 umask 0022" "hwclock runs with no signal blocked, oom_score_adj 0 and umask 022"
 q_order "HWCLOCK" "poweroff: syncing and remounting read-only" "the clock is saved before the remount"
@@ -139,6 +149,10 @@ q_svc hold <<'EOF'
 trap '' TERM
 while :; do sleep 0.05; done
 EOF
+q_file /sbin/hwclock 755 <<'EOF'
+#!/bin/bash
+exit 3
+EOF
 q_check <<'EOF'
 st_is base up
 st_is hold up
@@ -152,6 +166,7 @@ q_order "did not stop in order" "poweroff: sending SIGTERM to all processes" "th
 q_order "poweroff: sending SIGTERM to all processes" "STOP base" \
 	"which reaches the prerequisite the ordered stop never signalled"
 q_has "poweroff: sending SIGKILL to all processes" "and SIGKILL follows for what ignores it"
+q_has "WARN > shutdown: hwclock exited with status 3, the clock is not saved" "a hwclock that fails is reported"
 if [ -z "$Q_QUIET" ]; then
 	at() {
 		q_log | grep -F -m1 -- "$1" | sed -E 's/^\[ *([0-9]+\.[0-9]+)\].*/\1/'

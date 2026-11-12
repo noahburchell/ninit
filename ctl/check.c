@@ -52,7 +52,6 @@ struct slot {
 struct checks {
 	struct slot* slot;
 	char**       failed;
-	uint8_t*     late;
 	uint32_t     nslot, live, bad, unchecked;
 	int          devnull;
 	bool         giveup, userns;
@@ -147,7 +146,6 @@ static void collect_one(struct checks* c) {
 	s = &c->slot[k];
 	if(s->due < 0 || !WIFEXITED(st) || WEXITSTATUS(st)) {
 		if(s->due < 0) {
-			c->late[s->who] = 1;
 			c->unchecked++;
 			ml = (size_t)snprintf(msg, sizeof(msg), "the syntax check did not finish in %d s\n",
 					      CHECK_MS / 1000);
@@ -249,7 +247,6 @@ static void report(struct checks* c, struct src* srcs, uint32_t n, const char* d
 	}
 
 	free(c->failed);
-	free(c->late);
 	free(c->slot);
 	if(c->bad) {
 		die("%u service script%s failed the %s syntax check", c->bad, plural(c->bad), NG_SHELL);
@@ -317,7 +314,6 @@ void check_syntax(struct src* srcs, uint32_t n, const char* dir) {
 	c.slot = xmalloc(c.nslot * sizeof(*c.slot));
 	// checks end in any order, their messages print in service order
 	c.failed = xmalloc(n * sizeof(*c.failed));
-	c.late = xmalloc(n);
 	c.devnull = open("/dev/null", O_WRONLY | O_CLOEXEC);
 	// an ignored SIGCHLD would reap the checks before waitpid sees them
 	sigemptyset(&c.chld);

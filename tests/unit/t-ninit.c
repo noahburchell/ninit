@@ -399,6 +399,55 @@ static void test_sim_retry_prereq(void) {
 	ok(inv_ok("retry prereq"), "the counters agree");
 }
 
+// a stop between start attempts ends the start, nothing is left starting without a process
+static void test_sim_stop_in_backoff(void) {
+	static const struct gb_svc sv[] = {
+		{ .name = "d", .type = NG_TYPE_DAEMON, .onfail = GB_DEFAULT, .notify = 3, .script = "x", .pol = { .start_tries = 3, .retry_ms = 500 } },
+	};
+	const char* r;
+	uint32_t d;
+
+	sim_load(sv, 1, NULL, 0);
+	d = svc_by("d");
+	sim_exit_svc(d, 1 << 8);
+	is_str(st_of("d"), "starting", "d failed once and waits to retry");
+	r = sim_ctl("stop d");
+	is_str(r, "+ d already stopped\n", "a stop between attempts finds no process");
+	is_str(st_of("d"), "pending", "and leaves d pending");
+	is_int(runs[d].restart_at, 0, "its retry is off");
+	sim_advance(3000);
+	ok(boot_ms >= 0, "the boot is done");
+	ok(inv_ok("stop in backoff"), "the counters agree");
+	r = sim_ctl("status d");
+	has_str(r, ". d pending stopped pid 0\n", "status shows it held stopped");
+}
+
+// a deps:order target keeps its dependents and is itself down while its prerequisite is
+static void test_sim_order_target(void) {
+	static const struct gb_svc sv[] = {
+		GB_DAEMON("a", "x"),
+		{ .name = "t", .type = NG_TYPE_TARGET, .onfail = GB_DEFAULT, .pol = { .pflags = NG_PF_ORDER_ONLY } },
+		GB_ONESHOT("o", "x"),
+	};
+	static const struct gb_edge e[] = { { 0, 1 }, { 1, 2 } };
+	const char* r;
+
+	sim_load(sv, 3, e, 2);
+	sim_ready(svc_by("a"));
+	sim_ready(svc_by("o"));
+	is_str(st_of("t"), "up", "an order target is up once its prerequisite is");
+	is_str(st_of("o"), "up", "and so is its dependent");
+	r = sim_ctl("stop a");
+	is_str(r, "+ a stopped\n", "the prerequisite stops");
+	is_str(st_of("t"), "down", "the target is down with it");
+	is_str(st_of("o"), "up", "its dependent stays up");
+	has_str(sim_ctl("status"), "+ 3 services, 1 up\n", "the count follows");
+	r = sim_ctl("start a");
+	is_str(r, "+ a up\n", "the prerequisite starts again");
+	is_str(st_of("t"), "up", "and the target is up again");
+	ok(inv_ok("order target"), "the counters agree");
+}
+
 // the reply buffer never splits a status line, whatever the length of the name
 static void test_sim_status_long(void) {
 	enum {
@@ -445,6 +494,8 @@ int main(void) {
 	test_sim_ctl();
 	test_sim_refused();
 	test_sim_retry_prereq();
+	test_sim_stop_in_backoff();
+	test_sim_order_target();
 	test_sim_status_long();
 	sim_reset();
 

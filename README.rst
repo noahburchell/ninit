@@ -101,9 +101,9 @@ download and unpack the release archive:
 
 .. code:: sh
 
-   curl -LO https://github.com/noahburchell/ninit/releases/download/v1.0.5/ninit-1.0.5.tar.xz
-   tar xf ninit-1.0.5.tar.xz
-   cd ninit-1.0.5
+   curl -LO https://github.com/noahburchell/ninit/releases/download/v1.1.0/ninit-1.1.0.tar.xz
+   tar xf ninit-1.1.0.tar.xz
+   cd ninit-1.1.0
 
 the "source code" archives github generates for each tag contain no configure script. a git checkout needs ``./autogen.sh`` first, which requires autoconf 2.69 and automake 1.16 or later
 
@@ -580,7 +580,7 @@ the last line is one of the longest chains. ``-v`` adds under each service its e
    ninitctl del [-d DIR] [--] NAME...
    ninitctl add [-d DIR] [--] NAME...
 
-``del`` moves DIR/NAME to DIR/unused/NAME, creating unused/ if needed. ``add`` moves it back. neither replaces an existing file. a relative symlink is rewritten so that it resolves to the same target from its new location. both take the lock described in `4.1`_. neither rebuilds the graph
+``del`` moves DIR/NAME to DIR/unused/NAME, creating unused/ if needed. ``add`` moves it back. neither replaces an existing file. a relative symlink is refused, from its new location it would resolve to a different target. both take the lock described in `4.1`_. neither rebuilds the graph
 
 4.4 exit status
 ---------------
@@ -630,12 +630,12 @@ ninit performs, in order:
 4. mount each filesystem below that is not already mounted, creating the mount point. a failure is logged as a warning
 5. create the links /dev/fd, /dev/stdin, /dev/stdout and /dev/stderr, and /dev/core if /proc/kcore exists
 6. create /sys/fs/cgroup/ninit.services, or fall back to process groups
-7. create /run/ninit with mode 0700 and listen on /run/ninit/control with mode 0600
-8. set its own oom_score_adj to -1000
-9. write its log to /dev/console
-10. raise its own RLIMIT_NOFILE
-11. read /etc/locale.conf
-12. print ``Welcome to NAME!``, where NAME is PRETTY_NAME from /etc/os-release or /usr/lib/os-release
+7. set its own oom_score_adj to -1000
+8. write its log to /dev/console
+9. raise its own RLIMIT_NOFILE
+10. read /etc/locale.conf
+11. print ``Welcome to NAME!``, where NAME is PRETTY_NAME from /etc/os-release or /usr/lib/os-release
+12. create /run/ninit with mode 0700 and listen on /run/ninit/control with mode 0600
 13. load and verify the graph. on failure, log the reason and load the graph at the same path with ``.old`` appended, the one the last ninitctl init replaced. if that does not exist or fails too, start the emergency shell
 14. start every root
 
@@ -785,9 +785,9 @@ SIGUSR2          power off
 
 1. switch the active virtual terminal to tty1, so the console output of the shutdown is in view. a compositor that holds its terminal gets the release request, and the switch is repeated after step 3, when it is gone, with tty1 put back in text mode. without virtual terminals nothing happens
 2. stop the services in reverse dependency order across the whole graph. a service is sent SIGTERM once every service that depends on it has stopped, and SIGKILL after its stop-timeout. independent branches stop in parallel. this step ends after 30 s regardless
-3. send SIGTERM to every process and wait up to 5 s for all of them to exit
+3. send SIGTERM to every process, then SIGCONT so that a stopped process acts on it, and wait up to 5 s for all of them to exit
 4. send SIGKILL to what remains and wait up to 2 s
-5. run ``hwclock --systohc --utc``, or ``hwclock --systohc --localtime`` if the third line of /etc/adjtime is LOCAL, killing it after 5 s. it runs with no signal blocked, default signal dispositions, oom_score_adj 0 and umask 022
+5. run ``hwclock --systohc --utc``, or ``hwclock --systohc --localtime`` if the third line of /etc/adjtime is LOCAL, killing it after 5 s. an hwclock that fails is logged as a warning, a missing one is not. it runs with no signal blocked, default signal dispositions, oom_score_adj 0 and umask 022
 6. swapoff every active swap area
 7. remove the control socket
 8. sync, then remount every filesystem read-only, most recently mounted first. a filesystem that stays writable is unmounted. if that fails, it is synced and remounted or unmounted once more, and otherwise detached. ``/`` is remounted read-only last

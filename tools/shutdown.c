@@ -277,7 +277,7 @@ int main(int argc, char** argv) {
 				k++;
 			}
 		} else if(a[0] == '-' && a[1]) {
-			fprintf(stderr, "%s: unrecognized option '%s'\n", me, a);
+			fprintf(stderr, "%s: unknown option '%s'\n", me, a);
 			try_help(me);
 			return 2;
 		} else if(is_telinit) {
@@ -338,7 +338,7 @@ int main(int argc, char** argv) {
 
 	if(when > 0) {
 		warn_console(me, act, when);
-		printf("%s: %s in %" PRId64 " seconds\n", me, act_name[act], when);
+		printf("%s: %s in %" PRId64 " second%s\n", me, act_name[act], when, plural((uint64_t)when));
 		fflush(stdout);
 		// sleep takes an unsigned int and +MINUTES can ask for more
 		while(when > 0) {

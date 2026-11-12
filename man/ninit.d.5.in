@@ -391,15 +391,23 @@ whichever is lower
 .IP \(bu 2
 user and group 0 and every capability
 .PP
-a signal sent to a service reaches every process in its cgroup and its process group.
+a signal sent to a service reaches every process in its cgroup.
+its process group is signalled only when the cgroup holds no process, so a daemon does not receive the same
+.B SIGTERM
+twice.
 once the main process is reaped, a service in a cgroup is signalled through the cgroup alone,
 since its process group can be empty by then and its number given to another process.
 .B SIGKILL
 is delivered through
+.I cgroup.kill
+and to the process group.
+on kernels without
 .IR cgroup.kill ,
-and to each process in
+before 5.14,
+.B SIGKILL
+is sent to each process in
 .I cgroup.procs
-on kernels before 5.14.
+as other signals are.
 a service is stopped when its main process has been reaped and its cgroup is empty
 .PP
 .I /etc/locale.conf

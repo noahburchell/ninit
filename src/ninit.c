@@ -27,6 +27,7 @@
 #define STALL_MS	 10000
 #define DEGRADED_POLL_MS 200
 #define SIGNAL_POLL_MS	 200
+#define STOP_POLL_MS	 100
 
 // what a polled descriptor after the signalfd belongs to
 enum pf_kind {
@@ -79,7 +80,15 @@ static int64_t live_due(int64_t now) {
 		}
 
 		if(r->op != SVC_OP_NONE) {
-			best = ms_sooner(best, ms_until(r->op_at, now));
+			int64_t left = ms_until(r->op_at, now);
+
+			// a cgroup can empty without a SIGCHLD, its last process may be no child of pid 1,
+			// and the kernel empties it after the exit is reported
+			if(r->op != SVC_OP_START && r->pid <= 0 && !r->stale_pid && left > STOP_POLL_MS) {
+				left = STOP_POLL_MS;
+			}
+
+			best = ms_sooner(best, left);
 		}
 	}
 

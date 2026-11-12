@@ -281,6 +281,8 @@ void shutdown_system(int how, const char* what) {
 	stop_ordered();
 	log_note("%s: sending SIGTERM to all processes", what);
 	kill(-1, SIGTERM);
+	// a stopped process acts on SIGTERM once it is continued
+	kill(-1, SIGCONT);
 	wait_children(TERM_GRACE_MS);
 	if(userspace_left()) {
 		log_warn("%s: sending SIGKILL to all processes", what);
